@@ -70,10 +70,12 @@ export async function configureCommand(options = {}) {
       mkdir(path.join(workspacePath, "scenarios"), { recursive: true }),
       mkdir(path.join(workspacePath, "context"), { recursive: true })
     ]);
+    await ensureWorkspaceGitignore(workspacePath, nextConfig.outputDir);
     await writeFile(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
 
     process.stdout.write(`Wrote ${configPath}\n`);
     process.stdout.write(`Initialized workspace folders under ${workspacePath}\n`);
+    process.stdout.write(`Updated ${path.join(workspacePath, ".gitignore")}\n`);
     return;
   }
 
@@ -142,6 +144,7 @@ export async function configureCommand(options = {}) {
         mkdir(path.join(workspacePath, "scenarios"), { recursive: true }),
         mkdir(path.join(workspacePath, "context"), { recursive: true })
       ]);
+      await ensureWorkspaceGitignore(workspacePath, nextConfig.outputDir);
     }
 
     await writeFile(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
@@ -149,10 +152,52 @@ export async function configureCommand(options = {}) {
     process.stdout.write(`\nWrote ${configPath}\n`);
     if (createStructure) {
       process.stdout.write(`Initialized workspace folders under ${workspacePath}\n`);
+      process.stdout.write(`Updated ${path.join(workspacePath, ".gitignore")}\n`);
     }
   } finally {
     rl.close();
   }
+}
+
+async function ensureWorkspaceGitignore(workspacePath, outputDir) {
+  const gitignorePath = path.join(workspacePath, ".gitignore");
+  const outputIgnoreEntry = deriveOutputIgnoreEntry(outputDir);
+
+  let content = "";
+  if (existsSync(gitignorePath)) {
+    content = await readFile(gitignorePath, "utf8");
+  }
+
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.includes(outputIgnoreEntry)) {
+    const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+    const nextContent = `${content}${separator}${outputIgnoreEntry}\n`;
+    await writeFile(gitignorePath, nextContent, "utf8");
+  }
+}
+
+function deriveOutputIgnoreEntry(outputDir) {
+  const rawValue = String(outputDir || "").trim();
+  const fallback = "output/";
+  if (!rawValue) {
+    return fallback;
+  }
+
+  const normalized = rawValue.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!normalized || normalized.startsWith("/") || normalized.startsWith("../")) {
+    return fallback;
+  }
+
+  const [firstSegment] = normalized.split("/").filter(Boolean);
+  if (!firstSegment || firstSegment === "." || firstSegment === "..") {
+    return fallback;
+  }
+
+  return `${firstSegment}/`;
 }
 
 async function showWorkspacePrompt(workspacePromptPath) {
