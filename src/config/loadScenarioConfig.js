@@ -1,0 +1,240 @@
+import fs from "node:fs";
+import path from "node:path";
+import process from "node:process";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+function parseBoolean(value, fallback) {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return fallback;
+
+  const normalized = value.toLowerCase().trim();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function parseNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function resolvePathOrEmpty(value) {
+  if (!value) return "";
+  return path.resolve(process.cwd(), value);
+}
+
+function normalizeStringArray(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function normalizeOptionArray(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry || "").trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+
+  return [];
+}
+
+function normalizeContextOperations(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const allowedTypes = new Set(["context", "set", "json"]);
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+
+      const type = String(entry.type || "").trim().toLowerCase();
+      const rawValue = entry.value;
+      const normalizedValue = typeof rawValue === "string" ? rawValue : String(rawValue || "");
+      if (!allowedTypes.has(type) || !normalizedValue) {
+        return null;
+      }
+
+      return {
+        type,
+        value: normalizedValue
+      };
+    })
+    .filter(Boolean);
+}
+
+function resolvePathFromWorkspaceOrCwd(value, workspace) {
+  if (!value) return "";
+  if (path.isAbsolute(value)) return value;
+  return path.resolve(workspace, value);
+}
+
+export function loadScenarioConfig(overrides = {}) {
+  const overrideContextRefs = normalizeStringArray(overrides.context);
+  const overrideSetEntries = normalizeOptionArray(overrides.set);
+  const overrideJsonEntries = normalizeOptionArray(overrides.json);
+  const overrideContextOperations = normalizeContextOperations(overrides.contextOperations);
+  const workspaceInput = firstDefined(
+    overrides.workspace,
+    process.env.DUBLO_WORKSPACE,
+    "./.dublo"
+  );
+  const workspacePath = path.resolve(process.cwd(), workspaceInput);
+  const workspaceConfigPath = path.join(workspacePath, "config.json");
+
+  let workspaceConfig = {};
+  if (fs.existsSync(workspaceConfigPath)) {
+    const raw = fs.readFileSync(workspaceConfigPath, "utf8");
+    try {
+      workspaceConfig = JSON.parse(raw);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid JSON in workspace config '${workspaceConfigPath}': ${detail}`);
+    }
+  }
+
+  const workspaceRuntimeConfig = cleanUndefined({
+    baseUrl: workspaceConfig.baseUrl,
+    maxSteps: parseNumber(workspaceConfig.maxSteps, undefined),
+    headless: parseBoolean(workspaceConfig.headless, undefined),
+    observationConfigFile: workspaceConfig.observationConfigFile,
+    artifactScreenshotMode: workspaceConfig.artifactScreenshotMode,
+    debug: parseBoolean(workspaceConfig.debug, undefined),
+    outputDir: workspaceConfig.outputDir,
+    workspaceLlmRef: firstDefined(workspaceConfig.llm),
+    workspacePersonaRef: firstDefined(workspaceConfig.persona),
+    workspaceContextRefs: normalizeStringArray(workspaceConfig.context)
+  });
+
+  const envConfig = {
+    baseUrl: firstDefined(process.env.DUBLO_BASE_URL),
+    maxSteps: parseNumber(firstDefined(process.env.DUBLO_MAX_STEPS), undefined),
+    headless: parseBoolean(firstDefined(process.env.DUBLO_HEADLESS), undefined),
+    personaFile: firstDefined(process.env.DUBLO_PERSONA_FILE),
+    scenarioFile: firstDefined(process.env.DUBLO_SCENARIO_FILE),
+    observationConfigFile: firstDefined(process.env.DUBLO_OBSERVATION_CONFIG_FILE),
+    artifactScreenshotMode: firstDefined(process.env.DUBLO_ARTIFACT_SCREENSHOT_MODE),
+    debug: parseBoolean(firstDefined(process.env.DUBLO_DEBUG), undefined),
+    outputDir: firstDefined(process.env.DUBLO_OUTPUT_DIR),
+    llmRef: firstDefined(process.env.DUBLO_LLM),
+    persona: firstDefined(process.env.DUBLO_PERSONA),
+    scenario: firstDefined(process.env.DUBLO_SCENARIO),
+    contextRefs: normalizeStringArray(process.env.DUBLO_CONTEXT),
+    llm: cleanUndefined({
+      provider: firstDefined(process.env.DUBLO_LLM_PROVIDER),
+      region: firstDefined(process.env.DUBLO_LLM_REGION, process.env.AWS_REGION),
+      modelId: firstDefined(process.env.DUBLO_LLM_MODEL_ID, process.env.BEDROCK_MODEL_ID),
+      inputPrice: parseNumber(firstDefined(process.env.DUBLO_LLM_INPUT_PRICE), undefined),
+      outputPrice: parseNumber(firstDefined(process.env.DUBLO_LLM_OUTPUT_PRICE), undefined),
+      cacheReadPrice: parseNumber(firstDefined(process.env.DUBLO_LLM_CACHE_READ_PRICE), undefined),
+      cacheWritePrice: parseNumber(firstDefined(process.env.DUBLO_LLM_CACHE_WRITE_PRICE), undefined),
+      currency: firstDefined(process.env.DUBLO_LLM_CURRENCY),
+      tokenUnit: parseNumber(firstDefined(process.env.DUBLO_LLM_TOKEN_UNIT), undefined)
+    })
+  };
+
+  const merged = {
+    baseUrl: "http://localhost:8080",
+    maxSteps: 40,
+    headless: false,
+    personaFile: "",
+    scenario: "",
+    scenarioFile: "",
+    observationConfigFile: "",
+    artifactScreenshotMode: "none",
+    debug: false,
+    outputDir: "./output/runs",
+    llmRef: "",
+    workspaceLlmRef: "",
+    workspacePersonaRef: "",
+    contextRefs: [],
+    workspaceContextRefs: [],
+    contextOperations: [],
+    setEntries: [],
+    jsonEntries: [],
+    persona: "",
+    scenario: "",
+    llm: {
+      provider: "bedrock",
+      region: firstDefined(process.env.AWS_REGION, "us-east-1"),
+      modelId: "amazon.nova-pro-v1:0",
+      inputPrice: undefined,
+      outputPrice: undefined,
+      cacheReadPrice: undefined,
+      cacheWritePrice: undefined,
+      currency: "USD",
+      tokenUnit: 1000000
+    },
+    ...cleanUndefined(envConfig),
+    ...workspaceRuntimeConfig,
+    ...cleanUndefined({
+      workspace: overrides.workspace,
+      llmRef: overrides.llm,
+      headless: overrides.headless ? true : undefined,
+      persona: overrides.persona,
+      scenario: overrides.scenario,
+      ...(overrideContextRefs.length > 0 ? { contextRefs: overrideContextRefs } : {}),
+      ...(overrideSetEntries.length > 0 ? { setEntries: overrideSetEntries } : {}),
+      ...(overrideJsonEntries.length > 0 ? { jsonEntries: overrideJsonEntries } : {}),
+      ...(overrideContextOperations.length > 0 ? { contextOperations: overrideContextOperations } : {})
+    }),
+    llm: {
+      provider: "bedrock",
+      region: firstDefined(process.env.AWS_REGION, "us-east-1"),
+      modelId: "amazon.nova-pro-v1:0",
+      inputPrice: undefined,
+      outputPrice: undefined,
+      cacheReadPrice: undefined,
+      cacheWritePrice: undefined,
+      currency: "USD",
+      tokenUnit: 1000000,
+      ...cleanUndefined(envConfig.llm || {})
+    }
+  };
+
+  return {
+    ...merged,
+    artifactScreenshotMode: String(merged.artifactScreenshotMode || "none").toLowerCase(),
+    headed: !Boolean(merged.headless),
+    personaFile: resolvePathOrEmpty(merged.personaFile),
+    scenarioFile: resolvePathOrEmpty(merged.scenarioFile),
+    observationConfigFile: resolvePathFromWorkspaceOrCwd(merged.observationConfigFile, workspacePath),
+    workspace: workspacePath,
+    outputDir: resolvePathFromWorkspaceOrCwd(merged.outputDir, workspacePath),
+    llm: {
+      ...merged.llm,
+      provider: String(merged.llm?.provider || "bedrock").toLowerCase()
+    }
+  };
+}
+
+function cleanUndefined(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, v]) => v !== undefined && v !== "")
+  );
+}

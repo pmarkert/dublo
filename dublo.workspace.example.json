@@ -1,0 +1,11 @@
+{
+  "baseUrl": "https://example.com",
+  "llm": "default",
+  "persona": "qa-strict",
+  "context": ["shared", "qa-user"],
+  "maxSteps": 40,
+  "headless": false,
+  "artifactScreenshotMode": "none",
+  "debug": false,
+  "outputDir": "./output/runs"
+}

@@ -1,0 +1,36 @@
+{
+  "name": "dublo",
+  "version": "0.1.0",
+  "description": "Agentic LLM loop web-testing framework using Playwright and AWS Bedrock",
+  "type": "module",
+  "bin": {
+    "dublo": "./src/dublo.js"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "start": "node ./src/dublo.js",
+    "run": "node ./src/dublo.js run"
+  },
+  "keywords": [
+    "cli",
+    "playwright",
+    "bedrock",
+    "agent",
+    "testing"
+  ],
+  "author": "@pmarkert",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.853.0",
+    "@bomb.sh/tab": "^0.0.19",
+    "commander": "^15.0.0",
+    "dotenv": "^16.4.5",
+    "js-yaml": "^5.2.1",
+    "playwright": "^1.54.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
