@@ -1,0 +1,1 @@
+Verify that a user can login, go to the settings page, edit their avatar to change the background color. Pick a different color than the current one if one is selected from the user's preferred colors. Make sure that the avatar icon shows up with the new color.

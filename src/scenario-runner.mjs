@@ -590,6 +590,16 @@ async function loadPersonaText(personaFile) {
   return content.trim();
 }
 
+async function loadWorkspacePromptText(workspacePromptFile) {
+  if (!workspacePromptFile) {
+    return "";
+  }
+
+  const resolved = path.resolve(process.cwd(), workspacePromptFile);
+  const content = await readFile(resolved, "utf8");
+  return content.trim();
+}
+
 async function resolveScenarioText(config) {
   if (config.scenario && config.scenario.trim()) {
     return config.scenario.trim();
@@ -907,6 +917,7 @@ async function collectObservation(page, observationConfig) {
 function buildPlannerMessages({
   testPrompt,
   personaText,
+  workspacePromptText,
   contextData,
   observation,
   actionHistory,
@@ -969,6 +980,12 @@ function buildPlannerMessages({
     "Decide one next action at a time using only visible elements from the observation.",
     "Favor intuitive user behavior and avoid hidden shortcuts.",
     "Use the planner_action tool on every turn instead of replying with free text.",
+    ...(workspacePromptText
+      ? [
+          "Application-specific background and testing instructions (apply throughout the run):",
+          workspacePromptText,
+        ]
+      : []),
     "Persona instructions (apply throughout the run):",
     personaText,
     "Scenario objective and success criteria (apply throughout the run):",
@@ -1196,6 +1213,7 @@ export async function runScenario(config) {
 
   const contextData = await loadContextFromOperations(config.contextOperations);
   const personaText = await loadPersonaText(config.personaFile);
+  const workspacePromptText = await loadWorkspacePromptText(config.workspacePromptFile);
   const scenario = await resolveScenarioText(config);
   const observationConfig = await loadObservationConfig(config.observationConfigFile);
   const artifactScreenshotMode = normalizeArtifactScreenshotMode(config.artifactScreenshotMode);
@@ -1217,6 +1235,7 @@ export async function runScenario(config) {
       llm: config.llm,
       maxSteps: config.maxSteps,
       contextOperations: config.contextOperations,
+      workspacePromptFile: config.workspacePromptFile,
       personaFile: config.personaFile,
       scenarioFile: config.scenarioFile,
       observationConfigFile: config.observationConfigFile,
@@ -1347,6 +1366,7 @@ export async function runScenario(config) {
       const messages = buildPlannerMessages({
         testPrompt: scenario,
         personaText,
+        workspacePromptText,
         contextData,
         observation,
         actionHistory,

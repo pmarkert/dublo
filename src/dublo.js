@@ -8,6 +8,12 @@ import { configureLlmCommand } from "./commands/llm/configure.js";
 import { listLlmCommand } from "./commands/llm/list.js";
 import { showLlmCommand } from "./commands/llm/show.js";
 import { validateLlmCommand } from "./commands/llm/validate.js";
+import { editPersonaCommand } from "./commands/persona/edit.js";
+import { listPersonaCommand } from "./commands/persona/list.js";
+import { showPersonaCommand } from "./commands/persona/show.js";
+import { editScenarioCommand } from "./commands/scenario/edit.js";
+import { listScenarioCommand } from "./commands/scenario/list.js";
+import { showScenarioCommand } from "./commands/scenario/show.js";
 import { runCommand } from "./commands/run.js";
 
 const program = new Command();
@@ -246,6 +252,7 @@ program
   .option("--persona <value>", "Persona file path or profile name in <workspace>/personas")
   .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios")
   .option("--headless", "Run browser in headless mode (default is headed)")
+  .option("--debug", "Enable debug logging for this run")
   .option(
     "--context <value>",
     "Context file path or profile name in <workspace>/context (repeatable, merged first-to-last)",
@@ -262,10 +269,11 @@ program
   });
 
 program
-  .command("configure")
-  .alias("config")
+  .command("config")
   .description("Interactively create or update workspace config.json")
   .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .option("--prompt", "Edit the workspace prompt markdown file")
+  .option("--show-prompt", "Write the workspace prompt markdown file to stdout")
   .option("-y, --yes", "Accept defaults and write config without prompts")
   .action(async (options) => {
     await configureCommand(options);
@@ -276,8 +284,7 @@ const llmProgram = program
   .description("Manage LLM profiles");
 
 llmProgram
-  .command("configure [profile]")
-  .alias("config")
+  .command("config [profile]")
   .description("Interactively create or update an LLM profile")
   .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
   .option("--region <region>", "Bedrock region override")
@@ -315,6 +322,74 @@ llmProgram
   .option("--name <profile>", "LLM profile name override")
   .action(async (profile, options) => {
     await validateLlmCommand(profile, options);
+  });
+
+const personaProgram = program
+  .command("persona")
+  .description("Manage persona profiles");
+
+personaProgram
+  .command("list")
+  .description("List available persona profiles")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (options) => {
+    await listPersonaCommand(options);
+  });
+
+personaProgram
+  .command("show <profile>")
+  .description("Write persona text to stdout")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (profile, options) => {
+    await showPersonaCommand({
+      ...options,
+      profile
+    });
+  });
+
+personaProgram
+  .command("edit <profile>")
+  .description("Write persona text from stdin or open an interactive editor")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (profile, options) => {
+    await editPersonaCommand({
+      ...options,
+      profile
+    });
+  });
+
+const scenarioProgram = program
+  .command("scenario")
+  .description("Manage scenario profiles");
+
+scenarioProgram
+  .command("list")
+  .description("List available scenario profiles")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (options) => {
+    await listScenarioCommand(options);
+  });
+
+scenarioProgram
+  .command("show <profile>")
+  .description("Write scenario text to stdout")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (profile, options) => {
+    await showScenarioCommand({
+      ...options,
+      profile
+    });
+  });
+
+scenarioProgram
+  .command("edit <profile>")
+  .description("Write scenario text from stdin or open an interactive editor")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (profile, options) => {
+    await editScenarioCommand({
+      ...options,
+      profile
+    });
   });
 
 const completion = tab(program, { completionCommandName: "completion" });

@@ -1,5 +1,11 @@
 {
   "provider": "bedrock",
   "region": "us-east-1",
-  "modelId": "amazon.nova-pro-v1:0"
+  "modelId": "amazon.nova-pro-v1:0",
+  "inputPrice": 1,
+  "outputPrice": 2,
+  "cacheReadPrice": 1,
+  "cacheWritePrice": 2,
+  "currency": "USD",
+  "tokenUnit": 1000000
 }

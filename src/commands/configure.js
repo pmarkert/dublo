@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 
 const DEFAULT_CONFIG = {
@@ -16,6 +17,11 @@ const DEFAULT_CONFIG = {
   outputDir: "./output/runs"
 };
 
+const DEFAULT_WORKSPACE_PROMPT = `# Application Notes
+
+Use this file to capture background knowledge, application quirks, test account notes, special commands, and workspace-specific testing instructions for Dublo.
+`;
+
 export async function configureCommand(options = {}) {
   const workspaceInput = firstDefined(
     options.workspace,
@@ -24,6 +30,17 @@ export async function configureCommand(options = {}) {
   );
   const workspacePath = path.resolve(process.cwd(), workspaceInput);
   const configPath = path.join(workspacePath, "config.json");
+  const workspacePromptPath = path.join(workspacePath, "prompt.md");
+
+  if (options.showPrompt) {
+    await showWorkspacePrompt(workspacePromptPath);
+    return;
+  }
+
+  if (options.prompt) {
+    await editWorkspacePrompt(workspacePath, workspacePromptPath, options);
+    return;
+  }
 
   const existingConfig = await readExistingConfig(configPath);
   const seed = {
@@ -135,6 +152,58 @@ export async function configureCommand(options = {}) {
     }
   } finally {
     rl.close();
+  }
+}
+
+async function showWorkspacePrompt(workspacePromptPath) {
+  if (!existsSync(workspacePromptPath)) {
+    throw new Error(`Workspace prompt file does not exist: ${workspacePromptPath}`);
+  }
+
+  const content = await readFile(workspacePromptPath, "utf8");
+  process.stdout.write(content);
+  if (!content.endsWith("\n")) {
+    process.stdout.write("\n");
+  }
+}
+
+async function editWorkspacePrompt(workspacePath, workspacePromptPath, options) {
+  await mkdir(workspacePath, { recursive: true });
+
+  if (!process.stdin.isTTY) {
+    let body = "";
+    for await (const chunk of process.stdin) {
+      body += String(chunk);
+    }
+    await writeFile(workspacePromptPath, body, "utf8");
+    process.stdout.write(`Wrote ${workspacePromptPath}\n`);
+    return;
+  }
+
+  if (options.yes) {
+    if (!existsSync(workspacePromptPath)) {
+      await writeFile(workspacePromptPath, DEFAULT_WORKSPACE_PROMPT, "utf8");
+    }
+    process.stdout.write(`Prepared ${workspacePromptPath}\n`);
+    return;
+  }
+
+  if (!existsSync(workspacePromptPath)) {
+    await writeFile(workspacePromptPath, DEFAULT_WORKSPACE_PROMPT, "utf8");
+  }
+
+  const editor = process.env.VISUAL || process.env.EDITOR || "vi";
+  const result = spawnSync(editor, [workspacePromptPath], {
+    stdio: "inherit",
+    shell: true
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (typeof result.status === "number" && result.status !== 0) {
+    throw new Error(`Editor exited with status ${result.status}.`);
   }
 }
 

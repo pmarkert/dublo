@@ -63,15 +63,18 @@ node src/dublo.js run --workspace ./.dublo --llm default
 Interactive workspace setup:
 
 ```bash
-dublo configure
-# or
 dublo config
+
+# edit the workspace prompt markdown file
+dublo config --prompt
+
+# print the workspace prompt markdown file
+dublo config --show-prompt
 ```
 
 Interactive LLM profile setup:
 
 ```bash
-dublo llm configure
 dublo llm config
 ```
 
@@ -86,6 +89,12 @@ This guided flow creates/updates `<workspace>/config.json` and can initialize:
 - `<workspace>/personas`
 - `<workspace>/scenarios`
 - `<workspace>/context`
+
+Workspace prompt:
+
+- `dublo config --prompt` edits `<workspace>/prompt.md`
+- `dublo config --show-prompt` writes `<workspace>/prompt.md` to stdout
+- if `prompt.md` exists, its contents are injected into the LLM prompt as application-specific background and testing instructions
 
 ## Shell completion
 
@@ -112,12 +121,17 @@ dublo completion fish | source
 
 ```bash
 dublo run [options]
-dublo configure [options]
-dublo llm configure [options]
+dublo config [options]
 dublo llm config [profile] [options]
 dublo llm list [options]
 dublo llm show [profile] [options]
 dublo llm validate [profile] [options]
+dublo persona list [options]
+dublo persona show <profile> [options]
+dublo persona edit <profile> [options]
+dublo scenario list [options]
+dublo scenario show <profile> [options]
+dublo scenario edit <profile> [options]
 
 Options:
   --workspace <path>    Workspace directory containing config.json and llm/personas/scenarios/context folders
@@ -125,17 +139,20 @@ Options:
   --persona <value>     Persona file path or profile name in <workspace>/personas
   --scenario <value>    Scenario file path or profile name in <workspace>/scenarios
   --headless            Run browser in headless mode (default is headed)
+  --debug               Enable debug logging for this run
   --context <value>     Context file path or profile name in <workspace>/context (repeatable)
   --set <keyValue>      Inline context assignment key.path=value (or key.path:value); repeatable
   --json <object>       Inline JSON object merged into context (repeatable)
 
-dublo configure [options]
+dublo config [options]
 
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+  --prompt              Edit the workspace prompt markdown file
+  --show-prompt         Write the workspace prompt markdown file to stdout
   -y, --yes             Accept defaults and write config without prompts
 
-dublo llm configure [profile] [options]
+dublo llm config [profile] [options]
 
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
@@ -160,6 +177,55 @@ dublo llm validate [profile] [options]
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
   --name <profile>      LLM profile name override
+
+dublo persona list [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+
+Built-in persona templates are bundled with Dublo and appear in `dublo persona list` alongside workspace personas.
+You can use a built-in template name directly with `--persona`, export it with `dublo persona show <template>`, or seed a workspace copy with `dublo persona edit <template>`.
+
+dublo persona show <profile> [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+
+dublo persona edit <profile> [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+
+dublo scenario list [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+
+Built-in scenario templates are bundled with Dublo and appear in `dublo scenario list` alongside workspace scenarios.
+You can use a built-in template name directly with `--scenario`, export it with `dublo scenario show <template>`, or seed a workspace copy with `dublo scenario edit <template>`.
+
+dublo scenario show <profile> [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+
+dublo scenario edit <profile> [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+
+Current built-in scenario templates:
+
+- `homepage-smoke`
+- `login-happy-path`
+- `checkout-happy-path`
+
+Current built-in persona templates:
+
+- `qa-strict`
+- `exploratory`
+- `accessibility`
+- `performance`
 ```
 
 Workspace runtime config (`<workspace>/config.json`) structure:
