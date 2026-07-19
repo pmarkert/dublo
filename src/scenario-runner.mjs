@@ -158,6 +158,17 @@ function normalizeTokenUsage(rawUsage) {
   };
 }
 
+function normalizeOpenAITokenUsage(rawUsage) {
+  const usage = rawUsage && typeof rawUsage === "object" ? rawUsage : {};
+  return {
+    inputTokens: toNumberOrZero(usage.prompt_tokens ?? usage.inputTokens),
+    outputTokens: toNumberOrZero(usage.completion_tokens ?? usage.outputTokens),
+    totalTokens: toNumberOrZero(usage.total_tokens ?? usage.totalTokens),
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 0,
+  };
+}
+
 function addTokenUsageTotals(target, delta) {
   if (!target || !delta) {
     return;
@@ -314,6 +325,47 @@ function plannerBedrockToolSpec() {
         },
       },
     ],
+  };
+}
+
+function plannerOpenAIToolSpec() {
+  return {
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "planner_action",
+          description: "Return the next UI automation action as structured JSON input.",
+          parameters: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              action: {
+                type: "string",
+                enum: [
+                  "click",
+                  "fill",
+                  "wait",
+                  "request_user_input",
+                  "request_user_interaction",
+                  "request_screenshot",
+                  "finish",
+                ],
+              },
+              targetId: { type: "string" },
+              value: { type: "string" },
+              inputKey: { type: "string" },
+              inputPrompt: { type: "string" },
+              interactionPrompt: { type: "string" },
+              screenshotPrompt: { type: "string" },
+              reason: { type: "string" },
+            },
+            required: ["action"],
+          },
+        },
+      },
+    ],
+    tool_choice: { type: "function", function: { name: "planner_action" } },
   };
 }
 
@@ -1094,12 +1146,24 @@ async function requestPlannerActionBedrock({ client, modelId, messages, screensh
 }
 
 async function requestPlannerAction({ config, bedrockClient, messages, screenshotBuffer }) {
-  const plannerResult = await requestPlannerActionBedrock({
-    client: bedrockClient,
-    modelId: config.llm.modelId,
-    messages,
-    screenshotBuffer,
-  });
+  let plannerResult;
+
+  if (config.llm.provider === "openai-compatible") {
+    plannerResult = await requestPlannerActionOpenAI({
+      baseUrl: config.llm.baseUrl,
+      modelId: config.llm.modelId,
+      apiKey: config.llm.apiKey,
+      messages,
+      screenshotBuffer,
+    });
+  } else {
+    plannerResult = await requestPlannerActionBedrock({
+      client: bedrockClient,
+      modelId: config.llm.modelId,
+      messages,
+      screenshotBuffer,
+    });
+  }
 
   const parsed = plannerResult?.parsed;
   const tokenUsage = plannerResult?.tokenUsage;
@@ -1142,6 +1206,128 @@ async function runBedrockPreflight({ client, modelId }) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
       `Bedrock preflight failed for model '${modelId}'. Check AWS credentials/region/model access. Detail: ${detail}`
+    );
+  }
+}
+
+async function requestPlannerActionOpenAI({ baseUrl, modelId, apiKey, messages, screenshotBuffer }) {
+  const normalizedBaseUrl = String(baseUrl || "").replace(/\/+$/, "");
+  const url = `${normalizedBaseUrl}/chat/completions`;
+
+  const userContent = [
+    { type: "text", text: messages.staticContextText },
+    { type: "text", text: messages.dynamicContextText },
+  ];
+
+  if (screenshotBuffer) {
+    const base64 = screenshotBuffer.toString("base64");
+    userContent.push({
+      type: "image_url",
+      image_url: { url: `data:image/png;base64,${base64}` },
+    });
+  }
+
+  const toolSpec = plannerOpenAIToolSpec();
+
+  const body = {
+    model: modelId,
+    messages: [
+      { role: "system", content: messages.systemText },
+      { role: "user", content: userContent },
+    ],
+    tools: toolSpec.tools,
+    tool_choice: toolSpec.tool_choice,
+    temperature: 0.2,
+    max_tokens: 700,
+  };
+
+  const headers = { "Content-Type": "application/json" };
+  if (apiKey) {
+    headers["Authorization"] = "Bearer " + apiKey;
+  }
+
+  let response;
+  try {
+    response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`OpenAI-compatible planner call failed for model '${modelId}' at '${baseUrl}': ${detail}`);
+  }
+
+  if (!response.ok) {
+    let errorDetail;
+    try {
+      errorDetail = (await response.text()).slice(0, 200);
+    } catch {
+      errorDetail = `HTTP ${response.status}`;
+    }
+    throw new Error(`OpenAI-compatible planner call failed for model '${modelId}' at '${baseUrl}': ${errorDetail}`);
+  }
+
+  let result;
+  try {
+    result = await response.json();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`OpenAI-compatible planner response was not valid JSON for model '${modelId}': ${detail}`);
+  }
+
+  const tokenUsage = normalizeOpenAITokenUsage(result?.usage);
+
+  // Try structured tool call first.
+  const toolCall = result?.choices?.[0]?.message?.tool_calls?.[0];
+  if (toolCall?.function?.arguments) {
+    let parsed;
+    try {
+      parsed = JSON.parse(toolCall.function.arguments);
+    } catch {
+      parsed = extractFirstJsonObjectFromText(toolCall.function.arguments);
+    }
+    return { parsed, tokenUsage };
+  }
+
+  // Fallback: extract JSON from prose response.
+  const textContent = String(result?.choices?.[0]?.message?.content || "").trim();
+  if (!textContent) {
+    throw new Error("OpenAI-compatible planner API returned no content.");
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(extractJsonFromText(textContent));
+  } catch {
+    parsed = extractFirstJsonObjectFromText(textContent);
+  }
+
+  return { parsed, tokenUsage };
+}
+
+async function runOpenAIPreflight({ baseUrl, modelId, apiKey }) {
+  const normalizedBaseUrl = String(baseUrl || "").replace(/\/+$/, "");
+  const url = `${normalizedBaseUrl}/chat/completions`;
+
+  const body = {
+    model: modelId,
+    messages: [{ role: "user", content: 'Return exactly this JSON: {"ok":true}' }],
+    temperature: 0,
+    max_tokens: 20,
+  };
+
+  const headers = { "Content-Type": "application/json" };
+  if (apiKey) {
+    headers["Authorization"] = "Bearer " + apiKey;
+  }
+
+  try {
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => `HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status}: ${errorBody.slice(0, 200)}`);
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `OpenAI-compatible preflight failed for model '${modelId}' at '${baseUrl}'. Check that the server is running and the model is available. Detail: ${detail}`
     );
   }
 }
@@ -1246,7 +1432,7 @@ export async function runScenario(config) {
     status: "running",
     finalUrl: "",
     tokenUsage: {
-      provider: "bedrock",
+      provider: config.llm.provider,
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
@@ -1260,7 +1446,8 @@ export async function runScenario(config) {
     artifactsDir: runDir,
   };
 
-  const bedrockClient = new BedrockRuntimeClient({ region: config.llm.region });
+  const bedrockClient =
+    config.llm.provider === "bedrock" ? new BedrockRuntimeClient({ region: config.llm.region }) : null;
 
   const logger = createRunnerLogger(config.headed);
   const debugLogger = createDebugLogger(config.debug);
@@ -1271,11 +1458,21 @@ export async function runScenario(config) {
     return `${observation.title || "untitled"} | ${observation.url} | controls=${observation.controls.length} buttons=${visibleButtons} inputs=${visibleInputs} alerts=${visibleAlerts}`;
   };
 
-  logger.info(`starting run ${runId} using bedrock:${config.llm.modelId}`);
+  const providerLabel = config.llm.provider === "openai-compatible"
+    ? `openai-compatible:${config.llm.modelId}`
+    : `bedrock:${config.llm.modelId}`;
 
-  logger.info(`running Bedrock preflight against model ${config.llm.modelId}`);
-  await runBedrockPreflight({ client: bedrockClient, modelId: config.llm.modelId });
-  logger.info("Bedrock preflight succeeded");
+  logger.info(`starting run ${runId} using ${providerLabel}`);
+
+  if (config.llm.provider === "openai-compatible") {
+    logger.info(`running OpenAI-compatible preflight against model ${config.llm.modelId}`);
+    await runOpenAIPreflight({ baseUrl: config.llm.baseUrl, modelId: config.llm.modelId, apiKey: config.llm.apiKey });
+    logger.info("OpenAI-compatible preflight succeeded");
+  } else {
+    logger.info(`running Bedrock preflight against model ${config.llm.modelId}`);
+    await runBedrockPreflight({ client: bedrockClient, modelId: config.llm.modelId });
+    logger.info("Bedrock preflight succeeded");
+  }
 
   const browser = await chromium.launch({ headless: !config.headed });
   const context = await browser.newContext({
@@ -1375,7 +1572,7 @@ export async function runScenario(config) {
       });
 
       debugLogger.log(
-        `planner_input_step=${i + 1} provider=bedrock hasScreenshot=${Boolean(screenshotBufferForThisTurn)}`
+        `planner_input_step=${i + 1} provider=${config.llm.provider} hasScreenshot=${Boolean(screenshotBufferForThisTurn)}`
       );
       debugLogger.log("planner_system_begin");
       debugLogger.log(messages.systemText);
@@ -1614,9 +1811,9 @@ export async function runScenario(config) {
     const configuredPricing = getConfiguredModelPricing(config);
     if (configuredPricing) {
       report.pricing = {
-        provider: "bedrock",
+        provider: config.llm.provider,
         modelId: config.llm.modelId,
-        region: config.llm.region,
+        ...(config.llm.region ? { region: config.llm.region } : {}),
         ...configuredPricing,
       };
       report.costEstimate = calculateCostEstimate(report.tokenUsage, configuredPricing);
@@ -1625,7 +1822,7 @@ export async function runScenario(config) {
     const reportPath = path.join(runDir, "report.json");
     const summaryPath = path.join(runDir, "summary.md");
 
-    const modelSummary = `bedrock:${config.llm.modelId}`;
+    const modelSummary = `${config.llm.provider}:${config.llm.modelId}`;
 
     const summary = [
       "# Agentic Scenario (LLM-Driven)",
@@ -1678,8 +1875,9 @@ export async function runScenario(config) {
       artifactsDir: runDir,
       reportPath,
       summaryPath,
-      bedrockModelId: config.llm.modelId,
-      bedrockRegion: config.llm.region,
+      provider: config.llm.provider,
+      modelId: config.llm.modelId,
+      ...(config.llm.region ? { region: config.llm.region } : {}),
       costEstimate: report.costEstimate,
     };
     await writeFile(latestManifestPath, `${JSON.stringify(latestManifest, null, 2)}\n`, "utf8");

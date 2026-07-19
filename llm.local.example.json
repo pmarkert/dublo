@@ -1,0 +1,5 @@
+{
+  "provider": "openai-compatible",
+  "baseUrl": "http://localhost:11434/v1",
+  "modelId": "llama3.2-vision"
+}

@@ -260,6 +260,18 @@ LLM profile (`<workspace>/llm/<name>.json`) structure:
 }
 ```
 
+For local or self-hosted LLMs using the OpenAI-compatible API (Ollama, LM Studio, llama.cpp, vLLM, etc.):
+
+```json
+{
+  "provider": "openai-compatible",
+  "baseUrl": "http://localhost:11434/v1",
+  "modelId": "llama3.2-vision"
+}
+```
+
+An optional `apiKey` field can be set if the server requires authentication. For vision support (screenshots), use a multimodal model such as `llama3.2-vision`, `gemma3`, or `minicpm-v`. Prompt caching is skipped automatically for non-Bedrock providers.
+
 If `inputPrice` and `outputPrice` are not present in the LLM config, cost estimation is skipped.
 
 Profile name resolution behavior for `--llm`, `--persona`, `--scenario`, and `--context`:
@@ -332,6 +344,8 @@ LLM-specific env vars:
 - `DUBLO_LLM_PROVIDER`
 - `DUBLO_LLM_REGION`
 - `DUBLO_LLM_MODEL_ID`
+- `DUBLO_LLM_BASE_URL` (required for `openai-compatible` provider)
+- `DUBLO_LLM_API_KEY` (optional, for servers requiring auth)
 - `DUBLO_LLM_INPUT_PRICE`
 - `DUBLO_LLM_OUTPUT_PRICE`
 - `DUBLO_LLM_CACHE_READ_PRICE`
