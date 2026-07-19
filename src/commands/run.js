@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { runScenario } from "../scenario-runner.mjs";
 import { loadScenarioConfig } from "../config/loadScenarioConfig.js";
+import { resolvePersonaProfilePath } from "./persona/shared.js";
+import { resolveScenarioProfilePath } from "./scenario/shared.js";
 import { logger } from "../utils/logger.js";
 
 export async function runCommand(options) {
@@ -37,14 +39,12 @@ export async function runCommand(options) {
   );
 
   if (personaSelection) {
-    config.personaFile = resolveReference({
-      value: personaSelection,
-      workspace: config.workspace,
-      folder: "personas",
-      exts: [".md", ".txt"],
-      required: true,
-      kind: "persona"
-    });
+    config.personaFile = resolvePersonaProfilePath(config.workspace, personaSelection);
+    if (!config.personaFile) {
+      throw new Error(
+        `Could not resolve persona '${personaSelection}'. Provide a valid path, a profile name under ${path.join(config.workspace, "personas")}, or a built-in template name.`
+      );
+    }
   }
 
   const contextSelections = firstNonEmptyArray(config.contextRefs, config.workspaceContextRefs);
@@ -61,14 +61,7 @@ export async function runCommand(options) {
   config.contextOperations = resolveContextOperations(config);
 
   if (config.scenario && !config.scenarioFile) {
-    const scenarioPath = resolveReference({
-      value: config.scenario,
-      workspace: config.workspace,
-      folder: "scenarios",
-      exts: [".md", ".txt"],
-      required: false,
-      kind: "scenario"
-    });
+    const scenarioPath = resolveScenarioProfilePath(config.workspace, config.scenario);
 
     if (scenarioPath) {
       config.scenarioFile = scenarioPath;

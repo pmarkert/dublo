@@ -106,6 +106,7 @@ export function loadScenarioConfig(overrides = {}) {
   );
   const workspacePath = path.resolve(process.cwd(), workspaceInput);
   const workspaceConfigPath = path.join(workspacePath, "config.json");
+  const workspacePromptPath = path.join(workspacePath, "prompt.md");
 
   let workspaceConfig = {};
   if (fs.existsSync(workspaceConfigPath)) {
@@ -196,6 +197,7 @@ export function loadScenarioConfig(overrides = {}) {
       workspace: overrides.workspace,
       llmRef: overrides.llm,
       headless: overrides.headless ? true : undefined,
+      debug: overrides.debug ? true : undefined,
       persona: overrides.persona,
       scenario: overrides.scenario,
       ...(overrideContextRefs.length > 0 ? { contextRefs: overrideContextRefs } : {}),
@@ -224,6 +226,7 @@ export function loadScenarioConfig(overrides = {}) {
     personaFile: resolvePathOrEmpty(merged.personaFile),
     scenarioFile: resolvePathOrEmpty(merged.scenarioFile),
     observationConfigFile: resolvePathFromWorkspaceOrCwd(merged.observationConfigFile, workspacePath),
+    workspacePromptFile: fs.existsSync(workspacePromptPath) ? workspacePromptPath : "",
     workspace: workspacePath,
     outputDir: resolvePathFromWorkspaceOrCwd(merged.outputDir, workspacePath),
     llm: {
