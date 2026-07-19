@@ -1,0 +1,104 @@
+[
+  {
+    "label": "Amazon Nova Micro (fast)",
+    "modelId": "amazon.nova-micro-v1:0",
+    "supportsConditionalToolSchemas": true,
+    "inferenceConfig": { "temperature": 0 },
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 0.035, "output": 0.14 },
+      "byServiceTier": {
+        "priority": { "input": 0.0613, "output": 0.245 },
+        "flex": { "input": 0.0175, "output": 0.07 }
+      }
+    }
+  },
+  {
+    "label": "Amazon Nova Lite (balanced)",
+    "modelId": "amazon.nova-lite-v1:0",
+    "supportsConditionalToolSchemas": true,
+    "inferenceConfig": { "temperature": 0 },
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 0.06, "output": 0.14 },
+      "byServiceTier": {
+        "priority": { "input": 0.105, "output": 0.245 },
+        "flex": { "input": 0.03, "output": 0.07 }
+      }
+    }
+  },
+  {
+    "label": "Amazon Nova Pro (high quality)",
+    "modelId": "amazon.nova-pro-v1:0",
+    "supportsConditionalToolSchemas": true,
+    "inferenceConfig": { "temperature": 0 },
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 0.8, "output": 3.2 },
+      "byServiceTier": {
+        "priority": { "input": 1.4, "output": 5.6 },
+        "flex": { "input": 0.4, "output": 1.6 }
+      }
+    }
+  },
+  {
+    "label": "Amazon Nova 2 Lite (balanced)",
+    "modelId": "amazon.nova-2-lite-v1:0",
+    "supportsConditionalToolSchemas": true,
+    "inferenceProfiles": ["us", "global"],
+    "serviceTiers": ["default", "priority", "flex"],
+    "inferenceConfig": { "temperature": 0 },
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 0.33, "output": 2.75 },
+      "byServiceTier": {
+        "priority": { "input": 0.5775, "output": 4.8125 },
+        "flex": { "input": 0.165, "output": 1.375 }
+      }
+    }
+  },
+  {
+    "label": "Amazon Nova 2 Pro (high quality)",
+    "modelId": "amazon.nova-2-pro-v1:0",
+    "supportsConditionalToolSchemas": true,
+    "inferenceProfiles": ["us", "global"],
+    "serviceTiers": ["default", "priority", "flex"],
+    "inferenceConfig": { "temperature": 0 },
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 1.375, "output": 11 },
+      "byServiceTier": {
+        "priority": { "input": 2.4063, "output": 19.25 },
+        "flex": { "input": 0.6875, "output": 5.5 }
+      }
+    }
+  },
+  {
+    "label": "Anthropic Claude 4.5 Haiku",
+    "modelId": "anthropic.claude-haiku-4-5-20251001-v1:0",
+    "supportsConditionalToolSchemas": false,
+    "inferenceProfiles": ["global", "us"],
+    "inferenceConfig": { "temperature": 0 },
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 1, "output": 5 }
+    }
+  },
+  {
+    "label": "Anthropic Claude Sonnet 5",
+    "modelId": "anthropic.claude-sonnet-5",
+    "supportsConditionalToolSchemas": false,
+    "inferenceProfiles": ["global", "us"],
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 2, "output": 10 }
+    }
+  }
+]

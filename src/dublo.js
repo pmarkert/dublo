@@ -14,6 +14,10 @@ import { showPersonaCommand } from "./commands/persona/show.js";
 import { editScenarioCommand } from "./commands/scenario/edit.js";
 import { listScenarioCommand } from "./commands/scenario/list.js";
 import { showScenarioCommand } from "./commands/scenario/show.js";
+import { editContextCommand } from "./commands/context/edit.js";
+import { listContextCommand } from "./commands/context/list.js";
+import { showContextCommand } from "./commands/context/show.js";
+import { validateContextCommand } from "./commands/context/validate.js";
 import { runCommand } from "./commands/run.js";
 
 const program = new Command();
@@ -242,20 +246,20 @@ function addOptionValueCompletions(completion) {
 program
   .name("dublo")
   .description("Agentic LLM loop web testing with Playwright + AWS Bedrock")
-  .version("0.1.0");
+  .version("0.1.0", "--version");
 
 program
   .command("run")
   .description("Run using workspace config and selectors")
-  .option("--workspace <path>", "Workspace directory (contains config.json and llm/personas/scenarios/context)")
+  .option("--workspace <path>", "Workspace directory (contains defaults.json and llm/personas/scenarios/context)")
   .option("--llm <value>", "LLM config file path or profile name in <workspace>/llm")
   .option("--persona <value>", "Persona file path or profile name in <workspace>/personas")
   .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios")
-  .option("--headless", "Run browser in headless mode (default is headed)")
+  .option("--headless", "Run browser in headless mode")
   .option("--debug", "Enable debug logging for this run")
   .option(
     "--context <value>",
-    "Context file path or profile name in <workspace>/context (repeatable, merged first-to-last)",
+    "Context file path or profile name in <workspace>/context (repeatable)",
     collectOptionValues
   )
   .option("--set <keyValue>", "Inline context assignment key.path=value (or key.path:value); repeatable", collectOptionValues)
@@ -270,7 +274,8 @@ program
 
 program
   .command("config")
-  .description("Interactively create or update workspace config.json")
+  .alias("init")
+  .description("Interactively create or update workspace defaults.json")
   .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
   .option("--prompt", "Edit the workspace prompt markdown file")
   .option("--show-prompt", "Write the workspace prompt markdown file to stdout")
@@ -289,6 +294,8 @@ llmProgram
   .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
   .option("--region <region>", "Bedrock region override")
   .option("--model-id <id>", "Bedrock model ID override")
+  .option("--inference-profile <scope>", "Inference profile scope for models that support it (global or us)")
+  .option("--service-tier <tier>", "Service tier for models that support it (default, priority, flex, reserved)")
   .option("--set-default", "Set workspace config llm field to this profile (non-interactive mode)")
   .option("-y, --yes", "Accept defaults/flags and write profile without prompts")
   .action(async (profile, options) => {
@@ -392,7 +399,74 @@ scenarioProgram
     });
   });
 
+const contextProgram = program
+  .command("context")
+  .description("Manage context profiles");
+
+contextProgram
+  .command("list")
+  .description("List available context profiles")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (options) => {
+    await listContextCommand(options);
+  });
+
+contextProgram
+  .command("show <profile>")
+  .description("Write resolved context object as JSON to stdout")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (profile, options) => {
+    await showContextCommand({
+      ...options,
+      profile
+    });
+  });
+
+contextProgram
+  .command("edit <profile>")
+  .description("Write context from stdin or open an interactive editor")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .option("--yaml", "Force YAML file output (.yaml/.yml) for new or matching existing profile")
+  .option("--json", "Force JSON file output (.json) for new or matching existing profile")
+  .action(async (profile, options) => {
+    await editContextCommand({
+      ...options,
+      profile
+    });
+  });
+
+contextProgram
+  .command("validate [profile]")
+  .description("Validate one or all context profiles")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .option("--name <profile>", "Context profile name override")
+  .action(async (profile, options) => {
+    await validateContextCommand(profile, options);
+  });
+
 const completion = tab(program, { completionCommandName: "completion" });
 addOptionValueCompletions(completion);
 
-program.parseAsync(process.argv);
+program.parseAsync(process.argv).catch((error) => {
+  if (isInterruptError(error)) {
+    process.stderr.write("Interrupted.\n");
+    process.exitCode = 130;
+    return;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`Error: ${message}\n`);
+  process.exitCode = 1;
+});
+
+function isInterruptError(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = typeof error.code === "string" ? error.code : "";
+  const name = typeof error.name === "string" ? error.name : "";
+  const message = typeof error.message === "string" ? error.message : "";
+
+  return code === "ABORT_ERR" || name === "AbortError" || /aborted with ctrl\+c/i.test(message);
+}

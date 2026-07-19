@@ -75,4 +75,36 @@ function validateParsedProfile(profile, profilePath) {
       throw new Error(`LLM profile '${profilePath}' has non-numeric '${key}'.`);
     }
   }
+
+  if (profile.inferenceConfig !== undefined) {
+    if (!isPlainObject(profile.inferenceConfig)) {
+      throw new Error(`LLM profile '${profilePath}' field 'inferenceConfig' must be an object.`);
+    }
+  }
+
+  if (profile.additionalModelRequestFields !== undefined) {
+    if (!isPlainObject(profile.additionalModelRequestFields)) {
+      throw new Error(`LLM profile '${profilePath}' field 'additionalModelRequestFields' must be an object.`);
+    }
+  }
+
+  if (profile.serviceTier !== undefined) {
+    const normalizedServiceTier = String(profile.serviceTier || "").toLowerCase().trim();
+    const allowedServiceTiers = ["default", "priority", "flex", "reserved"];
+    if (!allowedServiceTiers.includes(normalizedServiceTier)) {
+      throw new Error(
+        `LLM profile '${profilePath}' field 'serviceTier' must be one of: ${allowedServiceTiers.join(", ")}.`
+      );
+    }
+  }
+
+  if (profile.supportsConditionalToolSchemas !== undefined && typeof profile.supportsConditionalToolSchemas !== "boolean") {
+    throw new Error(
+      `LLM profile '${profilePath}' field 'supportsConditionalToolSchemas' must be a boolean when present.`
+    );
+  }
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

@@ -38,7 +38,7 @@ export async function listPersonaCommand(options = {}) {
 }
 
 async function readWorkspaceDefault(workspacePath) {
-  const configPath = path.join(workspacePath, "config.json");
+  const configPath = path.join(workspacePath, "defaults.json");
   try {
     const raw = await readFile(configPath, "utf8");
     const parsed = JSON.parse(raw);

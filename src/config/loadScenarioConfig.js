@@ -105,7 +105,7 @@ export function loadScenarioConfig(overrides = {}) {
     "./.dublo"
   );
   const workspacePath = path.resolve(process.cwd(), workspaceInput);
-  const workspaceConfigPath = path.join(workspacePath, "config.json");
+  const workspaceConfigPath = path.join(workspacePath, "defaults.json");
   const workspacePromptPath = path.join(workspacePath, "prompt.md");
 
   let workspaceConfig = {};
@@ -115,7 +115,7 @@ export function loadScenarioConfig(overrides = {}) {
       workspaceConfig = JSON.parse(raw);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`Invalid JSON in workspace config '${workspaceConfigPath}': ${detail}`);
+      throw new Error(`Invalid JSON in workspace defaults '${workspaceConfigPath}': ${detail}`);
     }
   }
 
@@ -124,7 +124,7 @@ export function loadScenarioConfig(overrides = {}) {
     maxSteps: parseNumber(workspaceConfig.maxSteps, undefined),
     headless: parseBoolean(workspaceConfig.headless, undefined),
     observationConfigFile: workspaceConfig.observationConfigFile,
-    artifactScreenshotMode: workspaceConfig.artifactScreenshotMode,
+    screenshots: workspaceConfig.screenshots,
     debug: parseBoolean(workspaceConfig.debug, undefined),
     outputDir: workspaceConfig.outputDir,
     workspaceLlmRef: firstDefined(workspaceConfig.llm),
@@ -139,7 +139,7 @@ export function loadScenarioConfig(overrides = {}) {
     personaFile: firstDefined(process.env.DUBLO_PERSONA_FILE),
     scenarioFile: firstDefined(process.env.DUBLO_SCENARIO_FILE),
     observationConfigFile: firstDefined(process.env.DUBLO_OBSERVATION_CONFIG_FILE),
-    artifactScreenshotMode: firstDefined(process.env.DUBLO_ARTIFACT_SCREENSHOT_MODE),
+    screenshots: firstDefined(process.env.DUBLO_SCREENSHOTS),
     debug: parseBoolean(firstDefined(process.env.DUBLO_DEBUG), undefined),
     outputDir: firstDefined(process.env.DUBLO_OUTPUT_DIR),
     llmRef: firstDefined(process.env.DUBLO_LLM),
@@ -169,7 +169,7 @@ export function loadScenarioConfig(overrides = {}) {
     scenario: "",
     scenarioFile: "",
     observationConfigFile: "",
-    artifactScreenshotMode: "none",
+    screenshots: "none",
     debug: false,
     outputDir: "./output/runs",
     llmRef: "",
@@ -227,7 +227,7 @@ export function loadScenarioConfig(overrides = {}) {
 
   return {
     ...merged,
-    artifactScreenshotMode: String(merged.artifactScreenshotMode || "none").toLowerCase(),
+    screenshots: String(merged.screenshots || "none").toLowerCase(),
     headed: !Boolean(merged.headless),
     personaFile: resolvePathOrEmpty(merged.personaFile),
     scenarioFile: resolvePathOrEmpty(merged.scenarioFile),
@@ -247,3 +247,4 @@ function cleanUndefined(value) {
     Object.entries(value).filter(([, v]) => v !== undefined && v !== "")
   );
 }
+

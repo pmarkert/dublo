@@ -7,12 +7,12 @@ import { createInterface } from "node:readline/promises";
 
 const DEFAULT_CONFIG = {
   baseUrl: "http://localhost:8080",
-  llm: "default",
+  llm: "",
   persona: "",
   context: [],
   maxSteps: 40,
   headless: false,
-  artifactScreenshotMode: "none",
+  screenshots: "none",
   debug: false,
   outputDir: "./output/runs"
 };
@@ -29,7 +29,7 @@ export async function configureCommand(options = {}) {
     "./.dublo"
   );
   const workspacePath = path.resolve(process.cwd(), workspaceInput);
-  const configPath = path.join(workspacePath, "config.json");
+  const configPath = path.join(workspacePath, "defaults.json");
   const workspacePromptPath = path.join(workspacePath, "prompt.md");
 
   if (options.showPrompt) {
@@ -47,34 +47,29 @@ export async function configureCommand(options = {}) {
     ...DEFAULT_CONFIG,
     ...existingConfig,
     headless: resolveHeadlessSeed(existingConfig),
+    screenshots: normalizeScreenshotMode(existingConfig.screenshots),
     context: normalizeContext(existingConfig.context)
   };
 
   if (options.yes) {
-    const nextConfig = cleanUndefined({
+    const workspaceOutputDir = seed.outputDir;
+    const nextConfig = {
       baseUrl: seed.baseUrl,
       llm: seed.llm,
       persona: seed.persona,
-      ...(seed.context.length > 0 ? { context: seed.context } : {}),
+      context: seed.context,
       maxSteps: seed.maxSteps,
       headless: seed.headless,
-      artifactScreenshotMode: normalizeScreenshotMode(seed.artifactScreenshotMode),
+      screenshots: seed.screenshots,
       debug: seed.debug,
       outputDir: seed.outputDir
-    });
+    };
 
-    await mkdir(workspacePath, { recursive: true });
-    await Promise.all([
-      mkdir(path.join(workspacePath, "llm"), { recursive: true }),
-      mkdir(path.join(workspacePath, "personas"), { recursive: true }),
-      mkdir(path.join(workspacePath, "scenarios"), { recursive: true }),
-      mkdir(path.join(workspacePath, "context"), { recursive: true })
-    ]);
-    await ensureWorkspaceGitignore(workspacePath, nextConfig.outputDir);
+    await ensureWorkspaceStructure(workspacePath, workspaceOutputDir);
     await writeFile(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
 
     process.stdout.write(`Wrote ${configPath}\n`);
-    process.stdout.write(`Initialized workspace folders under ${workspacePath}\n`);
+    process.stdout.write(`Ensured workspace folders under ${workspacePath}\n`);
     process.stdout.write(`Updated ${path.join(workspacePath, ".gitignore")}\n`);
     return;
   }
@@ -87,47 +82,42 @@ export async function configureCommand(options = {}) {
     process.stdout.write(`Config: ${configPath}\n\n`);
 
     const baseUrl = await askText(rl, "Base URL", seed.baseUrl);
-    const llm = await askOptionalText(rl, "Default llm profile/name (blank to unset)", seed.llm);
-    const persona = await askOptionalText(rl, "Default persona profile/name (blank to unset)", seed.persona);
+    const llm = await askOptionalText(rl, "Default llm profile/name (leave blank to keep current value)", seed.llm);
+    const persona = await askOptionalText(rl, "Default persona profile/name (leave blank to keep current value)", seed.persona);
 
     const contextDefault = seed.context.join(",");
     const contextCsv = await askOptionalText(
       rl,
-      "Default context profiles/files (comma separated, blank to unset)",
+      "Default context profiles/files (comma separated, leave blank to keep current value)",
       contextDefault
     );
     const context = normalizeContext(contextCsv);
 
     const maxSteps = await askNumber(rl, "Max steps", seed.maxSteps);
     const headless = await askBoolean(rl, "Headless browser", seed.headless);
-    const artifactScreenshotMode = await askChoice(
+    const screenshots = await askChoice(
       rl,
-      "Artifact screenshot mode",
+      "Screenshots",
       ["none", "viewport", "fullpage"],
-      normalizeScreenshotMode(seed.artifactScreenshotMode)
+      normalizeScreenshotMode(seed.screenshots)
     );
     const debug = await askBoolean(rl, "Debug logging", seed.debug);
     const outputDir = await askText(rl, "Output directory", seed.outputDir);
 
-    const createStructure = await askBoolean(
-      rl,
-      "Create workspace folders (llm, personas, scenarios, context)",
-      true
-    );
-
-    const nextConfig = cleanUndefined({
+    const workspaceOutputDir = outputDir;
+    const nextConfig = {
       baseUrl,
       llm,
       persona,
-      ...(context.length > 0 ? { context } : {}),
+      context,
       maxSteps,
       headless,
-      artifactScreenshotMode,
+      screenshots,
       debug,
       outputDir
-    });
+    };
 
-    process.stdout.write("\nAbout to write config.json:\n");
+    process.stdout.write("\nAbout to write defaults.json:\n");
     process.stdout.write(`${JSON.stringify(nextConfig, null, 2)}\n\n`);
 
     const confirm = await askBoolean(rl, "Write this config", true);
@@ -136,27 +126,27 @@ export async function configureCommand(options = {}) {
       return;
     }
 
-    await mkdir(workspacePath, { recursive: true });
-    if (createStructure) {
-      await Promise.all([
-        mkdir(path.join(workspacePath, "llm"), { recursive: true }),
-        mkdir(path.join(workspacePath, "personas"), { recursive: true }),
-        mkdir(path.join(workspacePath, "scenarios"), { recursive: true }),
-        mkdir(path.join(workspacePath, "context"), { recursive: true })
-      ]);
-      await ensureWorkspaceGitignore(workspacePath, nextConfig.outputDir);
-    }
+    await ensureWorkspaceStructure(workspacePath, workspaceOutputDir);
 
     await writeFile(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
 
     process.stdout.write(`\nWrote ${configPath}\n`);
-    if (createStructure) {
-      process.stdout.write(`Initialized workspace folders under ${workspacePath}\n`);
-      process.stdout.write(`Updated ${path.join(workspacePath, ".gitignore")}\n`);
-    }
+    process.stdout.write(`Ensured workspace folders under ${workspacePath}\n`);
+    process.stdout.write(`Updated ${path.join(workspacePath, ".gitignore")}\n`);
   } finally {
     rl.close();
   }
+}
+
+async function ensureWorkspaceStructure(workspacePath, outputDir) {
+  await mkdir(workspacePath, { recursive: true });
+  await Promise.all([
+    mkdir(path.join(workspacePath, "llm"), { recursive: true }),
+    mkdir(path.join(workspacePath, "personas"), { recursive: true }),
+    mkdir(path.join(workspacePath, "scenarios"), { recursive: true }),
+    mkdir(path.join(workspacePath, "context"), { recursive: true })
+  ]);
+  await ensureWorkspaceGitignore(workspacePath, outputDir);
 }
 
 async function ensureWorkspaceGitignore(workspacePath, outputDir) {
@@ -275,10 +265,6 @@ async function readExistingConfig(configPath) {
 
 function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
-}
-
-function cleanUndefined(value) {
-  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined && v !== ""));
 }
 
 function normalizeContext(value) {

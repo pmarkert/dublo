@@ -57,7 +57,7 @@ function mergeObservationConfig(defaultConfig, overrideConfig) {
   return merged;
 }
 
-function normalizeArtifactScreenshotMode(rawValue) {
+function normalizeScreenshotMode(rawValue) {
   const normalized = String(rawValue || "")
     .toLowerCase()
     .trim();
@@ -91,6 +91,16 @@ async function loadObservationConfig(observationConfigFile) {
 
 function sanitizeSegment(value) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function resolveRunLabel(config, scenario) {
+  if (config.scenarioFile) {
+    const fileName = path.basename(String(config.scenarioFile));
+    const profileName = path.basename(fileName, path.extname(fileName));
+    return sanitizeSegment(profileName || "scenario");
+  }
+
+  return sanitizeSegment(String(scenario || "scenario").slice(0, 48));
 }
 
 function clip(value, limit = 180) {
@@ -287,40 +297,17 @@ function extractFirstJsonObjectFromText(rawText) {
   throw new Error("Planner text did not contain a valid JSON object.");
 }
 
-function plannerBedrockToolSpec() {
+function plannerBedrockToolSpec(llmConfig) {
   return {
     tools: [
       {
         toolSpec: {
           name: "planner_action",
-          description: "Return the next UI automation action as structured JSON input.",
+          description: "Return the next UI automation action as structured JSON input. Click and fill actions require a visible targetId; fill also requires a value.",
           inputSchema: {
-            json: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                action: {
-                  type: "string",
-                  enum: [
-                    "click",
-                    "fill",
-                    "wait",
-                    "request_user_input",
-                    "request_user_interaction",
-                    "request_screenshot",
-                    "finish",
-                  ],
-                },
-                targetId: { type: "string" },
-                value: { type: "string" },
-                inputKey: { type: "string" },
-                inputPrompt: { type: "string" },
-                interactionPrompt: { type: "string" },
-                screenshotPrompt: { type: "string" },
-                reason: { type: "string" },
-              },
-              required: ["action"],
-            },
+            json: plannerActionSchema({
+              includeConditionalRequirements: supportsConditionalToolSchemas(llmConfig),
+            }),
           },
         },
       },
@@ -335,38 +322,86 @@ function plannerOpenAIToolSpec() {
         type: "function",
         function: {
           name: "planner_action",
-          description: "Return the next UI automation action as structured JSON input.",
-          parameters: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              action: {
-                type: "string",
-                enum: [
-                  "click",
-                  "fill",
-                  "wait",
-                  "request_user_input",
-                  "request_user_interaction",
-                  "request_screenshot",
-                  "finish",
-                ],
-              },
-              targetId: { type: "string" },
-              value: { type: "string" },
-              inputKey: { type: "string" },
-              inputPrompt: { type: "string" },
-              interactionPrompt: { type: "string" },
-              screenshotPrompt: { type: "string" },
-              reason: { type: "string" },
-            },
-            required: ["action"],
-          },
+          description: "Return the next UI automation action as structured JSON input. Click and fill actions require a visible targetId; fill also requires a value.",
+          parameters: plannerActionSchema(),
         },
       },
     ],
     tool_choice: { type: "function", function: { name: "planner_action" } },
   };
+}
+
+function plannerActionSchema({ includeConditionalRequirements = true } = {}) {
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      action: {
+        type: "string",
+        enum: [
+          "click",
+          "fill",
+          "wait",
+          "request_user_input",
+          "request_user_interaction",
+          "request_screenshot",
+          "finish",
+        ],
+      },
+      targetId: {
+        type: "string",
+        description: "Required for click and fill actions. Must match a visible control id from the observation.",
+      },
+      value: {
+        type: "string",
+        description: "Required for fill actions. The value to enter into the target control.",
+      },
+      inputKey: { type: "string" },
+      inputPrompt: { type: "string" },
+      interactionPrompt: { type: "string" },
+      screenshotPrompt: { type: "string" },
+      reason: { type: "string" },
+    },
+    required: ["action"],
+  };
+
+  if (!includeConditionalRequirements) {
+    return schema;
+  }
+
+  return {
+    ...schema,
+    allOf: [
+      {
+        if: { properties: { action: { const: "click" } }, required: ["action"] },
+        then: { required: ["targetId"] },
+      },
+      {
+        if: { properties: { action: { const: "fill" } }, required: ["action"] },
+        then: { required: ["targetId", "value"] },
+      },
+      {
+        if: { properties: { action: { const: "request_user_input" } }, required: ["action"] },
+        then: { required: ["inputKey", "inputPrompt"] },
+      },
+      {
+        if: { properties: { action: { const: "request_user_interaction" } }, required: ["action"] },
+        then: { required: ["interactionPrompt"] },
+      },
+      {
+        if: { properties: { action: { const: "request_screenshot" } }, required: ["action"] },
+        then: { required: ["screenshotPrompt"] },
+      },
+    ],
+  };
+}
+
+function supportsConditionalToolSchemas(llmConfig) {
+  if (llmConfig?.supportsConditionalToolSchemas === false) {
+    return false;
+  }
+
+  return true;
 }
 
 function getConfiguredModelPricing(config) {
@@ -999,6 +1034,9 @@ function buildPlannerMessages({
     planningRules: [
       "Use visible controls only.",
       "Do not invent element IDs.",
+      "For click and fill actions, always provide a targetId that matches a visible control.",
+      "Never emit click or fill without targetId.",
+      "For fill actions, also provide a value.",
       "Do not use the 'Continue with Google' login because the Google page will not load properly in this browser.",
       "Do not fill the same field with a different value unless visible validation or error evidence shows correction is needed.",
       "Use observation.documentText as the main source of visible page text when deciding whether login or onboarding is still loading or has finished.",
@@ -1055,7 +1093,7 @@ function buildPlannerMessages({
   };
 }
 
-async function requestPlannerActionBedrock({ client, modelId, messages, screenshotBuffer }) {
+async function requestPlannerActionBedrock({ client, modelId, llmConfig, messages, screenshotBuffer }) {
   const supportsPromptCaching = modelSupportsBedrockPromptCaching(modelId);
   const userContent = [{ text: messages.staticContextText }];
   if (supportsPromptCaching) {
@@ -1077,10 +1115,16 @@ async function requestPlannerActionBedrock({ client, modelId, messages, screensh
     });
   }
 
-  const toolConfig = plannerBedrockToolSpec();
+  const toolConfig = plannerBedrockToolSpec(llmConfig);
 
-  const command = new ConverseCommand({
+  const plannerInferenceConfig = buildBedrockInferenceConfig(llmConfig, 700);
+  const additionalModelRequestFields = getBedrockAdditionalModelRequestFields(llmConfig);
+
+  const buildCommandInput = (includeServiceTier) => ({
     modelId,
+    ...(includeServiceTier && toBedrockRequestServiceTier(llmConfig?.serviceTier)
+      ? { serviceTier: toBedrockRequestServiceTier(llmConfig?.serviceTier) }
+      : {}),
     system: [{ text: messages.systemText }],
     messages: [
       {
@@ -1088,10 +1132,8 @@ async function requestPlannerActionBedrock({ client, modelId, messages, screensh
         content: userContent,
       },
     ],
-    inferenceConfig: {
-      temperature: 0.2,
-      maxTokens: 700,
-    },
+    ...(plannerInferenceConfig ? { inferenceConfig: plannerInferenceConfig } : {}),
+    ...(additionalModelRequestFields ? { additionalModelRequestFields } : {}),
     toolConfig,
     toolChoice: {
       tool: {
@@ -1102,10 +1144,18 @@ async function requestPlannerActionBedrock({ client, modelId, messages, screensh
 
   let result;
   try {
-    result = await client.send(command);
+    result = await client.send(new ConverseCommand(buildCommandInput(true)));
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Bedrock planner call failed for model '${modelId}': ${detail}`);
+    if (toBedrockRequestServiceTier(llmConfig?.serviceTier) && /unexpected field type/i.test(detail)) {
+      try {
+        result = await client.send(new ConverseCommand(buildCommandInput(false)));
+      } catch {
+        throw new Error(`Bedrock planner call failed for model '${modelId}': ${detail}`);
+      }
+    } else {
+      throw new Error(`Bedrock planner call failed for model '${modelId}': ${detail}`);
+    }
   }
 
   const tokenUsage = normalizeTokenUsage(result?.usage);
@@ -1160,6 +1210,7 @@ async function requestPlannerAction({ config, bedrockClient, messages, screensho
     plannerResult = await requestPlannerActionBedrock({
       client: bedrockClient,
       modelId: config.llm.modelId,
+      llmConfig: config.llm,
       messages,
       screenshotBuffer,
     });
@@ -1185,25 +1236,37 @@ async function requestPlannerAction({ config, bedrockClient, messages, screensho
   };
 }
 
-async function runBedrockPreflight({ client, modelId }) {
-  const command = new ConverseCommand({
+async function runBedrockPreflight({ client, modelId, llmConfig }) {
+  const preflightInferenceConfig = buildBedrockInferenceConfig(llmConfig, 20);
+  const additionalModelRequestFields = getBedrockAdditionalModelRequestFields(llmConfig);
+
+  const buildCommandInput = (includeServiceTier) => ({
     modelId,
+    ...(includeServiceTier && toBedrockRequestServiceTier(llmConfig?.serviceTier)
+      ? { serviceTier: toBedrockRequestServiceTier(llmConfig?.serviceTier) }
+      : {}),
     messages: [
       {
         role: "user",
         content: [{ text: 'Return exactly this JSON: {"ok":true}' }],
       },
     ],
-    inferenceConfig: {
-      temperature: 0,
-      maxTokens: 20,
-    },
+    ...(preflightInferenceConfig ? { inferenceConfig: preflightInferenceConfig } : {}),
+    ...(additionalModelRequestFields ? { additionalModelRequestFields } : {}),
   });
 
   try {
-    await client.send(command);
+    await client.send(new ConverseCommand(buildCommandInput(true)));
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (toBedrockRequestServiceTier(llmConfig?.serviceTier) && /unexpected field type/i.test(detail)) {
+      try {
+        await client.send(new ConverseCommand(buildCommandInput(false)));
+        return;
+      } catch {
+        // Fall through to throw original detail.
+      }
+    }
     throw new Error(
       `Bedrock preflight failed for model '${modelId}'. Check AWS credentials/region/model access. Detail: ${detail}`
     );
@@ -1237,7 +1300,6 @@ async function requestPlannerActionOpenAI({ baseUrl, modelId, apiKey, messages, 
     ],
     tools: toolSpec.tools,
     tool_choice: toolSpec.tool_choice,
-    temperature: 0.2,
     max_tokens: 700,
   };
 
@@ -1302,6 +1364,43 @@ async function requestPlannerActionOpenAI({ baseUrl, modelId, apiKey, messages, 
   return { parsed, tokenUsage };
 }
 
+function buildBedrockInferenceConfig(llmConfig, defaultMaxTokens) {
+  const configured = isPlainObject(llmConfig?.inferenceConfig) ? llmConfig.inferenceConfig : {};
+  const merged = {
+    maxTokens: defaultMaxTokens,
+    ...configured,
+  };
+
+  const normalized = Object.fromEntries(
+    Object.entries(merged).filter(([, value]) => value !== undefined && value !== null)
+  );
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function getBedrockAdditionalModelRequestFields(llmConfig) {
+  const value = llmConfig?.additionalModelRequestFields;
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+
+  const normalized = Object.fromEntries(
+    Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined)
+  );
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function toBedrockRequestServiceTier(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized || normalized === "default") {
+    return undefined;
+  }
+  if (["priority", "flex", "reserved"].includes(normalized)) {
+    return normalized;
+  }
+  return undefined;
+}
+
 async function runOpenAIPreflight({ baseUrl, modelId, apiKey }) {
   const normalizedBaseUrl = String(baseUrl || "").replace(/\/+$/, "");
   const url = `${normalizedBaseUrl}/chat/completions`;
@@ -1309,7 +1408,6 @@ async function runOpenAIPreflight({ baseUrl, modelId, apiKey }) {
   const body = {
     model: modelId,
     messages: [{ role: "user", content: 'Return exactly this JSON: {"ok":true}' }],
-    temperature: 0,
     max_tokens: 20,
   };
 
@@ -1390,21 +1488,28 @@ async function waitForUiSettle(page, settleArg = 700) {
   }
 }
 
-export async function runScenario(config) {
+export async function runScenario(config, options = {}) {
   const startedAt = new Date();
+  const shouldInterrupt = typeof options.shouldInterrupt === "function" ? options.shouldInterrupt : () => false;
 
   if (!Number.isFinite(config.maxSteps) || config.maxSteps < 1) {
     throw new Error("--max-steps must be a positive number");
   }
+
+  const throwIfInterrupted = () => {
+    if (shouldInterrupt()) {
+      throw createInterruptError();
+    }
+  };
 
   const contextData = await loadContextFromOperations(config.contextOperations);
   const personaText = await loadPersonaText(config.personaFile);
   const workspacePromptText = await loadWorkspacePromptText(config.workspacePromptFile);
   const scenario = await resolveScenarioText(config);
   const observationConfig = await loadObservationConfig(config.observationConfigFile);
-  const artifactScreenshotMode = normalizeArtifactScreenshotMode(config.artifactScreenshotMode);
+  const screenshots = normalizeScreenshotMode(config.screenshots);
 
-  const runLabel = sanitizeSegment(scenario.slice(0, 48) || "scenario");
+  const runLabel = resolveRunLabel(config, scenario);
   const runId = `${startedAt.toISOString().replace(/[.:]/g, "-")}-${runLabel}`;
   const runDir = path.join(config.outputDir, runId);
   const screenshotsDir = path.join(runDir, "screenshots");
@@ -1425,7 +1530,7 @@ export async function runScenario(config) {
       personaFile: config.personaFile,
       scenarioFile: config.scenarioFile,
       observationConfigFile: config.observationConfigFile,
-      artifactScreenshotMode,
+      screenshots,
     },
     startedAt: startedAt.toISOString(),
     finishedAt: "",
@@ -1466,12 +1571,31 @@ export async function runScenario(config) {
 
   if (config.llm.provider === "openai-compatible") {
     logger.info(`running OpenAI-compatible preflight against model ${config.llm.modelId}`);
+    if (shouldInterrupt()) {
+      return {
+        status: "interrupted",
+        error: "Interrupted by Ctrl-C."
+      };
+    }
     await runOpenAIPreflight({ baseUrl: config.llm.baseUrl, modelId: config.llm.modelId, apiKey: config.llm.apiKey });
     logger.info("OpenAI-compatible preflight succeeded");
   } else {
     logger.info(`running Bedrock preflight against model ${config.llm.modelId}`);
-    await runBedrockPreflight({ client: bedrockClient, modelId: config.llm.modelId });
+    if (shouldInterrupt()) {
+      return {
+        status: "interrupted",
+        error: "Interrupted by Ctrl-C."
+      };
+    }
+    await runBedrockPreflight({ client: bedrockClient, modelId: config.llm.modelId, llmConfig: config.llm });
     logger.info("Bedrock preflight succeeded");
+  }
+
+  if (shouldInterrupt()) {
+    return {
+      status: "interrupted",
+      error: "Interrupted by Ctrl-C."
+    };
   }
 
   const browser = await chromium.launch({ headless: !config.headed });
@@ -1488,6 +1612,7 @@ export async function runScenario(config) {
   let pendingScreenshotBuffer = null;
 
   const captureViewportScreenshot = async (options = {}) => {
+    throwIfInterrupted();
     return page.screenshot({
       fullPage: false,
       animations: "disabled",
@@ -1497,7 +1622,8 @@ export async function runScenario(config) {
   };
 
   const captureArtifactScreenshot = async (options = {}) => {
-    if (artifactScreenshotMode === "fullpage") {
+    throwIfInterrupted();
+    if (screenshots === "fullpage") {
       return page.screenshot({
         fullPage: true,
         animations: "disabled",
@@ -1510,6 +1636,7 @@ export async function runScenario(config) {
   };
 
   async function captureStep(name, plannerAction, execute, stepDebugContext = undefined) {
+    throwIfInterrupted();
     stepIndex += 1;
     const screenshotName = `${String(stepIndex).padStart(2, "0")}-${sanitizeSegment(name)}.png`;
     const screenshotPath = path.join(screenshotsDir, screenshotName);
@@ -1519,11 +1646,12 @@ export async function runScenario(config) {
     let stepScreenshotRelativePath;
     try {
       await execute();
+      throwIfInterrupted();
     } catch (error) {
       stepError = errorMessage(error);
       throw error;
     } finally {
-      if (artifactScreenshotMode !== "none") {
+      if (screenshots !== "none") {
         await page.waitForTimeout(120);
         await captureArtifactScreenshot({ path: screenshotPath });
         stepScreenshotRelativePath = path.relative(runDir, screenshotPath);
@@ -1545,15 +1673,20 @@ export async function runScenario(config) {
   }
 
   try {
+    throwIfInterrupted();
+
     await captureStep("open_start_page", { action: "navigate", reason: "scenario start" }, async () => {
+      throwIfInterrupted();
       logger.info(`navigating to ${config.baseUrl}`);
       await page.goto(config.baseUrl, { waitUntil: "domcontentloaded" });
       await waitForUiSettle(page, 900);
     });
 
     for (let i = 0; i < config.maxSteps; i += 1) {
+      throwIfInterrupted();
       await waitForUiSettle(page, 550);
       const observation = await collectObservation(page, observationConfig);
+      throwIfInterrupted();
       logger.info(`observation ${i + 1}: ${formatObservationSummary(observation)}`);
 
       const screenshotBufferForThisTurn = pendingScreenshotBuffer;
@@ -1588,6 +1721,8 @@ export async function runScenario(config) {
         screenshotBuffer: screenshotBufferForThisTurn,
       });
 
+      throwIfInterrupted();
+
       const { tokenUsage: plannerTokenUsage, ...plannerAction } = plannerResult;
 
       if (plannerTokenUsage) {
@@ -1611,159 +1746,164 @@ export async function runScenario(config) {
         : undefined;
 
       try {
-        await captureStep(
-          actionName,
-          plannerAction,
-          async () => {
-            if (plannerAction.action === "finish") {
-              logger.info(`finish accepted at ${page.url()}`);
-              report.status = "passed";
-              report.finalUrl = page.url();
+      await captureStep(
+        actionName,
+        plannerAction,
+        async () => {
+          throwIfInterrupted();
+          if (plannerAction.action === "finish") {
+            logger.info(`finish accepted at ${page.url()}`);
+            report.status = "passed";
+            report.finalUrl = page.url();
+            return;
+          }
+
+          if (plannerAction.action === "wait") {
+            logger.info("planner requested wait; allowing UI to settle");
+            await page.waitForTimeout(1200);
+            return;
+          }
+
+          if (plannerAction.action === "request_user_input") {
+            if (!config.headed) {
+              throw new Error("LLM got blocked: requested user input in headless mode.");
+            }
+
+            const inputKey =
+              typeof plannerAction.inputKey === "string" && plannerAction.inputKey.trim().length > 0
+                ? plannerAction.inputKey.trim()
+                : "value";
+
+            const promptText =
+              typeof plannerAction.inputPrompt === "string" && plannerAction.inputPrompt.trim().length > 0
+                ? plannerAction.inputPrompt.trim()
+                : `Enter value for '${inputKey}'`;
+
+            if (!humanInputs.has(inputKey)) {
+              logger.info(`requesting human input for key '${inputKey}'`);
+              const enteredValue = await readHumanInputFromTerminal(`${promptText}: `);
+              throwIfInterrupted();
+              if (!enteredValue) {
+                throw new Error(`No value entered for '${inputKey}'.`);
+              }
+              humanInputs.set(inputKey, enteredValue);
+              logger.info(`received human input for key '${inputKey}'`);
+            }
+
+            return;
+          }
+
+          if (plannerAction.action === "request_user_interaction") {
+            if (!config.headed) {
+              throw new Error("LLM got blocked: requested user interaction in headless mode.");
+            }
+
+            // If we just acted on the UI, give the app a chance to transition
+            // before escalating to the user.
+            const sinceLastUiActionMs = Date.now() - lastUiActionAt;
+            if (lastUiActionAt > 0 && sinceLastUiActionMs < 3500) {
+              logger.info("deferring user interaction prompt until UI settles after recent action");
+              await waitForUiSettle(page, 1500);
               return;
             }
 
-            if (plannerAction.action === "wait") {
-              logger.info("planner requested wait; allowing UI to settle");
-              await page.waitForTimeout(1200);
-              return;
-            }
+            const interactionPrompt =
+              typeof plannerAction.interactionPrompt === "string" && plannerAction.interactionPrompt.trim().length > 0
+                ? plannerAction.interactionPrompt.trim()
+                : "Please perform the requested interaction in the browser and press Enter when done";
 
-            if (plannerAction.action === "request_user_input") {
-              if (!config.headed) {
-                throw new Error("LLM got blocked: requested user input in headless mode.");
-              }
-
-              const inputKey =
-                typeof plannerAction.inputKey === "string" && plannerAction.inputKey.trim().length > 0
-                  ? plannerAction.inputKey.trim()
-                  : "value";
-
-              const promptText =
-                typeof plannerAction.inputPrompt === "string" && plannerAction.inputPrompt.trim().length > 0
-                  ? plannerAction.inputPrompt.trim()
-                  : `Enter value for '${inputKey}'`;
-
-              if (!humanInputs.has(inputKey)) {
-                logger.info(`requesting human input for key '${inputKey}'`);
-                const enteredValue = await readHumanInputFromTerminal(`${promptText}: `);
-                if (!enteredValue) {
-                  throw new Error(`No value entered for '${inputKey}'.`);
-                }
-                humanInputs.set(inputKey, enteredValue);
-                logger.info(`received human input for key '${inputKey}'`);
-              }
-
-              return;
-            }
-
-            if (plannerAction.action === "request_user_interaction") {
-              if (!config.headed) {
-                throw new Error("LLM got blocked: requested user interaction in headless mode.");
-              }
-
-              // If we just acted on the UI, give the app a chance to transition
-              // before escalating to the user.
-              const sinceLastUiActionMs = Date.now() - lastUiActionAt;
-              if (lastUiActionAt > 0 && sinceLastUiActionMs < 3500) {
-                logger.info("deferring user interaction prompt until UI settles after recent action");
-                await waitForUiSettle(page, 1500);
-                return;
-              }
-
-              const interactionPrompt =
-                typeof plannerAction.interactionPrompt === "string" && plannerAction.interactionPrompt.trim().length > 0
-                  ? plannerAction.interactionPrompt.trim()
-                  : "Please perform the requested interaction in the browser and press Enter when done";
-
-              // Require the same interaction request twice (with same URL/prompt)
-              // before prompting the human. This avoids transient false positives.
-              const interactionKey = `${page.url()}::${interactionPrompt}`;
-              if (!pendingInteractionRequest || pendingInteractionRequest.key !== interactionKey) {
-                pendingInteractionRequest = { key: interactionKey, count: 1 };
-                logger.info(
-                  `seen first interaction request for '${interactionPrompt}' on ${page.url()}; waiting to confirm`
-                );
-                await waitForUiSettle(page, 1200);
-                return;
-              }
-
-              pendingInteractionRequest.count += 1;
-              if (pendingInteractionRequest.count < 2) {
-                logger.info(
-                  `re-seen interaction request for '${interactionPrompt}'; waiting one more cycle before prompting`
-                );
-                await waitForUiSettle(page, 1200);
-                return;
-              }
-
-              logger.info(`prompting for human interaction: ${interactionPrompt}`);
-              const interactionNote = await readHumanInputFromTerminal(`${interactionPrompt}. Optional note: `);
-              if (interactionNote) {
-                const key = `interaction_note_${stepIndex}`;
-                humanInputs.set(key, interactionNote);
-              }
-
-              pendingInteractionRequest = null;
-
-              return;
-            }
-
-            if (plannerAction.action === "request_screenshot") {
+            // Require the same interaction request twice (with same URL/prompt)
+            // before prompting the human. This avoids transient false positives.
+            const interactionKey = `${page.url()}::${interactionPrompt}`;
+            if (!pendingInteractionRequest || pendingInteractionRequest.key !== interactionKey) {
+              pendingInteractionRequest = { key: interactionKey, count: 1 };
               logger.info(
-                `planner requested the most recent screenshot${
-                  typeof plannerAction.screenshotPrompt === "string" && plannerAction.screenshotPrompt.trim().length > 0
-                    ? `: ${clip(plannerAction.screenshotPrompt, 140)}`
-                    : ""
-                }`
+                `seen first interaction request for '${interactionPrompt}' on ${page.url()}; waiting to confirm`
               );
-
-              // Capture immediately from the current viewport so transient popups
-              // (menus, sheets) are preserved for the next planner turn.
-              pendingScreenshotBuffer = await captureViewportScreenshot();
-
+              await waitForUiSettle(page, 1200);
               return;
             }
 
-            if (!plannerAction.targetId) {
-              throw new Error(`Planner action ${plannerAction.action} missing targetId.`);
-            }
-
-            const target = page.locator(`[data-agentic-id="${plannerAction.targetId}"]`).first();
-            if ((await target.count()) === 0) {
-              throw new Error(`Planner target not found: ${plannerAction.targetId}`);
-            }
-
-            if (plannerAction.action === "click") {
-              const isDisabled = await isTargetDisabled(target);
-              if (isDisabled) {
-                logger.warn(`target ${plannerAction.targetId} is disabled before click; replanning immediately`);
-                throw new Error(`Disabled target before click: ${plannerAction.targetId}`);
-              }
-
-              logger.info(`clicking target ${plannerAction.targetId}`);
-              await target.click({ timeout: 1500 });
-              lastUiActionAt = Date.now();
-              pendingInteractionRequest = null;
-              await waitForUiSettle(page, 900);
+            pendingInteractionRequest.count += 1;
+            if (pendingInteractionRequest.count < 2) {
+              logger.info(
+                `re-seen interaction request for '${interactionPrompt}'; waiting one more cycle before prompting`
+              );
+              await waitForUiSettle(page, 1200);
               return;
             }
 
-            if (plannerAction.action === "fill") {
-              const fillValue = resolveFillValue(plannerAction.value, contextData, humanInputs);
-              logger.info(`filling target ${plannerAction.targetId}`);
-
-              await target.fill(fillValue);
-              lastUiActionAt = Date.now();
-              pendingInteractionRequest = null;
-              await waitForUiSettle(page, 450);
-              return;
+            logger.info(`prompting for human interaction: ${interactionPrompt}`);
+            const interactionNote = await readHumanInputFromTerminal(`${interactionPrompt}. Optional note: `);
+            throwIfInterrupted();
+            if (interactionNote) {
+              const key = `interaction_note_${stepIndex}`;
+              humanInputs.set(key, interactionNote);
             }
 
-            throw new Error(`Unsupported planner action: ${plannerAction.action}`);
-          },
-          stepDebugContext
-        );
-      } catch (error) {
+            pendingInteractionRequest = null;
+
+            return;
+          }
+
+          if (plannerAction.action === "request_screenshot") {
+            logger.info(
+              `planner requested the most recent screenshot${
+                typeof plannerAction.screenshotPrompt === "string" && plannerAction.screenshotPrompt.trim().length > 0
+                  ? `: ${clip(plannerAction.screenshotPrompt, 140)}`
+                  : ""
+              }`
+            );
+
+            // Capture immediately from the current viewport so transient popups
+            // (menus, sheets) are preserved for the next planner turn.
+            pendingScreenshotBuffer = await captureViewportScreenshot();
+
+            return;
+          }
+
+          if (!plannerAction.targetId) {
+            throw new Error(`Planner action ${plannerAction.action} missing targetId.`);
+          }
+
+          const target = page.locator(`[data-agentic-id="${plannerAction.targetId}"]`).first();
+          if ((await target.count()) === 0) {
+            throw new Error(`Planner target not found: ${plannerAction.targetId}`);
+          }
+
+          if (plannerAction.action === "click") {
+            const isDisabled = await isTargetDisabled(target);
+            if (isDisabled) {
+              logger.warn(`target ${plannerAction.targetId} is disabled before click; replanning immediately`);
+              throw new Error(`Disabled target before click: ${plannerAction.targetId}`);
+            }
+
+            logger.info(`clicking target ${plannerAction.targetId}`);
+            await target.click({ timeout: 1500 });
+            throwIfInterrupted();
+            lastUiActionAt = Date.now();
+            pendingInteractionRequest = null;
+            await waitForUiSettle(page, 900);
+            return;
+          }
+
+          if (plannerAction.action === "fill") {
+            const fillValue = resolveFillValue(plannerAction.value, contextData, humanInputs);
+            logger.info(`filling target ${plannerAction.targetId}`);
+
+            await target.fill(fillValue);
+            throwIfInterrupted();
+            lastUiActionAt = Date.now();
+            pendingInteractionRequest = null;
+            await waitForUiSettle(page, 450);
+            return;
+          }
+
+          throw new Error(`Unsupported planner action: ${plannerAction.action}`);
+        },
+        stepDebugContext
+      );
+    } catch (error) {
         const recoverableKind = classifyRecoverableActionError(error);
         if (!recoverableKind) {
           throw error;
@@ -1792,6 +1932,8 @@ export async function runScenario(config) {
       }
     }
 
+    throwIfInterrupted();
+
     if (report.status === "running") {
       report.status = "failed";
       report.finalUrl = page.url();
@@ -1799,12 +1941,18 @@ export async function runScenario(config) {
       logger.error(report.error);
     }
   } catch (error) {
-    report.status = "failed";
-    report.finalUrl = page.url();
-    report.error = error instanceof Error ? error.message : String(error);
-    logger.error(report.error);
-    const failureScreenshot = path.join(screenshotsDir, "failure.png");
-    await captureViewportScreenshot({ path: failureScreenshot });
+    if (isInterruptError(error)) {
+      report.status = "interrupted";
+      report.finalUrl = page.url();
+      report.error = "Interrupted by Ctrl-C.";
+    } else {
+      report.status = "failed";
+      report.finalUrl = page.url();
+      report.error = error instanceof Error ? error.message : String(error);
+      logger.error(report.error);
+      const failureScreenshot = path.join(screenshotsDir, "failure.png");
+      await captureViewportScreenshot({ path: failureScreenshot });
+    }
   } finally {
     report.finishedAt = new Date().toISOString();
 
@@ -1831,7 +1979,7 @@ export async function runScenario(config) {
       `- Provider/Model: ${modelSummary}`,
       `- Final URL: ${report.finalUrl || "n/a"}`,
       `- Run ID: ${runId}`,
-      `- Artifact Screenshots: ${artifactScreenshotMode}`,
+      `- Screenshots: ${screenshots}`,
       ...(report.costEstimate
         ? [`- Estimated Cost (${report.costEstimate.currency}): ${report.costEstimate.costs.total.toFixed(6)}`]
         : []),
@@ -1885,14 +2033,28 @@ export async function runScenario(config) {
     await context.close();
     await browser.close();
 
-    const statusPrefix = report.status === "passed" ? "PASS" : "FAIL";
+    const statusPrefix = report.status === "passed"
+      ? "PASS"
+      : report.status === "interrupted"
+        ? "INTERRUPTED"
+        : "FAIL";
     process.stdout.write(`${statusPrefix}: ${runDir}\n`);
     logger.info(`finished run with status ${report.status}`);
 
-    if (report.status !== "passed") {
+    if (report.status !== "passed" && report.status !== "interrupted") {
       process.exitCode = 1;
     }
   }
 
   return report;
+}
+
+function createInterruptError() {
+  const error = new Error("Interrupted by Ctrl-C.");
+  error.name = "InterruptError";
+  return error;
+}
+
+function isInterruptError(error) {
+  return error instanceof Error && error.name === "InterruptError";
 }

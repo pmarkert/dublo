@@ -32,8 +32,7 @@ npx playwright install-deps chromium
 
 ```bash
 mkdir -p .dublo/llm .dublo/personas .dublo/scenarios .dublo/context
-cp dublo.workspace.example.json .dublo/config.json
-cp llm.default.example.json .dublo/llm/default.json
+cp dublo.workspace.example.json .dublo/defaults.json
 ```
 
 2. Install Chromium (one-time):
@@ -45,19 +44,21 @@ npx playwright install chromium
 3. Run with profile selectors:
 
 ```bash
-npm run run -- --workspace ./.dublo --llm default --scenario "Verify the home page loads and primary CTA is visible."
+npm run run -- --workspace ./.dublo --scenario "Verify the home page loads and primary CTA is visible."
 ```
 
 If no scenario is specified in config or via `--scenario`, dublo reads scenario text from stdin:
 
 ```bash
-echo "Verify the home page loads and primary CTA is visible." | npm run run -- --workspace ./.dublo --llm default
+echo "Verify the home page loads and primary CTA is visible." | npm run run -- --workspace ./.dublo
 ```
+
+Before running a scenario, create at least one LLM profile with `dublo llm config` or place a profile under `<workspace>/llm`.
 
 Or call directly:
 
 ```bash
-node src/dublo.js run --workspace ./.dublo --llm default
+node src/dublo.js run --workspace ./.dublo
 ```
 
 Interactive workspace setup:
@@ -83,7 +84,7 @@ The LLM wizard lets users:
 - choose from a recommended Bedrock model list for the selected region, or
 - enter any custom Bedrock model ID manually.
 
-This guided flow creates/updates `<workspace>/config.json` and can initialize:
+This guided flow creates/updates `<workspace>/defaults.json` and can initialize:
 
 - `<workspace>/llm`
 - `<workspace>/personas`
@@ -132,9 +133,13 @@ dublo persona edit <profile> [options]
 dublo scenario list [options]
 dublo scenario show <profile> [options]
 dublo scenario edit <profile> [options]
+dublo context list [options]
+dublo context show <profile> [options]
+dublo context edit <profile> [options]
+dublo context validate [profile] [options]
 
 Options:
-  --workspace <path>    Workspace directory containing config.json and llm/personas/scenarios/context folders
+  --workspace <path>    Workspace directory containing defaults.json and llm/personas/scenarios/context folders
   --llm <value>         LLM config file path or profile name in <workspace>/llm
   --persona <value>     Persona file path or profile name in <workspace>/personas
   --scenario <value>    Scenario file path or profile name in <workspace>/scenarios
@@ -158,6 +163,8 @@ Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
   --region <region>     Bedrock region override
   --model-id <id>       Bedrock model ID override
+  --inference-profile <scope>  Inference profile scope for models that support it (global or us)
+  --service-tier <tier>  Service tier for models that support it (default, priority, flex, reserved)
   --set-default         Set workspace config llm field to this profile (non-interactive mode)
   -y, --yes             Accept defaults/flags and write profile without prompts
 
@@ -214,6 +221,29 @@ dublo scenario edit <profile> [options]
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
 
+dublo context list [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+
+dublo context show <profile> [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+
+dublo context edit <profile> [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+  --yaml                Force YAML file output (.yaml/.yml) for new or matching existing profile
+  --json                Force JSON file output (.json) for new or matching existing profile
+
+dublo context validate [profile] [options]
+
+Options:
+  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
+  --name <profile>      Context profile name override
+
 Current built-in scenario templates:
 
 - `homepage-smoke`
@@ -228,7 +258,7 @@ Current built-in persona templates:
 - `performance`
 ```
 
-Workspace runtime config (`<workspace>/config.json`) structure:
+Workspace runtime config (`<workspace>/defaults.json`) structure:
 
 ```json
 {
@@ -238,7 +268,7 @@ Workspace runtime config (`<workspace>/config.json`) structure:
   "context": ["shared", "qa-user"],
   "maxSteps": 40,
   "headless": false,
-  "artifactScreenshotMode": "none",
+  "screenshots": "none",
   "debug": false,
   "outputDir": "./output/runs"
 }
@@ -251,6 +281,10 @@ LLM profile (`<workspace>/llm/<name>.json`) structure:
   "provider": "bedrock",
   "region": "us-east-1",
   "modelId": "amazon.nova-pro-v1:0",
+  "inferenceConfig": {
+    "temperature": 0
+  },
+  "additionalModelRequestFields": {},
   "inputPrice": 0.8,
   "outputPrice": 3.2,
   "cacheReadPrice": 0.2,
@@ -285,21 +319,21 @@ LLM selector fallback order:
 
 - `--llm`
 - `DUBLO_LLM`
-- `<workspace>/config.json` field `llm`
+- `<workspace>/defaults.json` field `llm`
 - If `<workspace>/llm` contains exactly one `.json` file, that file is used automatically.
 
 Persona selector fallback order:
 
 - `--persona`
 - `DUBLO_PERSONA`
-- `<workspace>/config.json` field `persona`
+- `<workspace>/defaults.json` field `persona`
 - If `<workspace>/personas` contains exactly one `.md` or `.txt` file, that file is used automatically.
 
 Context selector fallback order:
 
 - `--context` (repeatable)
 - `DUBLO_CONTEXT` (comma-separated)
-- `<workspace>/config.json` field `context` (string or array)
+- `<workspace>/defaults.json` field `context` (string or array)
 - If none are set, no context file is loaded.
 
 Inline context updates:
@@ -332,7 +366,7 @@ dublo run --context base --set auth.user.name=phillip --json '{"auth":{"role":"a
 Environment variable fallback (optional):
 
 - Only names: `DUBLO_*`
-- `<workspace>/config.json` overrides env for runtime options
+- `<workspace>/defaults.json` overrides env for runtime options
 - `--llm/--persona/--scenario/--context` override env selectors
 
 Workspace env var:

@@ -8,6 +8,14 @@ import { logger } from "../utils/logger.js";
 
 export async function runCommand(options) {
   const config = loadScenarioConfig(options);
+  let interrupted = false;
+  const onInterrupt = () => {
+    interrupted = true;
+  };
+
+  process.once("SIGINT", onInterrupt);
+  process.once("SIGTERM", onInterrupt);
+
   const llmSelection = firstDefined(
     config.llmRef,
     config.workspaceLlmRef,
@@ -70,7 +78,7 @@ export async function runCommand(options) {
   }
 
   if (!config.baseUrl) {
-    throw new Error("A base URL is required. Set baseUrl in <workspace>/config.json or DUBLO_BASE_URL.");
+    throw new Error("A base URL is required. Set baseUrl in <workspace>/defaults.json or DUBLO_BASE_URL.");
   }
 
   if (!config.scenario && !config.scenarioFile) {
@@ -104,7 +112,20 @@ export async function runCommand(options) {
   logger.info("Starting dublo run");
   logger.info(`Target: ${config.baseUrl}`);
 
-  await runScenario(config);
+  try {
+    const report = await runScenario(config, {
+      shouldInterrupt: () => interrupted
+    });
+
+    if (report?.status === "interrupted") {
+      process.stderr.write("Interrupted.\n");
+      process.exitCode = 130;
+      return;
+    }
+  } finally {
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onInterrupt);
+  }
 
   logger.info("Run complete");
 }
@@ -212,7 +233,8 @@ function normalizeLlmConfig(value = {}) {
     cacheReadPrice: firstDefined(llm.cacheReadPrice, llm["cache-read-price"]),
     cacheWritePrice: firstDefined(llm.cacheWritePrice, llm["cache-write-price"]),
     currency: firstDefined(llm.currency),
-    tokenUnit: firstDefined(llm.tokenUnit, llm["token-unit"])
+    tokenUnit: firstDefined(llm.tokenUnit, llm["token-unit"]),
+    supportsConditionalToolSchemas: firstDefined(llm.supportsConditionalToolSchemas)
   };
 }
 
