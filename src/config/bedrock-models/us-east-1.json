@@ -62,23 +62,6 @@
     }
   },
   {
-    "label": "Amazon Nova 2 Pro (high quality)",
-    "modelId": "amazon.nova-2-pro-v1:0",
-    "supportsConditionalToolSchemas": true,
-    "inferenceProfiles": ["us", "global"],
-    "serviceTiers": ["default", "priority", "flex"],
-    "inferenceConfig": { "temperature": 0 },
-    "pricing": {
-      "tokenUnit": 1000000,
-      "currency": "USD",
-      "defaults": { "input": 1.375, "output": 11 },
-      "byServiceTier": {
-        "priority": { "input": 2.4063, "output": 19.25 },
-        "flex": { "input": 0.6875, "output": 5.5 }
-      }
-    }
-  },
-  {
     "label": "Anthropic Claude 4.5 Haiku",
     "modelId": "anthropic.claude-haiku-4-5-20251001-v1:0",
     "supportsConditionalToolSchemas": false,

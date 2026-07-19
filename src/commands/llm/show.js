@@ -1,5 +1,5 @@
 import process from "node:process";
-import { loadScenarioConfig } from "../../config/loadScenarioConfig.js";
+import { loadScenarioConfig } from "../../utils/loadScenarioConfig.js";
 import { inferSingleLlmProfile, readJsonObject, resolveLlmProfilePath } from "./shared.js";
 
 export async function showLlmCommand(profile, options = {}) {

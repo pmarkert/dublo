@@ -249,12 +249,12 @@ program
   .version("0.1.0", "--version");
 
 program
-  .command("run")
+  .command("run [scenario]")
   .description("Run using workspace config and selectors")
   .option("--workspace <path>", "Workspace directory (contains defaults.json and llm/personas/scenarios/context)")
   .option("--llm <value>", "LLM config file path or profile name in <workspace>/llm")
   .option("--persona <value>", "Persona file path or profile name in <workspace>/personas")
-  .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios")
+  .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios (or use positional [scenario])")
   .option("--headless", "Run browser in headless mode")
   .option("--debug", "Enable debug logging for this run")
   .option(
@@ -264,10 +264,11 @@ program
   )
   .option("--set <keyValue>", "Inline context assignment key.path=value (or key.path:value); repeatable", collectOptionValues)
   .option("--json <object>", "Inline JSON object merged into context (repeatable)", collectOptionValues)
-  .action(async (options) => {
+  .action(async (scenarioArg, options) => {
     const orderedContextOperations = collectOrderedContextOperations(process.argv);
     await runCommand({
       ...options,
+      scenario: options.scenario || scenarioArg,
       contextOperations: orderedContextOperations
     });
   });
