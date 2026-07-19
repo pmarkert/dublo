@@ -41,12 +41,23 @@ function validateParsedProfile(profile, profilePath) {
     throw new Error(`LLM profile '${profilePath}' is missing required field 'provider'.`);
   }
 
-  if (provider !== "bedrock") {
+  if (provider !== "bedrock" && provider !== "openai-compatible") {
     throw new Error(`LLM profile '${profilePath}' has unsupported provider '${profile.provider}'.`);
   }
 
-  if (!profile.region || typeof profile.region !== "string") {
-    throw new Error(`LLM profile '${profilePath}' is missing required field 'region'.`);
+  if (provider === "bedrock") {
+    if (!profile.region || typeof profile.region !== "string") {
+      throw new Error(`LLM profile '${profilePath}' is missing required field 'region'.`);
+    }
+  }
+
+  if (provider === "openai-compatible") {
+    if (!profile.baseUrl || typeof profile.baseUrl !== "string") {
+      throw new Error(`LLM profile '${profilePath}' is missing required field 'baseUrl'.`);
+    }
+    if (!profile.baseUrl.startsWith("http")) {
+      throw new Error(`LLM profile '${profilePath}' field 'baseUrl' must start with http or https.`);
+    }
   }
 
   if (!profile.modelId || typeof profile.modelId !== "string") {

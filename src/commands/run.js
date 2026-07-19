@@ -84,16 +84,21 @@ export async function runCommand(options) {
     throw new Error("LLM provider is required. Set it in your llm profile or DUBLO_LLM_PROVIDER.");
   }
 
-  if (config.llm.provider !== "bedrock") {
-    throw new Error(`Unsupported llm.provider '${config.llm.provider}'. Only 'bedrock' is supported.`);
+  const supportedProviders = ["bedrock", "openai-compatible"];
+  if (!supportedProviders.includes(config.llm.provider)) {
+    throw new Error(`Unsupported llm.provider '${config.llm.provider}'. Supported providers: ${supportedProviders.join(", ")}.`);
   }
 
   if (!config.llm.modelId) {
     throw new Error("LLM model ID is required. Set it in your llm profile or DUBLO_LLM_MODEL_ID.");
   }
 
-  if (!config.llm.region) {
-    throw new Error("LLM region is required. Set it in your llm profile or DUBLO_LLM_REGION.");
+  if (config.llm.provider === "bedrock" && !config.llm.region) {
+    throw new Error("LLM region is required for Bedrock. Set it in your llm profile or DUBLO_LLM_REGION.");
+  }
+
+  if (config.llm.provider === "openai-compatible" && !config.llm.baseUrl) {
+    throw new Error("LLM baseUrl is required for openai-compatible. Set it in your llm profile or DUBLO_LLM_BASE_URL.");
   }
 
   logger.info("Starting dublo run");
@@ -200,6 +205,8 @@ function normalizeLlmConfig(value = {}) {
     provider: firstDefined(llm.provider),
     region: firstDefined(llm.region),
     modelId: firstDefined(llm.modelId, llm["model-id"]),
+    baseUrl: firstDefined(llm.baseUrl, llm["base-url"]),
+    apiKey: firstDefined(llm.apiKey, llm["api-key"]),
     inputPrice: firstDefined(llm.inputPrice, llm["input-price"]),
     outputPrice: firstDefined(llm.outputPrice, llm["output-price"]),
     cacheReadPrice: firstDefined(llm.cacheReadPrice, llm["cache-read-price"]),
