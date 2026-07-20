@@ -2,8 +2,8 @@
 import tab from "@bomb.sh/tab/commander";
 import { Command } from "commander";
 import { addRunOptionValueCompletions } from "./utils/command-registration-helpers.js";
-import { registerConfigureCommand } from "./commands/register-configure-command.js";
-import { registerRunCommand } from "./commands/register-run-command.js";
+import registerConfigureCommand from "./commands/configure/index.js";
+import registerRunCommand from "./commands/run/index.js";
 import registerLlmCommands from "./commands/llm/index.js";
 import registerPersonaCommands from "./commands/persona/index.js";
 import registerScenarioCommands from "./commands/scenario/index.js";

@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
-import { DEFAULT_REPORT_GENERATORS, listReportGenerators } from "../reporting/report-artifacts.mjs";
+import { DEFAULT_REPORT_GENERATORS, listReportGenerators } from "../../reporting/report-artifacts.mjs";
 
 const DEFAULT_CONFIG = {
   baseUrl: "http://localhost:8080",
@@ -393,4 +393,18 @@ async function askChoice(rl, label, options, defaultValue) {
 
     process.stdout.write(`Please choose one of: ${options.join(", ")}\n`);
   }
+}
+
+export default function registerConfigureCommand(program) {
+  program
+    .command("config")
+    .alias("init")
+    .description("Interactively create or update workspace defaults.json")
+    .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+    .option("--prompt", "Edit the workspace prompt markdown file")
+    .option("--show-prompt", "Write the workspace prompt markdown file to stdout")
+    .option("-y, --yes", "Accept defaults and write config without prompts")
+    .action(async (options) => {
+      await configureCommand(options);
+    });
 }
