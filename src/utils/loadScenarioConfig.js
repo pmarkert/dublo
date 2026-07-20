@@ -202,20 +202,6 @@ export function loadScenarioConfig(overrides = {}) {
     setEntries: [],
     jsonEntries: [],
     persona: "",
-    scenario: "",
-    llm: {
-      provider: "bedrock",
-      region: firstDefined(process.env.AWS_REGION, "us-east-1"),
-      modelId: "amazon.nova-pro-v1:0",
-      baseUrl: undefined,
-      apiKey: undefined,
-      inputPrice: undefined,
-      outputPrice: undefined,
-      cacheReadPrice: undefined,
-      cacheWritePrice: undefined,
-      currency: "USD",
-      tokenUnit: 1000000
-    },
     ...cleanUndefined(envConfig),
     ...workspaceRuntimeConfig,
     ...cleanUndefined({
