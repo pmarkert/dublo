@@ -23,7 +23,7 @@ export async function showContextCommand(options = {}) {
   }
 
   const object = await readContextObject(profilePath);
-  process.stdout.write(`${JSON.stringify(object, null, 2)}\n`);
+  process.stdout.write(`File: ${profilePath}\n--\n${JSON.stringify(object, null, 2)}\n`);
 }
 
 function firstDefined(...values) {

@@ -17,6 +17,7 @@ export async function showScenarioCommand(options = {}) {
   }
 
   const text = await readScenarioText(profilePath);
+  process.stdout.write(`File: ${profilePath}\n--\n`);
   process.stdout.write(text);
   if (!text.endsWith("\n")) {
     process.stdout.write("\n");

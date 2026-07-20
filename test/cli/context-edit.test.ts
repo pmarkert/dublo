@@ -43,5 +43,5 @@ void test("context show treats a comment-only YAML template as an empty object",
   );
 
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, "{}\n");
+  assert.equal(result.stdout, `File: ${path.join(workspace, "context", "gary.yaml")}\n--\n{}\n`);
 });

@@ -17,6 +17,7 @@ export async function showPersonaCommand(options = {}) {
   }
 
   const text = await readPersonaText(profilePath);
+  process.stdout.write(`File: ${profilePath}\n--\n`);
   process.stdout.write(text);
   if (!text.endsWith("\n")) {
     process.stdout.write("\n");
