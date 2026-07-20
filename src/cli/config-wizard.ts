@@ -20,7 +20,7 @@ interface ConfirmPromptOptions {
   default: boolean;
 }
 
-interface PromptChoice<Value> {
+export interface PromptChoice<Value> {
   name: string;
   value: Value;
   description?: string;
@@ -48,6 +48,11 @@ export interface ConfigWizardPrompts {
 
 export interface ConfigWizardOptions {
   current: WorkspaceDefaults;
+  profiles: {
+    llm: readonly PromptChoice<string>[];
+    persona: readonly PromptChoice<string>[];
+    context: readonly PromptChoice<string>[];
+  };
   prompts: ConfigWizardPrompts;
   write: (text: string) => void;
 }
@@ -76,20 +81,29 @@ export async function runConfigWizard(
     default: values.baseUrl,
     validate: validateUrl
   });
-  const llm = await options.prompts.input({
-    message: "Default LLM profile",
-    default: values.llm
+  const llm =
+    options.profiles.llm.length > 0
+      ? await options.prompts.select({
+          message: "Default LLM profile",
+          choices: options.profiles.llm,
+          default: selectedValue(values.llm, options.profiles.llm)
+        })
+      : values.llm;
+  const persona = await options.prompts.select({
+    message: "Default persona",
+    choices: options.profiles.persona,
+    default: selectedValue(values.persona, options.profiles.persona)
   });
-  const persona = await options.prompts.input({
-    message: "Default persona profile",
-    default: values.persona
-  });
-  const context = parseList(
-    await options.prompts.input({
-      message: "Default context profiles/files (comma-separated)",
-      default: values.context.join(", ")
-    })
-  );
+  const context =
+    options.profiles.context.length > 0
+      ? await options.prompts.checkbox({
+          message: "Default context profiles",
+          choices: options.profiles.context.map((choice) => ({
+            ...choice,
+            checked: values.context.includes(choice.value)
+          }))
+        })
+      : values.context;
   const maxSteps = await options.prompts.number({
     message: "Maximum steps",
     default: values.maxSteps,
@@ -152,11 +166,8 @@ export async function runConfigWizard(
     : undefined;
 }
 
-function parseList(value: string): string[] {
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+function selectedValue(value: string, choices: readonly PromptChoice<string>[]): string {
+  return choices.some((choice) => choice.value === value) ? value : "";
 }
 
 function validateUrl(value: string): boolean | string {

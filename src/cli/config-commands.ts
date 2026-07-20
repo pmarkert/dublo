@@ -3,13 +3,20 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { spawnSync } from "node:child_process";
 import type { Command } from "commander";
+import type { PromptChoice } from "./config-wizard.js";
 import { createInquirerConfigPrompts, runConfigWizard } from "./config-wizard.js";
+import { listContextProfileNames } from "../commands/context/shared.js";
+import { listLlmProfileNames } from "../commands/llm/shared.js";
+import {
+  listBuiltinPersonaTemplateNames,
+  listPersonaProfileNames
+} from "../commands/persona/shared.js";
 import { resolveWorkspaceConfig } from "../core/config/resolve.js";
 import { WorkspaceDefaultsPatchSchema, WorkspaceDefaultsSchema } from "../core/config/schemas.js";
 import type { WorkspaceDefaults, WorkspaceDefaultsPatch } from "../core/config/schemas.js";
 import { createWorkspaceStore } from "../node/workspace-store.js";
+import { runEditor } from "../utils/editor.js";
 
 const DEFAULT_WORKSPACE_PROMPT = `# Application Notes
 
@@ -137,7 +144,7 @@ async function editJsonDocument(
 
   try {
     const editor = process.env.VISUAL ?? process.env.EDITOR ?? "vi";
-    const result = spawnSync(editor, [temporaryPath], { shell: true, stdio: "inherit" });
+    const result = runEditor(editor, temporaryPath);
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Editor exited with status ${String(result.status)}.`);
     return WorkspaceDefaultsSchema.parse(JSON.parse(await readFile(temporaryPath, "utf8")));
@@ -157,7 +164,7 @@ async function editPromptDocument(prompt: string): Promise<string> {
 
   try {
     const editor = process.env.VISUAL ?? process.env.EDITOR ?? "vi";
-    const result = spawnSync(editor, [temporaryPath], { shell: true, stdio: "inherit" });
+    const result = runEditor(editor, temporaryPath);
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Editor exited with status ${String(result.status)}.`);
     return readFile(temporaryPath, "utf8");
@@ -167,7 +174,8 @@ async function editPromptDocument(prompt: string): Promise<string> {
 }
 
 async function runInteractiveWorkspaceConfiguration(
-  current: WorkspaceDefaults
+  current: WorkspaceDefaults,
+  workspace: string
 ): Promise<WorkspaceDefaults | undefined> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error(
@@ -177,9 +185,46 @@ async function runInteractiveWorkspaceConfiguration(
 
   return runConfigWizard({
     current,
+    profiles: listWorkspaceProfileChoices(workspace),
     prompts: createInquirerConfigPrompts(),
     write: (text) => process.stdout.write(text)
   });
+}
+
+function listWorkspaceProfileChoices(workspace: string): {
+  llm: PromptChoice<string>[];
+  persona: PromptChoice<string>[];
+  context: PromptChoice<string>[];
+} {
+  const workspacePersonas = listPersonaProfileNames(workspace);
+  const workspacePersonaNames = new Set(workspacePersonas);
+  return {
+    llm: listLlmProfileNames(workspace).map((value) => ({
+      name: value,
+      value,
+      description: "Workspace LLM profile"
+    })),
+    persona: [
+      { name: "No default persona", value: "", description: "Do not apply a persona by default" },
+      ...workspacePersonas.map((value) => ({
+        name: `Workspace: ${value}`,
+        value,
+        description: "Workspace persona profile"
+      })),
+      ...listBuiltinPersonaTemplateNames()
+        .filter((value) => !workspacePersonaNames.has(value))
+        .map((value) => ({
+          name: `Built-in: ${value}`,
+          value,
+          description: "Built-in persona template"
+        }))
+    ],
+    context: listContextProfileNames(workspace).map((value) => ({
+      name: value,
+      value,
+      description: "Workspace context profile"
+    }))
+  };
 }
 
 export function registerConfigCommands(program: Command): void {
@@ -207,13 +252,19 @@ export function registerConfigCommands(program: Command): void {
         ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
         ...(options.llm ? { llm: options.llm } : {})
       });
-      const defaults = options.yes ? initial : await runInteractiveWorkspaceConfiguration(initial);
+      const defaults = options.yes
+        ? initial
+        : await runInteractiveWorkspaceConfiguration(initial, workspace);
       if (defaults === undefined) {
         process.stdout.write("Canceled. No workspace defaults were changed.\n");
         return;
       }
       await store.writeDefaults(workspace, defaults);
       process.stdout.write(`Initialized workspace at ${workspace}\n`);
+      process.stdout.write("\nNext: configure an LLM profile with 'dublo llm config'.\n");
+      process.stdout.write(
+        "The guided setup can test the connection and set it as this workspace's default.\n"
+      );
     });
 
   const config = program
@@ -228,7 +279,8 @@ export function registerConfigCommands(program: Command): void {
     const store = createWorkspaceStore();
     const workspace = resolveWorkspace(options);
     const defaults = await runInteractiveWorkspaceConfiguration(
-      await store.readDefaults(workspace)
+      await store.readDefaults(workspace),
+      workspace
     );
     if (defaults === undefined) {
       process.stdout.write("Canceled. No workspace defaults were changed.\n");

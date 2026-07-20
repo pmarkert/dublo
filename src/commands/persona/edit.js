@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { spawnSync } from "node:child_process";
+import { runEditor } from "../../utils/editor.js";
 import {
   defaultPersonaProfilePath,
   readPersonaText,
@@ -43,10 +43,7 @@ export async function editPersonaCommand(options = {}) {
   }
 
   const editor = process.env.VISUAL || process.env.EDITOR || "vi";
-  const result = spawnSync(editor, [profilePath], {
-    stdio: "inherit",
-    shell: true
-  });
+  const result = runEditor(editor, profilePath);
 
   if (result.error) {
     throw result.error;

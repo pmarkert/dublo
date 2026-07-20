@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { spawnSync } from "node:child_process";
+import { runEditor } from "../../utils/editor.js";
 import {
   defaultContextProfilePath,
   preferredContextExtension,
@@ -76,14 +76,11 @@ export async function editContextCommand(options = {}) {
   }
 
   if (!existsSync(profilePath)) {
-    await writeFile(profilePath, "{}\n", "utf8");
+    await writeFile(profilePath, initialContextProfileContent(profilePath), "utf8");
   }
 
   const editor = process.env.VISUAL || process.env.EDITOR || "vi";
-  const result = spawnSync(editor, [profilePath], {
-    stdio: "inherit",
-    shell: true
-  });
+  const result = runEditor(editor, profilePath);
 
   if (result.error) {
     throw result.error;
@@ -96,6 +93,13 @@ export async function editContextCommand(options = {}) {
 
 function preferredYamlExtension(value) {
   return String(value || "").toLowerCase().trim().endsWith(".yml") ? ".yml" : ".yaml";
+}
+
+export function initialContextProfileContent(profilePath) {
+  const extension = path.extname(profilePath).toLowerCase();
+  return extension === ".yaml" || extension === ".yml"
+    ? "# YAML or JSON data\n"
+    : "{}\n";
 }
 
 function pathMatchesFormat(filePath, format) {

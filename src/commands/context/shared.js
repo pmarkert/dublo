@@ -68,7 +68,7 @@ export function resolveWorkspaceContextProfilePath(workspacePath, value) {
   return "";
 }
 
-export function defaultContextProfilePath(workspacePath, name, ext = ".json") {
+export function defaultContextProfilePath(workspacePath, name, ext = ".yaml") {
   const normalizedExt = normalizeContextExtension(ext);
   const normalizedName = sanitizeContextProfileName(name);
   return path.join(workspacePath, "context", `${normalizedName}${normalizedExt}`);
@@ -78,22 +78,26 @@ export function preferredContextExtension(value) {
   const raw = String(value || "").toLowerCase().trim();
   if (raw.endsWith(".yaml")) return ".yaml";
   if (raw.endsWith(".yml")) return ".yml";
-  return ".json";
+  return ".yaml";
 }
 
 export async function readContextObject(filePath) {
   const raw = await readFile(filePath, "utf8");
   const extension = path.extname(filePath).toLowerCase();
+  const isYaml = extension === ".yaml" || extension === ".yml";
 
   let parsed;
   try {
-    if (extension === ".yaml" || extension === ".yml") {
+    if (isYaml) {
       parsed = yaml.load(raw);
     } else {
       parsed = JSON.parse(raw);
     }
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    if (isYaml && detail === "expected a document, but the input is empty" && isCommentOnlyYaml(raw)) {
+      return {};
+    }
     throw new Error(`Invalid context file '${filePath}': ${detail}`);
   }
 
@@ -127,6 +131,13 @@ function stripContextExtension(value) {
 function hasContextExtension(value) {
   const normalized = String(value || "").toLowerCase();
   return normalized.endsWith(".json") || normalized.endsWith(".yaml") || normalized.endsWith(".yml");
+}
+
+function isCommentOnlyYaml(value) {
+  return value.split(/\r?\n/).every((line) => {
+    const trimmed = line.trim();
+    return !trimmed || trimmed.startsWith("#");
+  });
 }
 
 function tryResolveFile(filePath) {

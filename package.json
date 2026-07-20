@@ -23,7 +23,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json && chmod +x dist/cli.js",
     "clean": "rm -rf dist",
     "dev": "tsx src/cli.ts",
     "format": "prettier --write package.json tsconfig.json eslint.config.js .prettierrc.json src/**/*.ts test/**/*.ts",

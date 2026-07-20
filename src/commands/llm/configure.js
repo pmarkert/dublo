@@ -82,13 +82,13 @@ export async function configureLlmCommand(options = {}) {
     const hasModelPricingData = modelHasPricingData(region, modelId);
     const supportsConditionalToolSchemas = getModelSupportsConditionalToolSchemas(region, modelId);
 
-    const runPreflight = await askBoolean(rl, "Run Bedrock preflight check now", true);
+    const runPreflight = await askBoolean(rl, "Test the connection now", true);
     if (runPreflight) {
       await runBedrockPreflight(region, modelId, {
         ...modelRequestDefaults,
         ...(serviceTier ? { serviceTier } : {})
       });
-      process.stdout.write("Preflight succeeded.\n");
+      process.stdout.write("Connection test succeeded.\n");
     }
 
     const pricingSeed = {
@@ -677,7 +677,7 @@ async function runBedrockPreflight(region, modelId, modelRequestDefaults = {}) {
         // Fall through to original error below for consistency.
       }
     }
-    throw new Error(`Bedrock preflight failed for model '${modelId}' in region '${region}': ${detail}`);
+    throw new Error(`Connection test failed for model '${modelId}' in region '${region}': ${detail}`);
   }
 }
 
