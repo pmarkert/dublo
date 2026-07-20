@@ -10,6 +10,7 @@ import registerLlmCommands from "./commands/llm/index.js";
 import registerPersonaCommands from "./commands/persona/index.js";
 import registerScenarioCommands from "./commands/scenario/index.js";
 import registerContextCommands from "./commands/context/index.js";
+import registerBlockCommands from "./commands/block/index.js";
 import { registerReportCommands } from "./cli/report-commands.js";
 
 const program = new Command();
@@ -21,6 +22,7 @@ registerLlmCommands(program);
 registerPersonaCommands(program);
 registerScenarioCommands(program);
 registerContextCommands(program);
+registerBlockCommands(program);
 registerReportCommands(program);
 
 const completion = tab(program, { completionCommandName: "completion" });

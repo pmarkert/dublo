@@ -14,6 +14,14 @@ void test("detects when observed document text has disappeared", () => {
   assert.equal(isDocumentTextGone("Welcome back", "Checking your account..."), true);
 });
 
+void test("waits until all configured document texts have disappeared", () => {
+  assert.equal(
+    isDocumentTextGone("Still loading your details...", ["Loading your account", "Still loading"]),
+    false
+  );
+  assert.equal(isDocumentTextGone("Welcome back", ["Loading your account", "Still loading"]), true);
+});
+
 void test("treats targets that disappear during a transition as recoverable", () => {
   assert.equal(
     classifyRecoverableActionError(new Error("Planner target not found: a4")),

@@ -1518,7 +1518,16 @@ function normalizeDocumentText(value) {
 }
 
 export function isDocumentTextGone(documentText, expectedText) {
-  return !normalizeDocumentText(documentText).includes(normalizeDocumentText(expectedText));
+  const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
+  const normalizedDocumentText = normalizeDocumentText(documentText);
+  return expectedTexts.every(
+    (item) => !normalizedDocumentText.includes(normalizeDocumentText(item))
+  );
+}
+
+function formatExpectedDocumentText(expectedText) {
+  const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
+  return expectedTexts.map((item) => normalizeDocumentText(item)).join("|");
 }
 
 async function waitForDocumentTextGone(page, expectedText, settleDelayMs, settleTimeoutMs) {
@@ -1850,15 +1859,16 @@ export async function runScenario(config, options = {}) {
 
           if (plannerAction.action === "wait_until_gone") {
             const expectedText = plannerAction.expectGone.documentText;
-            const waitKey = `${page.url()}::${normalizeDocumentText(expectedText)}`;
+            const formattedExpectedText = formatExpectedDocumentText(expectedText);
+            const waitKey = `${page.url()}::${formattedExpectedText}`;
             if (previousTimedOutWait === waitKey) {
               recoverableOutcome = "duplicate_wait";
-              recoverableErrorMessage = `The same wait_until_gone condition already timed out without a URL change: '${expectedText}'.`;
+              recoverableErrorMessage = `The same wait_until_gone condition already timed out without a URL change: '${formattedExpectedText}'.`;
               logger.warn(recoverableErrorMessage);
               return;
             }
 
-            logger.info(`waiting for document text to disappear: ${clip(expectedText)}`);
+            logger.info(`waiting for document text to disappear: ${clip(formattedExpectedText)}`);
             const waitResult = await waitForDocumentTextGone(
               page,
               expectedText,
@@ -1868,7 +1878,7 @@ export async function runScenario(config, options = {}) {
             if (!waitResult.completed) {
               previousTimedOutWait = waitKey;
               recoverableOutcome = "wait_timeout";
-              recoverableErrorMessage = `Timed out waiting for document text to disappear: '${expectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
+              recoverableErrorMessage = `Timed out waiting for document text to disappear: '${formattedExpectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
               logger.warn(recoverableErrorMessage);
               return;
             }

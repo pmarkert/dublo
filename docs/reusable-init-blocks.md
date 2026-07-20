@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. This document records the design for reusable, deterministic setup flows such as login. Implementation is intentionally deferred until the runner has a reliable condition-based waiting capability.
+Partially implemented. `block import`, `list`, `show`, `edit`, and `validate` manage validated reusable action lists. Replaying those blocks through `dublo run --init` remains pending.
 
 ## Problem
 
@@ -50,7 +50,8 @@ After `wait_until_gone` is available, add a workspace directory and commands:
 ```text
 <workspace>/blocks/login.json
 
-dublo block record login --run latest --from-step 2 --to-step 6
+dublo block import login
+dublo block import login 2026-07-20T17-58-27-724Z_pass_myday
 dublo block show login
 dublo block validate login
 dublo run myday --init login
@@ -58,7 +59,7 @@ dublo run myday --init login
 
 Use `block` as the command namespace because `init` is already the workspace creation command. `--init` names a block's execution phase, and should eventually be repeatable.
 
-A block is an executable, versioned action list with provenance. It is not a saved planner transcript or prompt.
+A block is an executable, versioned action list. It is not a saved planner transcript or prompt. Imported blocks retain optional source provenance for review, but manually authored blocks do not require it. `block import` defaults to the latest run and requires it to have passed; it imports successful replayable steps after runner startup navigation, while terminal and failed actions are omitted.
 
 ```json
 {
@@ -94,7 +95,10 @@ A block is an executable, versioned action list with provenance. It is not a sav
     {
       "action": "wait_until_gone",
       "expectGone": {
-        "documentText": "Checking your account..."
+        "documentText": [
+          "Checking your account...",
+          "Still loading your details..."
+        ]
       },
       "reason": "Wait for the authentication loading state to disappear."
     }
@@ -121,6 +125,7 @@ Initialization steps should remain visible in reports and be marked with `phase:
 - Record only successful steps from a successful report. Preserve action templates such as `{{secret:password}}`; never export resolved secret values.
 - Flag literal `fill` values during validation and recommend context or secret placeholders where applicable.
 - A missing target or failed readiness condition is a block failure. Do not fall back to the LLM within the first version, because that makes the result nondeterministic and obscures a stale block.
+- Planner actions always contain one observed `expectGone.documentText`. Imported blocks retain that string, but users may edit it into a list of alternate transient texts. The wait completes only after every listed text is absent.
 
 ## Target Identity Limitation
 
