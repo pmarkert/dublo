@@ -1,1 +1,0 @@
-Verify that a user can complete the normal login flow successfully using valid credentials supplied via context data.

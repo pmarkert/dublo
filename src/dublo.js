@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import tab from "@bomb.sh/tab/commander";
 import { Command } from "commander";
-import { addRunOptionValueCompletions } from "./cli/command-registration-helpers.js";
+import { addRunOptionValueCompletions } from "./utils/command-registration-helpers.js";
 import { registerConfigureCommand } from "./commands/register-configure-command.js";
 import { registerRunCommand } from "./commands/register-run-command.js";
 import registerLlmCommands from "./commands/llm/index.js";

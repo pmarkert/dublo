@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const BUILTIN_SCENARIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../templates/scenarios");
+const BUILTIN_SCENARIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../resources/templates/scenarios");
 
 export function resolveWorkspacePath(workspace) {
   const workspaceInput = firstDefined(workspace, process.env.DUBLO_WORKSPACE, "./.dublo");

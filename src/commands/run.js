@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { runScenario } from "../scenario-runner.mjs";
+import { runScenario } from "../utils/scenario-runner.mjs";
 import { loadScenarioConfig } from "../utils/loadScenarioConfig.js";
 import { resolvePersonaProfilePath } from "./persona/shared.js";
 import { resolveScenarioProfilePath } from "./scenario/shared.js";

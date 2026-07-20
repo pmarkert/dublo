@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import * as yaml from "js-yaml";
 import { chromium } from "playwright";
-import { generateReportArtifacts, rerenderReportArtifacts } from "./reporting/report-artifacts.mjs";
+import { generateReportArtifacts, rerenderReportArtifacts } from "../reporting/report-artifacts.mjs";
 
 const FORBIDDEN_CONTEXT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const MAX_INLINE_JSON_LENGTH = 16 * 1024;

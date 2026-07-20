@@ -4,7 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const BUILTIN_PERSONA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../templates/personas");
+const BUILTIN_PERSONA_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../resources/templates/personas");
 
 export function resolveWorkspacePath(workspace) {
   const workspaceInput = firstDefined(workspace, process.env.DUBLO_WORKSPACE, "./.dublo");

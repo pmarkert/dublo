@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 
-const BEDROCK_MODEL_CONFIG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../config/bedrock-models");
+const BEDROCK_MODEL_CONFIG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../resources/bedrock-models");
 const RECOMMENDED_BEDROCK_MODELS_BY_REGION = loadRecommendedBedrockModelsByRegion(BEDROCK_MODEL_CONFIG_DIR);
 
 const DEFAULT_LLM_PROFILE = {

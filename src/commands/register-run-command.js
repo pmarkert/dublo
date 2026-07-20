@@ -1,5 +1,5 @@
 import { runCommand } from "./run.js";
-import { collectOptionValues, collectOrderedContextOperations } from "../cli/command-registration-helpers.js";
+import { collectOptionValues, collectOrderedContextOperations } from "../utils/command-registration-helpers.js";
 
 export function registerRunCommand(program) {
   program
