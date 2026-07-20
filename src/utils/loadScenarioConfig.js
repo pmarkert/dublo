@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import dotenv from "dotenv";
+import { DEFAULT_REPORT_GENERATORS, listReportGenerators } from "../reporting/report-artifacts.mjs";
 
 dotenv.config();
 
@@ -59,6 +60,21 @@ function normalizeOptionArray(value) {
   }
 
   return [];
+}
+
+function normalizeReportGenerators(value) {
+  const available = new Set(listReportGenerators().map((entry) => entry.id));
+  if (value === undefined || value === null) {
+    return [...DEFAULT_REPORT_GENERATORS];
+  }
+
+  if (typeof value === "string" && value.trim().toLowerCase() === "none") {
+    return [];
+  }
+
+  const normalized = normalizeStringArray(value).map((entry) => entry.toLowerCase());
+
+  return normalized.filter((entry) => available.has(entry));
 }
 
 function normalizeContextOperations(value) {
@@ -125,6 +141,7 @@ export function loadScenarioConfig(overrides = {}) {
     headless: parseBoolean(workspaceConfig.headless, undefined),
     observationConfigFile: workspaceConfig.observationConfigFile,
     screenshots: workspaceConfig.screenshots,
+    reports: normalizeReportGenerators(workspaceConfig.reports),
     debug: parseBoolean(workspaceConfig.debug, undefined),
     outputDir: workspaceConfig.outputDir,
     workspaceLlmRef: firstDefined(workspaceConfig.llm),
@@ -138,8 +155,10 @@ export function loadScenarioConfig(overrides = {}) {
     headless: parseBoolean(firstDefined(process.env.DUBLO_HEADLESS), undefined),
     personaFile: firstDefined(process.env.DUBLO_PERSONA_FILE),
     scenarioFile: firstDefined(process.env.DUBLO_SCENARIO_FILE),
+    adhocScenario: firstDefined(process.env.DUBLO_ADHOC_SCENARIO),
     observationConfigFile: firstDefined(process.env.DUBLO_OBSERVATION_CONFIG_FILE),
     screenshots: firstDefined(process.env.DUBLO_SCREENSHOTS),
+    reports: normalizeReportGenerators(process.env.DUBLO_REPORTS),
     debug: parseBoolean(firstDefined(process.env.DUBLO_DEBUG), undefined),
     outputDir: firstDefined(process.env.DUBLO_OUTPUT_DIR),
     llmRef: firstDefined(process.env.DUBLO_LLM),
@@ -168,8 +187,10 @@ export function loadScenarioConfig(overrides = {}) {
     personaFile: "",
     scenario: "",
     scenarioFile: "",
+    adhocScenario: "",
     observationConfigFile: "",
     screenshots: "none",
+    reports: [...DEFAULT_REPORT_GENERATORS],
     debug: false,
     outputDir: "./output/runs",
     llmRef: "",
@@ -204,6 +225,7 @@ export function loadScenarioConfig(overrides = {}) {
       debug: overrides.debug ? true : undefined,
       persona: overrides.persona,
       scenario: overrides.scenario,
+      adhocScenario: overrides.adhocScenario,
       ...(overrideContextRefs.length > 0 ? { contextRefs: overrideContextRefs } : {}),
       ...(overrideSetEntries.length > 0 ? { setEntries: overrideSetEntries } : {}),
       ...(overrideJsonEntries.length > 0 ? { jsonEntries: overrideJsonEntries } : {}),
@@ -228,9 +250,11 @@ export function loadScenarioConfig(overrides = {}) {
   return {
     ...merged,
     screenshots: String(merged.screenshots || "none").toLowerCase(),
+    reports: normalizeReportGenerators(merged.reports),
     headed: !Boolean(merged.headless),
     personaFile: resolvePathOrEmpty(merged.personaFile),
     scenarioFile: resolvePathOrEmpty(merged.scenarioFile),
+    adhocScenario: String(merged.adhocScenario || ""),
     observationConfigFile: resolvePathFromWorkspaceOrCwd(merged.observationConfigFile, workspacePath),
     workspacePromptFile: fs.existsSync(workspacePromptPath) ? workspacePromptPath : "",
     workspace: workspacePath,

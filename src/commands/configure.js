@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
+import { DEFAULT_REPORT_GENERATORS, listReportGenerators } from "../reporting/report-artifacts.mjs";
 
 const DEFAULT_CONFIG = {
   baseUrl: "http://localhost:8080",
@@ -13,6 +14,7 @@ const DEFAULT_CONFIG = {
   maxSteps: 40,
   headless: false,
   screenshots: "none",
+  reports: [...DEFAULT_REPORT_GENERATORS],
   debug: false,
   outputDir: "./output/runs"
 };
@@ -48,7 +50,8 @@ export async function configureCommand(options = {}) {
     ...existingConfig,
     headless: resolveHeadlessSeed(existingConfig),
     screenshots: normalizeScreenshotMode(existingConfig.screenshots),
-    context: normalizeContext(existingConfig.context)
+    context: normalizeContext(existingConfig.context),
+    reports: normalizeReports(existingConfig.reports, DEFAULT_CONFIG.reports)
   };
 
   if (options.yes) {
@@ -61,6 +64,7 @@ export async function configureCommand(options = {}) {
       maxSteps: seed.maxSteps,
       headless: seed.headless,
       screenshots: seed.screenshots,
+      reports: seed.reports,
       debug: seed.debug,
       outputDir: seed.outputDir
     };
@@ -101,6 +105,13 @@ export async function configureCommand(options = {}) {
       ["none", "viewport", "fullpage"],
       normalizeScreenshotMode(seed.screenshots)
     );
+    const reportOptions = listReportGenerators().map((entry) => entry.id).join(",");
+    const reportsCsv = await askOptionalText(
+      rl,
+      `Auto-run report generators (comma separated: ${reportOptions}; use 'none' for no reports; leave blank to keep current value)`,
+      seed.reports.length > 0 ? seed.reports.join(",") : "none"
+    );
+    const reports = normalizeReports(reportsCsv, seed.reports);
     const debug = await askBoolean(rl, "Debug logging", seed.debug);
     const outputDir = await askText(rl, "Output directory", seed.outputDir);
 
@@ -113,6 +124,7 @@ export async function configureCommand(options = {}) {
       maxSteps,
       headless,
       screenshots,
+      reports,
       debug,
       outputDir
     };
@@ -288,6 +300,23 @@ function normalizeScreenshotMode(value) {
     return normalized;
   }
   return "none";
+}
+
+function normalizeReports(value, fallback = DEFAULT_CONFIG.reports) {
+  const allowed = new Set(listReportGenerators().map((entry) => entry.id));
+  if (value === undefined || value === null) {
+    return [...fallback];
+  }
+
+  const values = Array.isArray(value)
+    ? value.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean)
+    : typeof value === "string"
+      ? value.trim().toLowerCase() === "none"
+        ? []
+        : value.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean)
+      : [];
+
+  return values.filter((entry) => allowed.has(entry));
 }
 
 function resolveHeadlessSeed(existingConfig) {

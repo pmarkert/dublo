@@ -68,13 +68,25 @@ export async function runCommand(options) {
   );
   config.contextOperations = resolveContextOperations(config);
 
+  if (config.scenario && config.adhocScenario) {
+    throw new Error("Provide either a scenario reference (--scenario or positional) or --adhoc, not both.");
+  }
+
   if (config.scenario && !config.scenarioFile) {
     const scenarioPath = resolveScenarioProfilePath(config.workspace, config.scenario);
 
     if (scenarioPath) {
       config.scenarioFile = scenarioPath;
       config.scenario = "";
+    } else {
+      throw new Error(
+        `Could not resolve scenario '${config.scenario}'. Use an existing scenario file/profile or pass inline text with --adhoc.`
+      );
     }
+  }
+
+  if (config.adhocScenario) {
+    config.scenario = config.adhocScenario;
   }
 
   if (!config.baseUrl) {
@@ -84,7 +96,7 @@ export async function runCommand(options) {
   if (!config.scenario && !config.scenarioFile) {
     config.scenario = await readScenarioFromStdin();
     if (!config.scenario) {
-      throw new Error("No scenario provided. Pass --scenario/--scenarioFile equivalent or pipe scenario text to stdin.");
+      throw new Error("No scenario provided. Pass an existing scenario via positional/--scenario, use --adhoc for inline text, or pipe scenario text to stdin.");
     }
   }
 

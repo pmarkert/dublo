@@ -19,6 +19,8 @@ import { listContextCommand } from "./commands/context/list.js";
 import { showContextCommand } from "./commands/context/show.js";
 import { validateContextCommand } from "./commands/context/validate.js";
 import { runCommand } from "./commands/run.js";
+import { renderAllReportsCommand, renderReportCommand } from "./commands/report/render.js";
+import { listRunsCommand } from "./commands/runs/list.js";
 
 const program = new Command();
 
@@ -249,12 +251,25 @@ program
   .version("0.1.0", "--version");
 
 program
+  .command("config")
+  .alias("init")
+  .description("Interactively create or update workspace defaults.json")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .option("--prompt", "Edit the workspace prompt markdown file")
+  .option("--show-prompt", "Write the workspace prompt markdown file to stdout")
+  .option("-y, --yes", "Accept defaults and write config without prompts")
+  .action(async (options) => {
+    await configureCommand(options);
+  });
+
+program
   .command("run [scenario]")
   .description("Run using workspace config and selectors")
   .option("--workspace <path>", "Workspace directory (contains defaults.json and llm/personas/scenarios/context)")
   .option("--llm <value>", "LLM config file path or profile name in <workspace>/llm")
   .option("--persona <value>", "Persona file path or profile name in <workspace>/personas")
   .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios (or use positional [scenario])")
+  .option("--adhoc <text>", "Inline ad hoc scenario text to run without a scenario file")
   .option("--headless", "Run browser in headless mode")
   .option("--debug", "Enable debug logging for this run")
   .option(
@@ -269,20 +284,9 @@ program
     await runCommand({
       ...options,
       scenario: options.scenario || scenarioArg,
+      adhocScenario: options.adhoc,
       contextOperations: orderedContextOperations
     });
-  });
-
-program
-  .command("config")
-  .alias("init")
-  .description("Interactively create or update workspace defaults.json")
-  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
-  .option("--prompt", "Edit the workspace prompt markdown file")
-  .option("--show-prompt", "Write the workspace prompt markdown file to stdout")
-  .option("-y, --yes", "Accept defaults and write config without prompts")
-  .action(async (options) => {
-    await configureCommand(options);
   });
 
 const llmProgram = program
@@ -404,6 +408,31 @@ const contextProgram = program
   .command("context")
   .description("Manage context profiles");
 
+const runsProgram = program
+  .command("runs")
+  .description("List and inspect saved runs");
+
+runsProgram
+  .command("list")
+  .description("List available runs from the workspace output directory")
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .action(async (options) => {
+    await listRunsCommand(options);
+  });
+
+const reportProgram = program
+  .command("report <runOrReport>")
+  .description("Render report artifacts from a run ID or report.json file");
+
+reportProgram
+  .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+  .option("--html", "Render summary.html")
+  .option("--markdown", "Render summary.md")
+  .option("--open", "Open generated report(s) in the OS default viewer")
+  .action(async (runOrReport, options) => {
+    await renderReportCommand(runOrReport, options);
+  });
+
 contextProgram
   .command("list")
   .description("List available context profiles")
@@ -446,6 +475,7 @@ contextProgram
   });
 
 const completion = tab(program, { completionCommandName: "completion" });
+completion.commands.delete("completion");
 addOptionValueCompletions(completion);
 
 program.parseAsync(process.argv).catch((error) => {
