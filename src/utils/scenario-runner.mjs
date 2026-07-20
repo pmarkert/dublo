@@ -192,7 +192,7 @@ function addTokenUsageTotals(target, delta) {
   target.plannerCalls += 1;
 }
 
-function classifyRecoverableActionError(error) {
+export function classifyRecoverableActionError(error) {
   const message = errorMessage(error).toLowerCase();
 
   if (
@@ -201,6 +201,10 @@ function classifyRecoverableActionError(error) {
     message.includes("disabled target before click")
   ) {
     return "disabled_target";
+  }
+
+  if (message.includes("planner target not found")) {
+    return "target_disappeared";
   }
 
   return null;
@@ -1082,6 +1086,10 @@ export function buildPlannerMessages({
       "Do not use the 'Continue with Google' login because the Google page will not load properly in this browser.",
       "Do not fill the same field with a different value unless visible validation or error evidence shows correction is needed.",
       "Use observation.documentText as the main source of visible page text when deciding whether login or onboarding is still loading or has finished.",
+      "The runner automatically waits for ordinary UI transitions to settle before each observation; do not wait merely to pause after an action.",
+      "After a click or fill, do not repeat it based on an earlier observation. If its target is absent or disabled in the current observation, the UI is transitioning.",
+      "When a persistent transition leaves an old screen visible but its submit control is absent or disabled, use wait_until_gone with expectGone.documentText set to visible text from that old screen which must disappear.",
+      "Do not repeat the same wait_until_gone condition unless a UI action or URL change has occurred.",
       "Do not return finish while the UI appears to be loading or transitioning.",
       "Before finish, verify visible evidence for the success criteria in the test prompt.",
       "When the objective is completed, return finish.",
@@ -1444,9 +1452,9 @@ async function runOpenAIPreflight({ baseUrl, modelId, apiKey }) {
   }
 }
 
-async function waitForUiSettle(page, settleArg = 700) {
-  const minStableMs = Number.isFinite(settleArg) ? Math.max(120, Number(settleArg)) : 700;
-  const maxWaitMs = Math.max(2200, minStableMs * 4);
+async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
+  const minStableMs = Number.isFinite(settleDelayMs) ? Math.max(1, Number(settleDelayMs)) : 500;
+  const maxWaitMs = Number.isFinite(settleTimeoutMs) ? Math.max(minStableMs, Number(settleTimeoutMs)) : 3000;
   const pollMs = 120;
 
   const startedAt = Date.now();
@@ -1454,7 +1462,7 @@ async function waitForUiSettle(page, settleArg = 700) {
   let previousSignature = "";
 
   try {
-    await page.waitForLoadState("domcontentloaded", { timeout: 1200 });
+    await page.waitForLoadState("domcontentloaded", { timeout: Math.min(1200, maxWaitMs) });
   } catch {
     // Ignore timeout; SPA transitions do not always trigger load states.
   }
@@ -1502,12 +1510,55 @@ async function waitForUiSettle(page, settleArg = 700) {
   }
 }
 
+function normalizeDocumentText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase();
+}
+
+export function isDocumentTextGone(documentText, expectedText) {
+  return !normalizeDocumentText(documentText).includes(normalizeDocumentText(expectedText));
+}
+
+async function waitForDocumentTextGone(page, expectedText, settleDelayMs, settleTimeoutMs) {
+  const startedAt = Date.now();
+  const pollMs = 120;
+  let absentSince = null;
+  let latestDocumentText = "";
+
+  while (Date.now() - startedAt < settleTimeoutMs) {
+    latestDocumentText = await page.evaluate(() =>
+      String(globalThis.document.body?.innerText || "").replace(/\s+/g, " ").trim()
+    );
+
+    if (isDocumentTextGone(latestDocumentText, expectedText)) {
+      absentSince ??= Date.now();
+      if (Date.now() - absentSince >= settleDelayMs) {
+        return { completed: true, latestDocumentText };
+      }
+    } else {
+      absentSince = null;
+    }
+
+    await page.waitForTimeout(pollMs);
+  }
+
+  return { completed: false, latestDocumentText };
+}
+
 export async function runScenario(config, options = {}) {
   const startedAt = new Date();
   const shouldInterrupt = typeof options.shouldInterrupt === "function" ? options.shouldInterrupt : () => false;
 
   if (!Number.isFinite(config.maxSteps) || config.maxSteps < 1) {
     throw new Error("--max-steps must be a positive number");
+  }
+  if (!Number.isInteger(config.settleDelayMs) || config.settleDelayMs < 1) {
+    throw new Error("--settle-delay-ms must be a positive integer");
+  }
+  if (!Number.isInteger(config.settleTimeoutMs) || config.settleTimeoutMs < config.settleDelayMs) {
+    throw new Error("--settle-timeout-ms must be a positive integer greater than or equal to --settle-delay-ms");
   }
 
   const throwIfInterrupted = () => {
@@ -1539,6 +1590,8 @@ export async function runScenario(config, options = {}) {
       debug: config.debug,
       llm: config.llm,
       maxSteps: config.maxSteps,
+      settleDelayMs: config.settleDelayMs,
+      settleTimeoutMs: config.settleTimeoutMs,
       contextOperations: config.contextOperations,
       workspacePromptFile: config.workspacePromptFile,
       personaFile: config.personaFile,
@@ -1632,6 +1685,7 @@ export async function runScenario(config, options = {}) {
   let lastUiActionAt = 0;
   let pendingInteractionRequest = null;
   let pendingScreenshotBuffer = null;
+  let previousTimedOutWait = null;
 
   const captureViewportScreenshot = async (options = {}) => {
     throwIfInterrupted();
@@ -1713,12 +1767,12 @@ export async function runScenario(config, options = {}) {
       throwIfInterrupted();
       logger.info(`navigating to ${config.baseUrl}`);
       await page.goto(config.baseUrl, { waitUntil: "domcontentloaded" });
-      await waitForUiSettle(page, 900);
+      await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
     });
 
     for (let i = 0; i < config.maxSteps; i += 1) {
       throwIfInterrupted();
-      await waitForUiSettle(page, 550);
+      await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
       observationTurn += 1;
       const turnToken = `t${observationTurn}`;
       const observation = await collectObservation(page, observationConfig, turnToken);
@@ -1794,11 +1848,36 @@ export async function runScenario(config, options = {}) {
             return;
           }
 
-          if (plannerAction.action === "wait") {
-            logger.info("planner requested wait; allowing UI to settle");
-            await page.waitForTimeout(1200);
+          if (plannerAction.action === "wait_until_gone") {
+            const expectedText = plannerAction.expectGone.documentText;
+            const waitKey = `${page.url()}::${normalizeDocumentText(expectedText)}`;
+            if (previousTimedOutWait === waitKey) {
+              recoverableOutcome = "duplicate_wait";
+              recoverableErrorMessage = `The same wait_until_gone condition already timed out without a URL change: '${expectedText}'.`;
+              logger.warn(recoverableErrorMessage);
+              return;
+            }
+
+            logger.info(`waiting for document text to disappear: ${clip(expectedText)}`);
+            const waitResult = await waitForDocumentTextGone(
+              page,
+              expectedText,
+              config.settleDelayMs,
+              config.settleTimeoutMs
+            );
+            if (!waitResult.completed) {
+              previousTimedOutWait = waitKey;
+              recoverableOutcome = "wait_timeout";
+              recoverableErrorMessage = `Timed out waiting for document text to disappear: '${expectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
+              logger.warn(recoverableErrorMessage);
+              return;
+            }
+
+            previousTimedOutWait = null;
             return;
           }
+
+          previousTimedOutWait = null;
 
           if (plannerAction.action === "request_user_input") {
             if (!config.headed) {
@@ -1839,7 +1918,7 @@ export async function runScenario(config, options = {}) {
             const sinceLastUiActionMs = Date.now() - lastUiActionAt;
             if (lastUiActionAt > 0 && sinceLastUiActionMs < 3500) {
               logger.info("deferring user interaction prompt until UI settles after recent action");
-              await waitForUiSettle(page, 1500);
+              await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
               return;
             }
 
@@ -1856,7 +1935,7 @@ export async function runScenario(config, options = {}) {
               logger.info(
                 `seen first interaction request for '${interactionPrompt}' on ${page.url()}; waiting to confirm`
               );
-              await waitForUiSettle(page, 1200);
+              await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
               return;
             }
 
@@ -1865,7 +1944,7 @@ export async function runScenario(config, options = {}) {
               logger.info(
                 `re-seen interaction request for '${interactionPrompt}'; waiting one more cycle before prompting`
               );
-              await waitForUiSettle(page, 1200);
+              await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
               return;
             }
 
@@ -1921,7 +2000,7 @@ export async function runScenario(config, options = {}) {
             throwIfInterrupted();
             lastUiActionAt = Date.now();
             pendingInteractionRequest = null;
-            await waitForUiSettle(page, 900);
+            await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
             return;
           }
 
@@ -1933,7 +2012,7 @@ export async function runScenario(config, options = {}) {
             throwIfInterrupted();
             lastUiActionAt = Date.now();
             pendingInteractionRequest = null;
-            await waitForUiSettle(page, 450);
+            await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
             return;
           }
 
@@ -1950,7 +2029,7 @@ export async function runScenario(config, options = {}) {
         recoverableOutcome = recoverableKind;
         recoverableErrorMessage = errorMessage(error);
         logger.warn(`recoverable action failure (${recoverableKind}): ${recoverableErrorMessage}`);
-        await waitForUiSettle(page, 700);
+        await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
       }
 
       actionHistory.push({
@@ -1961,6 +2040,12 @@ export async function runScenario(config, options = {}) {
         runnerFeedback:
           recoverableOutcome === "disabled_target"
             ? "Click was blocked because the target is disabled. Resolve any prerequisite validation or required fields before trying again."
+            : recoverableOutcome === "target_disappeared"
+              ? "The target disappeared before the action could run, so the UI is transitioning. Inspect the fresh observation instead of repeating the action."
+            : recoverableOutcome === "wait_timeout"
+              ? "The requested document text did not disappear within the configured settle timeout. Inspect the current observation and choose a different action."
+              : recoverableOutcome === "duplicate_wait"
+                ? "The same wait condition already timed out without a state change. Choose a different action."
             : undefined,
         error: recoverableErrorMessage || undefined,
       });

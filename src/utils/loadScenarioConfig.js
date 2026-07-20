@@ -21,6 +21,19 @@ function parseNumber(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parsePositiveInteger(value, fallback) {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Expected a positive integer, received '${value}'.`);
+  }
+
+  return parsed;
+}
+
 function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
 }
@@ -139,6 +152,8 @@ export function loadScenarioConfig(overrides = {}) {
   const workspaceRuntimeConfig = cleanUndefined({
     baseUrl: workspaceConfig.baseUrl,
     maxSteps: parseNumber(workspaceConfig.maxSteps, undefined),
+    settleDelayMs: parsePositiveInteger(workspaceConfig.settleDelayMs, undefined),
+    settleTimeoutMs: parsePositiveInteger(workspaceConfig.settleTimeoutMs, undefined),
     headless: parseBoolean(workspaceConfig.headless, undefined),
     observationConfigFile: workspaceConfig.observationConfigFile,
     screenshots: workspaceConfig.screenshots,
@@ -153,6 +168,8 @@ export function loadScenarioConfig(overrides = {}) {
   const envConfig = {
     baseUrl: firstDefined(process.env.DUBLO_BASE_URL),
     maxSteps: parseNumber(firstDefined(process.env.DUBLO_MAX_STEPS), undefined),
+    settleDelayMs: parsePositiveInteger(firstDefined(process.env.DUBLO_SETTLE_DELAY_MS), undefined),
+    settleTimeoutMs: parsePositiveInteger(firstDefined(process.env.DUBLO_SETTLE_TIMEOUT_MS), undefined),
     headless: parseBoolean(firstDefined(process.env.DUBLO_HEADLESS), undefined),
     personaFile: firstDefined(process.env.DUBLO_PERSONA_FILE),
     scenarioFile: firstDefined(process.env.DUBLO_SCENARIO_FILE),
@@ -185,6 +202,8 @@ export function loadScenarioConfig(overrides = {}) {
   const merged = {
     baseUrl: "http://localhost:8080",
     maxSteps: 40,
+    settleDelayMs: 500,
+    settleTimeoutMs: 3000,
     headless: false,
     personaFile: "",
     scenario: "",
@@ -211,6 +230,8 @@ export function loadScenarioConfig(overrides = {}) {
     ...cleanUndefined({
       workspace: overrides.workspace,
       llmRef: overrides.llm,
+      settleDelayMs: parsePositiveInteger(overrides.settleDelayMs, undefined),
+      settleTimeoutMs: parsePositiveInteger(overrides.settleTimeoutMs, undefined),
       headless: overrides.headless ? true : undefined,
       debug: overrides.debug ? true : undefined,
       persona: overrides.persona,

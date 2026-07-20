@@ -2,10 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildPlannerMessages,
+  classifyRecoverableActionError,
+  isDocumentTextGone,
   loadContextFromOperations,
   redactSecretValues,
   resolveFillValue
 } from "../../src/utils/scenario-runner.mjs";
+
+void test("detects when observed document text has disappeared", () => {
+  assert.equal(isDocumentTextGone("Checking your account...", "checking YOUR account"), false);
+  assert.equal(isDocumentTextGone("Welcome back", "Checking your account..."), true);
+});
+
+void test("treats targets that disappear during a transition as recoverable", () => {
+  assert.equal(
+    classifyRecoverableActionError(new Error("Planner target not found: a4")),
+    "target_disappeared"
+  );
+});
 
 void test("environment-backed secrets stay out of planner context and resolve only for fills", async () => {
   const { contextData, secretValues } = await loadContextFromOperations(

@@ -64,6 +64,48 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
   const requestBody = requests[0]?.body;
   assert.equal(typeof requestBody, "string");
   assert.match(requestBody, /data:image\/png;base64/);
+  assert.match(requestBody, /expectGone/);
+  assert.match(requestBody, /documentText/);
+});
+
+void test("OpenAI-compatible planner accepts a structured wait-until-gone action", async () => {
+  const fetchStub: typeof fetch = () =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      arguments: JSON.stringify({
+                        action: "wait_until_gone",
+                        reason: "Authentication is still loading.",
+                        expectGone: { documentText: "Checking your account..." }
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200 }
+      )
+    );
+  const planner = createOpenAICompatiblePlanner(
+    { baseUrl: "http://planner.test/v1", modelId: "test-model" },
+    { fetch: fetchStub }
+  );
+
+  const response = await planner.nextAction({ messages });
+
+  assert.deepEqual(response.action, {
+    action: "wait_until_gone",
+    reason: "Authentication is still loading.",
+    expectGone: { documentText: "Checking your account..." }
+  });
 });
 
 void test("OpenAI-compatible planner rejects an invalid action before browser execution", async () => {

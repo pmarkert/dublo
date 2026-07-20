@@ -5,18 +5,21 @@ import { resolveWorkspaceConfig } from "../../../src/core/config/resolve.js";
 
 test("resolves workspace configuration with CLI precedence", () => {
   const result = resolveWorkspaceConfig({
-    cli: { baseUrl: "https://cli.example.test", maxSteps: 9 },
+    cli: { baseUrl: "https://cli.example.test", maxSteps: 9, settleDelayMs: 700 },
     environment: {
       DUBLO_BASE_URL: "https://environment.example.test",
-      DUBLO_MAX_STEPS: "8"
+      DUBLO_MAX_STEPS: "8",
+      DUBLO_SETTLE_DELAY_MS: "600"
     },
-    workspace: { baseUrl: "https://workspace.example.test", maxSteps: 7 }
+    workspace: { baseUrl: "https://workspace.example.test", maxSteps: 7, settleDelayMs: 500 }
   });
 
   assert.equal(result.values.baseUrl, "https://cli.example.test");
   assert.equal(result.values.maxSteps, 9);
   assert.equal(result.sources.baseUrl, "cli");
   assert.equal(result.sources.maxSteps, "cli");
+  assert.equal(result.values.settleDelayMs, 700);
+  assert.equal(result.sources.settleDelayMs, "cli");
 });
 
 test("resolves environment before workspace and built-in defaults", () => {
@@ -37,6 +40,9 @@ test("resolves environment before workspace and built-in defaults", () => {
   assert.deepEqual(result.values.reports, []);
   assert.equal(result.values.outputDir, "./reports");
   assert.equal(result.sources.debug, "built-in");
+  assert.equal(result.values.settleDelayMs, 500);
+  assert.equal(result.values.settleTimeoutMs, 3000);
+  assert.equal(result.sources.settleDelayMs, "built-in");
 });
 
 test("rejects unknown workspace configuration keys", () => {

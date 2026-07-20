@@ -3,12 +3,17 @@ import { z } from "zod";
 const PlannerActionNameSchema = z.enum([
   "click",
   "fill",
-  "wait",
+  "wait_until_gone",
   "request_user_input",
   "request_user_interaction",
   "request_screenshot",
   "finish"
 ]);
+const WaitUntilGoneExpectationSchema = z
+  .object({
+    documentText: z.string().trim().min(1)
+  })
+  .strict();
 
 export const PlannerActionSchema = z
   .object({
@@ -16,6 +21,7 @@ export const PlannerActionSchema = z
     reason: z.string().trim().min(1),
     targetId: z.string().trim().min(1).optional(),
     value: z.string().optional(),
+    expectGone: WaitUntilGoneExpectationSchema.optional(),
     inputKey: z.string().trim().min(1).optional(),
     inputPrompt: z.string().trim().min(1).optional(),
     interactionPrompt: z.string().trim().min(1).optional(),
@@ -28,6 +34,9 @@ export const PlannerActionSchema = z
     }
     if (action.action === "fill" && action.value === undefined) {
       context.addIssue({ code: "custom", message: "fill actions require value." });
+    }
+    if (action.action === "wait_until_gone" && !action.expectGone) {
+      context.addIssue({ code: "custom", message: "wait_until_gone requires expectGone." });
     }
     if (action.action === "request_user_input" && (!action.inputKey || !action.inputPrompt)) {
       context.addIssue({

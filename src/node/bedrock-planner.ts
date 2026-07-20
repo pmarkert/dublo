@@ -81,6 +81,12 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
       reason: { type: "string" },
       targetId: { type: "string" },
       value: { type: "string" },
+      expectGone: {
+        type: "object",
+        additionalProperties: false,
+        required: ["documentText"],
+        properties: { documentText: { type: "string" } }
+      },
       inputKey: { type: "string" },
       inputPrompt: { type: "string" },
       interactionPrompt: { type: "string" },

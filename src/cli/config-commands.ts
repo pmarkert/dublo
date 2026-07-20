@@ -93,6 +93,10 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
       return WorkspaceDefaultsPatchSchema.parse({ persona: value });
     case "max-steps":
       return WorkspaceDefaultsPatchSchema.parse({ maxSteps: parsePositiveInteger(value) });
+    case "settle-delay-ms":
+      return WorkspaceDefaultsPatchSchema.parse({ settleDelayMs: parsePositiveInteger(value) });
+    case "settle-timeout-ms":
+      return WorkspaceDefaultsPatchSchema.parse({ settleTimeoutMs: parsePositiveInteger(value) });
     case "headless":
       return WorkspaceDefaultsPatchSchema.parse({ headless: parseBoolean(value) });
     case "screenshots":
@@ -105,7 +109,7 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
       return WorkspaceDefaultsPatchSchema.parse({ observationConfigFile: value });
     default:
       throw new Error(
-        `Unknown setting '${setting}'. Available settings: base-url, llm, persona, max-steps, headless, screenshots, debug, output-dir, observation-config.`
+        `Unknown setting '${setting}'. Available settings: base-url, llm, persona, max-steps, settle-delay-ms, settle-timeout-ms, headless, screenshots, debug, output-dir, observation-config.`
       );
   }
 }
@@ -115,6 +119,8 @@ const SETTING_KEYS = {
   llm: "llm",
   persona: "persona",
   "max-steps": "maxSteps",
+  "settle-delay-ms": "settleDelayMs",
+  "settle-timeout-ms": "settleTimeoutMs",
   headless: "headless",
   screenshots: "screenshots",
   debug: "debug",

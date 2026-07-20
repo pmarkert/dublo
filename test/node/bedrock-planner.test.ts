@@ -51,4 +51,6 @@ void test("Bedrock planner validates tool-use actions through an injected client
   assert.match(requestJson, /"toolConfig"/);
   assert.match(requestJson, /"toolConfig":\{"tools"/);
   assert.match(requestJson, /"toolChoice":\{"tool":\{"name":"planner_action"/);
+  assert.match(requestJson, /"expectGone"/);
+  assert.match(requestJson, /"documentText"/);
 });

@@ -12,6 +12,8 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
   persona: "",
   context: [],
   maxSteps: 40,
+  settleDelayMs: 500,
+  settleTimeoutMs: 3000,
   headless: false,
   screenshots: "none",
   reports: ["markdown", "html"],
@@ -26,6 +28,8 @@ const ResolvedWorkspaceConfigSchema = z.object({
   persona: z.string(),
   context: z.array(z.string()),
   maxSteps: z.number().int().positive(),
+  settleDelayMs: z.number().int().positive(),
+  settleTimeoutMs: z.number().int().positive(),
   headless: z.boolean(),
   screenshots: ScreenshotModeSchema,
   reports: z.array(ReportGeneratorSchema),
@@ -88,6 +92,8 @@ function parseEnvironment(environment: Environment) {
     persona: environment.DUBLO_PERSONA,
     context: parseList(environment.DUBLO_CONTEXT),
     maxSteps: parsePositiveInteger(environment.DUBLO_MAX_STEPS),
+    settleDelayMs: parsePositiveInteger(environment.DUBLO_SETTLE_DELAY_MS),
+    settleTimeoutMs: parsePositiveInteger(environment.DUBLO_SETTLE_TIMEOUT_MS),
     headless: parseBoolean(environment.DUBLO_HEADLESS),
     screenshots: environment.DUBLO_SCREENSHOTS,
     reports: parseReports(environment.DUBLO_REPORTS),
@@ -141,6 +147,18 @@ export function resolveWorkspaceConfig(
     workspace.maxSteps,
     DEFAULT_WORKSPACE_DEFAULTS.maxSteps
   );
+  const [settleDelayMs, settleDelayMsSource] = resolveValue(
+    cli.settleDelayMs,
+    environment.settleDelayMs,
+    workspace.settleDelayMs,
+    DEFAULT_WORKSPACE_DEFAULTS.settleDelayMs
+  );
+  const [settleTimeoutMs, settleTimeoutMsSource] = resolveValue(
+    cli.settleTimeoutMs,
+    environment.settleTimeoutMs,
+    workspace.settleTimeoutMs,
+    DEFAULT_WORKSPACE_DEFAULTS.settleTimeoutMs
+  );
   const [headless, headlessSource] = resolveValue(
     cli.headless,
     environment.headless,
@@ -185,6 +203,8 @@ export function resolveWorkspaceConfig(
       persona,
       context,
       maxSteps,
+      settleDelayMs,
+      settleTimeoutMs,
       headless,
       screenshots,
       reports,
@@ -198,6 +218,8 @@ export function resolveWorkspaceConfig(
       persona: personaSource,
       context: contextSource,
       maxSteps: maxStepsSource,
+      settleDelayMs: settleDelayMsSource,
+      settleTimeoutMs: settleTimeoutMsSource,
       headless: headlessSource,
       screenshots: screenshotsSource,
       reports: reportsSource,
