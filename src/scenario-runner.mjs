@@ -116,6 +116,581 @@ function clip(value, limit = 180) {
   return `${normalized.slice(0, limit - 1)}...`;
 }
 
+function getSummaryStepUrlParts(stepUrl, baseUrl) {
+  if (!stepUrl) {
+    return { href: "", label: "n/a" };
+  }
+
+  try {
+    const resolvedStepUrl = new URL(stepUrl);
+    const resolvedBaseUrl = new URL(baseUrl);
+    const sameOrigin = resolvedStepUrl.origin === resolvedBaseUrl.origin;
+    const basePath = resolvedBaseUrl.pathname.replace(/\/+$/, "") || "/";
+    const stepPath = resolvedStepUrl.pathname || "/";
+
+    if (sameOrigin && (basePath === "/" || stepPath === basePath || stepPath.startsWith(`${basePath}/`))) {
+      const relativePath = basePath === "/" ? stepPath : stepPath.slice(basePath.length) || "/";
+      const search = resolvedStepUrl.search || "";
+      const hash = resolvedStepUrl.hash || "";
+      return {
+        href: stepUrl,
+        label: `${relativePath || "/"}${search}${hash}`,
+      };
+    }
+  } catch {
+    // Fall back to the full URL text below when parsing fails.
+  }
+
+  return { href: stepUrl, label: stepUrl };
+}
+
+function formatSummaryStepUrl(stepUrl, baseUrl) {
+  const { href, label } = getSummaryStepUrlParts(stepUrl, baseUrl);
+  if (!href) {
+    return label;
+  }
+  return `[${label}](${href})`;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderJsonHtml(value) {
+  if (value === undefined) {
+    return "";
+  }
+
+  return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
+}
+
+function buildSummaryMarkdown({ report, runId, scenario, screenshots, modelSummary, config }) {
+  const displayError = report.error ? stripAnsi(report.error) : "";
+
+  return [
+    "# Agentic Scenario (LLM-Driven)",
+    "",
+    `- Status: ${report.status}`,
+    `- Provider/Model: ${modelSummary}`,
+    `- Final URL: ${report.finalUrl || "n/a"}`,
+    `- Run ID: ${runId}`,
+    `- Screenshots: ${screenshots}`,
+    ...(report.costEstimate
+      ? [`- Estimated Cost (${report.costEstimate.currency}): ${report.costEstimate.costs.total.toFixed(6)}`]
+      : []),
+    "",
+    ...(report.costEstimate
+      ? [
+          "## Cost Estimate",
+          `- Input: ${report.costEstimate.costs.input.toFixed(6)} ${report.costEstimate.currency}`,
+          `- Output: ${report.costEstimate.costs.output.toFixed(6)} ${report.costEstimate.currency}`,
+          `- Cache Read: ${report.costEstimate.costs.cacheRead.toFixed(6)} ${report.costEstimate.currency}`,
+          `- Cache Write: ${report.costEstimate.costs.cacheWrite.toFixed(6)} ${report.costEstimate.currency}`,
+          `- Total: ${report.costEstimate.costs.total.toFixed(6)} ${report.costEstimate.currency}`,
+          "",
+        ]
+      : []),
+    "## Test Prompt",
+    scenario,
+    "",
+    "## Steps",
+    ...report.steps.map((step) => {
+      const planner = step.plannerAction
+        ? ` action=${step.plannerAction.action}${step.plannerAction.targetId ? ` target=${step.plannerAction.targetId}` : ""}`
+        : "";
+      const stepUrlPart = formatSummaryStepUrl(step.url, config.baseUrl);
+      const screenshotPart = step.screenshot ? ` [${step.screenshot}](${step.screenshot})` : "";
+      const htmlPart = step.html ? ` [${step.html}](${step.html})` : "";
+      return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner} -> ${stepUrlPart}${screenshotPart}${htmlPart}`;
+    }),
+    "",
+    displayError ? `## Error\n\n\`\`\`text\n${displayError}\n\`\`\`` : "## Result\n\nScenario objective completed.",
+  ].join("\n");
+}
+
+function renderObservationHtml(observation) {
+  if (!observation) {
+    return "";
+  }
+
+  const modal = observation.modal || {};
+  const headings = Array.isArray(observation.headings) ? observation.headings : [];
+  const alerts = Array.isArray(observation.alerts) ? observation.alerts : [];
+  const controls = Array.isArray(observation.controls) ? observation.controls : [];
+
+  const renderChipList = (items, emptyLabel) =>
+    items.length > 0
+      ? `<div class="pill-list">${items.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("")}</div>`
+      : `<p class="empty-note">${escapeHtml(emptyLabel)}</p>`;
+
+  const controlCards = controls.length
+    ? `<div class="control-grid">${controls
+        .map((control) => {
+          const titleBits = [control.tag, control.role, control.type].filter(Boolean).map((part) => escapeHtml(part));
+          const fieldRows = [
+            control.text ? `<div><span class="field-label">Text</span><strong>${escapeHtml(control.text)}</strong></div>` : "",
+            control.label ? `<div><span class="field-label">Label</span><strong>${escapeHtml(control.label)}</strong></div>` : "",
+            control.ariaLabel ? `<div><span class="field-label">ARIA</span><strong>${escapeHtml(control.ariaLabel)}</strong></div>` : "",
+            control.placeholder ? `<div><span class="field-label">Placeholder</span><strong>${escapeHtml(control.placeholder)}</strong></div>` : "",
+            control.value ? `<div><span class="field-label">Value</span><strong>${escapeHtml(control.value)}</strong></div>` : "",
+          ]
+            .filter(Boolean)
+            .join("");
+          const flags = [
+            control.priority ? "priority" : "",
+            control.checked ? "checked" : "",
+            control.hasValue ? "has value" : "",
+            control.disabled ? "disabled" : "",
+          ]
+            .filter(Boolean)
+            .map((flag) => `<span class="mini-pill">${escapeHtml(flag)}</span>`)
+            .join("");
+
+          return `<article class="control-card">
+            <div class="control-card-head">
+              <span class="control-id">${escapeHtml(control.id || "")}</span>
+              <span class="control-kind">${titleBits.join(" · ") || "control"}</span>
+            </div>
+            ${flags ? `<div class="mini-pill-row">${flags}</div>` : ""}
+            <div class="field-grid">${fieldRows || '<div><span class="field-label">Text</span><strong>(empty)</strong></div>'}</div>
+          </article>`;
+        })
+        .join("")}</div>`
+    : `<p class="empty-note">No controls captured for this step.</p>`;
+
+  return `<section>
+    <h4>Observation</h4>
+    <div class="observation-layout">
+      <div class="observation-grid">
+        <article class="info-card">
+          <span class="field-label">URL</span>
+          <strong>${escapeHtml(observation.url || "n/a")}</strong>
+        </article>
+        <article class="info-card">
+          <span class="field-label">Title</span>
+          <strong>${escapeHtml(observation.title || "Untitled")}</strong>
+        </article>
+        <article class="info-card">
+          <span class="field-label">Modal</span>
+          <strong>${modal.open ? "Open" : "Closed"}</strong>
+          <div class="mini-pill-row">
+            <span class="mini-pill ${modal.blocksBackground ? 'mini-pill-alert' : ''}">${modal.blocksBackground ? "blocks background" : "background accessible"}</span>
+            ${modal.role ? `<span class="mini-pill">${escapeHtml(modal.role)}</span>` : ""}
+            ${modal.title ? `<span class="mini-pill">${escapeHtml(modal.title)}</span>` : ""}
+          </div>
+        </article>
+        <article class="info-card info-card-wide">
+          <span class="field-label">Document Text</span>
+          <p class="document-text">${escapeHtml(observation.documentText || "")}</p>
+        </article>
+      </div>
+
+      <div class="observation-section">
+        <span class="field-label">Headings</span>
+        ${renderChipList(headings, "No headings captured.")}
+      </div>
+
+      <div class="observation-section">
+        <span class="field-label">Alerts</span>
+        ${renderChipList(alerts, "No alerts captured.")}
+      </div>
+
+      <div class="observation-section">
+        <span class="field-label">Controls (${controls.length})</span>
+        ${controlCards}
+      </div>
+
+      <details class="raw-json-toggle">
+        <summary>Raw observation JSON</summary>
+        ${renderJsonHtml(observation)}
+      </details>
+    </div>
+  </section>`;
+}
+
+function renderSummaryHtml({ report, runId, scenario, screenshots, modelSummary, config }) {
+  const costSummary = report.costEstimate
+    ? `
+      <section class="card meta-grid">
+        <div><span class="meta-label">Input</span><strong>${report.costEstimate.costs.input.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
+        <div><span class="meta-label">Output</span><strong>${report.costEstimate.costs.output.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
+        <div><span class="meta-label">Cache Read</span><strong>${report.costEstimate.costs.cacheRead.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
+        <div><span class="meta-label">Cache Write</span><strong>${report.costEstimate.costs.cacheWrite.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
+        <div><span class="meta-label">Total</span><strong>${report.costEstimate.costs.total.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
+      </section>`
+    : "";
+
+  const stepsHtml = report.steps
+    .map((step) => {
+      const planner = step.plannerAction
+        ? `${escapeHtml(step.plannerAction.action)}${step.plannerAction.targetId ? ` target=${escapeHtml(step.plannerAction.targetId)}` : ""}`
+        : "";
+      const stepUrl = getSummaryStepUrlParts(step.url, config.baseUrl);
+      const screenshotLink = step.screenshot
+        ? `<a class="chip" href="${escapeHtml(step.screenshot)}">Screenshot</a>`
+        : "";
+      const htmlLink = step.html
+        ? `<a class="chip" href="${escapeHtml(step.html)}">Page HTML</a>`
+        : "";
+      const liveUrlLink = stepUrl.href
+        ? `<a class="chip" href="${escapeHtml(stepUrl.href)}">Open ${escapeHtml(stepUrl.label)}</a>`
+        : "";
+      const screenshotPreview = step.screenshot
+        ? `<a class="image-link" href="${escapeHtml(step.screenshot)}"><img src="${escapeHtml(step.screenshot)}" alt="Screenshot for step ${step.index}"></a>`
+        : "";
+      const observationBlock = step.observation ? renderObservationHtml(step.observation) : "";
+      const plannerActionBlock = step.plannerAction
+        ? `<section><h4>Planner Action</h4>${renderJsonHtml(step.plannerAction)}</section>`
+        : "";
+      const inputsBlock = step.knownHumanInputs && Object.keys(step.knownHumanInputs).length > 0
+        ? `<section><h4>Known Human Inputs</h4>${renderJsonHtml(step.knownHumanInputs)}</section>`
+        : "";
+      const tokenBlock = step.plannerTokenUsage
+        ? `<section><h4>Planner Token Usage</h4>${renderJsonHtml(step.plannerTokenUsage)}</section>`
+        : "";
+      const errorBlock = step.error
+        ? `<section><h4>Step Error</h4><pre>${escapeHtml(stripAnsi(step.error))}</pre></section>`
+        : "";
+
+      return `
+        <details class="step-card">
+          <summary>
+            <div class="step-summary">
+              <span class="step-index">${step.index}.</span>
+              <span class="step-name">${escapeHtml(step.name)}</span>
+              <span class="step-meta">${escapeHtml(planner)}</span>
+              <span class="step-meta">${step.durationMs}ms</span>
+              <span class="step-url">${stepUrl.href ? `<a href="${escapeHtml(stepUrl.href)}">${escapeHtml(stepUrl.label)}</a>` : escapeHtml(stepUrl.label)}</span>
+            </div>
+          </summary>
+          <div class="step-body">
+            <div class="chip-row">${liveUrlLink}${screenshotLink}${htmlLink}</div>
+            ${screenshotPreview ? `<section><h4>Screenshot</h4>${screenshotPreview}</section>` : ""}
+            ${plannerActionBlock}
+            ${observationBlock}
+            ${inputsBlock}
+            ${tokenBlock}
+            ${errorBlock}
+          </div>
+        </details>`;
+    })
+    .join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dublo Run ${escapeHtml(runId)}</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f1e8;
+        --card: #fffdf9;
+        --ink: #1f2933;
+        --muted: #6b7280;
+        --line: #ddd2bf;
+        --accent: #0f766e;
+        --accent-soft: #d7f0eb;
+        --error: #8a1c1c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: linear-gradient(180deg, #f8f3eb 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+      .hero, .card, .step-card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: 0 10px 30px rgba(31, 41, 51, 0.07);
+      }
+      .hero {
+        padding: 24px;
+        margin-bottom: 20px;
+      }
+      h1, h2, h3, h4 { margin: 0 0 12px; }
+      h1 { font-size: 2rem; }
+      h2 { margin-top: 24px; font-size: 1.25rem; }
+      h4 { font-size: 0.95rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      .status-row, .meta-grid {
+        display: grid;
+        gap: 12px;
+      }
+      .status-row {
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        margin-top: 18px;
+      }
+      .meta-grid {
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        padding: 18px 20px;
+        margin-bottom: 20px;
+      }
+      .meta-label {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--muted);
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 0.85rem;
+        font-weight: 700;
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .badge.failed { background: #fce7e7; color: var(--error); }
+      .prompt, .error-card {
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      .steps { display: grid; gap: 14px; }
+      .step-card summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 18px 20px;
+      }
+      .step-card summary::-webkit-details-marker { display: none; }
+      .step-summary {
+        display: grid;
+        gap: 8px;
+        grid-template-columns: auto minmax(180px, 1.5fr) minmax(120px, 1fr) auto minmax(120px, 1fr);
+        align-items: center;
+      }
+      .step-index { font-weight: 700; color: var(--accent); }
+      .step-name { font-weight: 700; }
+      .step-meta, .step-url { color: var(--muted); font-size: 0.95rem; }
+      .step-url a, a { color: var(--accent); text-decoration: none; }
+      .step-body {
+        border-top: 1px solid var(--line);
+        padding: 18px 20px 20px;
+      }
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+      .chip {
+        display: inline-flex;
+        padding: 7px 11px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #fff;
+      }
+      .image-link img {
+        display: block;
+        width: 100%;
+        max-width: 920px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+      }
+      .observation-layout {
+        display: grid;
+        gap: 14px;
+      }
+      .observation-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
+      .info-card {
+        padding: 14px;
+        border-radius: 14px;
+        background: #fffcf7;
+        border: 1px solid #ece2d1;
+      }
+      .info-card-wide {
+        grid-column: 1 / -1;
+      }
+      .observation-section {
+        padding: 14px;
+        border-radius: 14px;
+        background: #fff;
+        border: 1px solid #ece2d1;
+      }
+      .pill-list, .mini-pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .pill, .mini-pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        background: #f2efe8;
+        border: 1px solid #e4d9c8;
+        color: var(--ink);
+      }
+      .pill {
+        padding: 8px 12px;
+      }
+      .mini-pill {
+        padding: 5px 9px;
+        font-size: 0.82rem;
+      }
+      .mini-pill-alert {
+        background: #fce7e7;
+        border-color: #efc3c3;
+        color: var(--error);
+      }
+      .empty-note, .document-text {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .control-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      }
+      .control-card {
+        padding: 14px;
+        border-radius: 14px;
+        background: #fffcf7;
+        border: 1px solid #ece2d1;
+      }
+      .control-card-head {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .control-id {
+        font-weight: 800;
+        color: var(--accent);
+      }
+      .control-kind {
+        color: var(--muted);
+        font-size: 0.9rem;
+        text-align: right;
+      }
+      .field-grid {
+        display: grid;
+        gap: 10px;
+      }
+      .field-label {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--muted);
+        font-size: 0.76rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .raw-json-toggle {
+        border: 1px solid #ece2d1;
+        border-radius: 14px;
+        background: #fff;
+        padding: 12px 14px;
+      }
+      .raw-json-toggle summary {
+        cursor: pointer;
+        font-weight: 700;
+        color: var(--accent);
+        margin-bottom: 12px;
+      }
+      pre {
+        margin: 0;
+        padding: 14px;
+        overflow: auto;
+        border-radius: 12px;
+        background: #f7f7f7;
+        border: 1px solid #ece7dc;
+        font-size: 0.9rem;
+        line-height: 1.45;
+      }
+      @media (max-width: 860px) {
+        .step-summary {
+          grid-template-columns: auto 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <span class="badge ${escapeHtml(report.status)}">${escapeHtml(report.status.toUpperCase())}</span>
+        <h1>Agentic Scenario Report</h1>
+        <div class="status-row">
+          <div><span class="meta-label">Provider/Model</span><strong>${escapeHtml(modelSummary)}</strong></div>
+          <div><span class="meta-label">Final URL</span><strong>${escapeHtml(report.finalUrl || "n/a")}</strong></div>
+          <div><span class="meta-label">Run ID</span><strong>${escapeHtml(runId)}</strong></div>
+          <div><span class="meta-label">Screenshots</span><strong>${escapeHtml(screenshots)}</strong></div>
+        </div>
+      </section>
+      ${costSummary}
+      <section class="card prompt">
+        <h2>Test Prompt</h2>
+        <p>${escapeHtml(scenario)}</p>
+      </section>
+      <section>
+        <h2>Steps</h2>
+        <div class="steps">${stepsHtml}</div>
+      </section>
+      ${report.error ? `<section class="card error-card"><h2>Error</h2><pre>${escapeHtml(stripAnsi(report.error))}</pre></section>` : ""}
+    </main>
+  </body>
+</html>`;
+}
+
+export async function rerenderReportArtifacts(reportPathInput) {
+  const reportPath = path.resolve(process.cwd(), reportPathInput);
+  const reportContent = await readFile(reportPath, "utf8");
+
+  let report;
+  try {
+    report = JSON.parse(reportContent);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid report JSON in '${reportPath}': ${detail}`);
+  }
+
+  if (!report || typeof report !== "object") {
+    throw new Error(`Report '${reportPath}' must contain an object.`);
+  }
+
+  const runDir = path.dirname(reportPath);
+  const runId = String(report.runId || path.basename(runDir));
+  const scenario = String(report.objective || "");
+  const screenshots = normalizeScreenshotMode(report?.config?.screenshots);
+  const llmProvider = String(report?.config?.llm?.provider || "unknown");
+  const modelId = String(report?.config?.llm?.modelId || "unknown");
+  const modelSummary = `${llmProvider}:${modelId}`;
+  const config = report?.config && typeof report.config === "object" ? report.config : { baseUrl: "" };
+
+  const summary = buildSummaryMarkdown({ report, runId, scenario, screenshots, modelSummary, config });
+  const summaryHtml = renderSummaryHtml({ report, runId, scenario, screenshots, modelSummary, config });
+
+  const summaryPath = path.join(runDir, "summary.md");
+  const summaryHtmlPath = path.join(runDir, "summary.html");
+  await writeFile(summaryPath, `${summary}\n`, "utf8");
+  await writeFile(summaryHtmlPath, `${summaryHtml}\n`, "utf8");
+
+  return {
+    reportPath,
+    summaryPath,
+    summaryHtmlPath,
+  };
+}
+
 function createRunnerLogger(headed) {
   const emit = (level, message) => {
     if (headed) {
@@ -148,8 +723,12 @@ function createDebugLogger(enabled) {
   };
 }
 
+function stripAnsi(value) {
+  return String(value || "").replace(/[\u001B\u009B][[\]()#;?]*(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-ORZcf-nqry=><~])/g, "");
+}
+
 function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  return stripAnsi(error instanceof Error ? error.message : String(error));
 }
 
 function toNumberOrZero(value) {
@@ -360,9 +939,13 @@ function plannerActionSchema({ includeConditionalRequirements = true } = {}) {
       inputPrompt: { type: "string" },
       interactionPrompt: { type: "string" },
       screenshotPrompt: { type: "string" },
-      reason: { type: "string" },
+      reason: {
+        type: "string",
+        minLength: 1,
+        description: "Required for every action. Briefly explain why this is the best next step.",
+      },
     },
-    required: ["action"],
+    required: ["action", "reason"],
   };
 
   if (!includeConditionalRequirements) {
@@ -769,8 +1352,8 @@ function resolveFillValue(rawValue, contextData, humanInputs) {
   return rawValue;
 }
 
-async function collectObservation(page, observationConfig) {
-  return page.evaluate((config) => {
+async function collectObservation(page, observationConfig, turnToken) {
+  return page.evaluate(({ config, turnToken: activeTurnToken }) => {
     const cfg = config && typeof config === "object" ? config : {};
 
     const controlsSelector =
@@ -809,6 +1392,15 @@ async function collectObservation(page, observationConfig) {
       String(value || "")
         .replace(/\s+/g, " ")
         .trim();
+
+    const queryAllWithin = (root, selector) => {
+      try {
+        return Array.from(root.querySelectorAll(selector));
+      } catch {
+        return [];
+      }
+    };
+
     const isVisible = (el) => {
       const style = globalThis.window.getComputedStyle(el);
       if (style.display === "none" || style.visibility === "hidden") {
@@ -818,6 +1410,129 @@ async function collectObservation(page, observationConfig) {
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
     };
+
+    const resolveModalTitle = (modalEl) => {
+      const labelledBy = modalEl.getAttribute("aria-labelledby") || "";
+      if (labelledBy) {
+        const heading = globalThis.document.getElementById(labelledBy);
+        if (heading) {
+          const text = normalizeText(heading.textContent || "");
+          if (text) {
+            return text;
+          }
+        }
+      }
+
+      const ariaLabel = normalizeText(modalEl.getAttribute("aria-label") || "");
+      if (ariaLabel) {
+        return ariaLabel;
+      }
+
+      const heading = queryAllWithin(modalEl, "h1, h2, h3, [role='heading']")
+        .map((el) => normalizeText(el.textContent || ""))
+        .find(Boolean);
+      return heading || "";
+    };
+
+    const findActiveModal = () => {
+      const selectors = [
+        "[role='dialog'][aria-modal='true']",
+        "dialog[open]",
+        "[role='dialog'][data-state='open']",
+        "[role='dialog']",
+      ];
+
+      const candidates = [];
+      const seen = new Set();
+      for (const selector of selectors) {
+        for (const el of queryAllWithin(globalThis.document, selector)) {
+          if (seen.has(el)) continue;
+          seen.add(el);
+          if (!isVisible(el)) continue;
+          candidates.push(el);
+        }
+      }
+
+      if (candidates.length === 0) {
+        return null;
+      }
+
+      let best = candidates[0];
+      let bestScore = Number.NEGATIVE_INFINITY;
+      for (const el of candidates) {
+        const style = globalThis.window.getComputedStyle(el);
+        const zIndex = Number.parseFloat(style.zIndex || "0");
+        const rect = el.getBoundingClientRect();
+        const area = Math.max(0, rect.width * rect.height);
+        const score = (Number.isFinite(zIndex) ? zIndex : 0) * 1_000_000 + area;
+        if (score > bestScore) {
+          best = el;
+          bestScore = score;
+        }
+      }
+
+      return best;
+    };
+
+    const activeModal = findActiveModal();
+
+    const getVisibleClientRect = (el) => {
+      const rect = el.getBoundingClientRect();
+      const left = Math.max(0, Math.min(rect.left, globalThis.window.innerWidth));
+      const right = Math.max(0, Math.min(rect.right, globalThis.window.innerWidth));
+      const top = Math.max(0, Math.min(rect.top, globalThis.window.innerHeight));
+      const bottom = Math.max(0, Math.min(rect.bottom, globalThis.window.innerHeight));
+
+      if (right - left < 1 || bottom - top < 1) {
+        return null;
+      }
+
+      return { left, right, top, bottom };
+    };
+
+    const isLayerClickable = (el) => {
+      if (!isVisible(el)) {
+        return false;
+      }
+
+      const style = globalThis.window.getComputedStyle(el);
+      if (style.pointerEvents === "none") {
+        return false;
+      }
+
+      const rect = getVisibleClientRect(el);
+      if (!rect) {
+        return false;
+      }
+
+      const cx = (rect.left + rect.right) / 2;
+      const cy = (rect.top + rect.bottom) / 2;
+      const topEl = globalThis.document.elementFromPoint(cx, cy);
+      if (!topEl) {
+        return false;
+      }
+
+      if (topEl === el || el.contains(topEl)) {
+        return true;
+      }
+
+      const topLabel = topEl.closest("label");
+      if (topLabel && "control" in topLabel && topLabel.control === el) {
+        return true;
+      }
+
+      return false;
+    };
+
+    const allVisibleControls = queryAllWithin(globalThis.document, controlsSelector).filter((el) => isVisible(el));
+    const visibleOutsideModalControls = activeModal
+      ? allVisibleControls.filter((el) => !activeModal.contains(el))
+      : [];
+    const modalBlocksBackground =
+      Boolean(activeModal) &&
+      visibleOutsideModalControls.length > 0 &&
+      !visibleOutsideModalControls.some((el) => isLayerClickable(el));
+    const scopeRoot = modalBlocksBackground && activeModal ? activeModal : globalThis.document;
 
     const matchesAnySelector = (el, selectors) =>
       selectors.some((selector) => {
@@ -854,16 +1569,12 @@ async function collectObservation(page, observationConfig) {
     const seenElements = new Set();
 
     for (const selector of priorityControlSelectors) {
-      let nodes = [];
-      try {
-        nodes = Array.from(globalThis.document.querySelectorAll(selector));
-      } catch {
-        nodes = [];
-      }
+      const nodes = queryAllWithin(scopeRoot, selector);
 
       for (const el of nodes) {
         if (seenElements.has(el)) continue;
         if (!isVisible(el)) continue;
+        if (!isLayerClickable(el)) continue;
         if (shouldIgnoreControl(el)) continue;
         seenElements.add(el);
         selectedElements.push({ el, priority: true });
@@ -871,19 +1582,21 @@ async function collectObservation(page, observationConfig) {
     }
 
     let generalNodes = [];
-    try {
-      generalNodes = Array.from(globalThis.document.querySelectorAll(controlsSelector));
-    } catch {
-      generalNodes = [];
-    }
+    generalNodes = queryAllWithin(scopeRoot, controlsSelector);
 
     for (const el of generalNodes) {
       if (selectedElements.length >= maxControls) break;
       if (seenElements.has(el)) continue;
       if (!isVisible(el)) continue;
+      if (!isLayerClickable(el)) continue;
       if (shouldIgnoreControl(el)) continue;
       seenElements.add(el);
       selectedElements.push({ el, priority: false });
+    }
+
+    for (const el of queryAllWithin(globalThis.document, "[data-agentic-id], [data-agentic-turn]")) {
+      el.removeAttribute("data-agentic-id");
+      el.removeAttribute("data-agentic-turn");
     }
 
     let sequence = 0;
@@ -891,6 +1604,7 @@ async function collectObservation(page, observationConfig) {
       sequence += 1;
       const agenticId = `a${sequence}`;
       el.setAttribute("data-agentic-id", agenticId);
+      el.setAttribute("data-agentic-turn", activeTurnToken);
 
       const text = normalizeText(el.textContent || "");
       const ariaLabel = el.getAttribute("aria-label") || "";
@@ -952,25 +1666,22 @@ async function collectObservation(page, observationConfig) {
       };
     });
 
-    const headings = Array.from(globalThis.document.querySelectorAll(headingSelector))
+    const headings = queryAllWithin(scopeRoot, headingSelector)
       .map((el) => normalizeText(el.textContent || ""))
       .filter(Boolean)
       .slice(0, maxHeadings);
 
-    const alerts = Array.from(globalThis.document.querySelectorAll(alertSelector))
+    const alerts = queryAllWithin(scopeRoot, alertSelector)
       .map((el) => normalizeText(el.textContent || ""))
       .filter(Boolean)
       .slice(0, maxAlerts);
 
     let textRoot = null;
-    if (documentTextScopeSelectors.length > 0) {
+    if (modalBlocksBackground && activeModal) {
+      textRoot = activeModal;
+    } else if (documentTextScopeSelectors.length > 0) {
       for (const selector of documentTextScopeSelectors) {
-        let nodes = [];
-        try {
-          nodes = Array.from(globalThis.document.querySelectorAll(selector));
-        } catch {
-          nodes = [];
-        }
+        const nodes = queryAllWithin(globalThis.document, selector);
 
         const firstVisibleNode = nodes.find((node) => isVisible(node));
         if (firstVisibleNode) {
@@ -993,12 +1704,19 @@ async function collectObservation(page, observationConfig) {
     return {
       url: globalThis.window.location.href,
       title: globalThis.document.title,
+      modal: {
+        open: Boolean(activeModal),
+        blocksBackground: modalBlocksBackground,
+        role: activeModal?.getAttribute("role") || "",
+        ariaModal: activeModal?.getAttribute("aria-modal") || "",
+        title: activeModal ? resolveModalTitle(activeModal) : "",
+      },
       headings,
       alerts,
       documentText,
       controls: visibleControls,
     };
-  }, observationConfig);
+  }, { config: observationConfig, turnToken });
 }
 
 function buildPlannerMessages({
@@ -1033,6 +1751,9 @@ function buildPlannerMessages({
     contextData,
     planningRules: [
       "Use visible controls only.",
+      "Always provide a non-empty reason for the chosen action.",
+      "If observation.modal.blocksBackground is true, only interact with controls listed from the blocking modal context.",
+      "If observation.modal.open is true but observation.modal.blocksBackground is false, you may still use background controls when needed.",
       "Do not invent element IDs.",
       "For click and fill actions, always provide a targetId that matches a visible control.",
       "Never emit click or fill without targetId.",
@@ -1056,6 +1777,7 @@ function buildPlannerMessages({
     observation: {
       url: observation.url,
       title: observation.title,
+      modal: observation.modal,
       headings: observation.headings,
       alerts: observation.alerts,
       documentText: clip(observation.documentText, 1600),
@@ -1223,6 +1945,10 @@ async function requestPlannerAction({ config, bedrockClient, messages, screensho
     throw new Error(`Planner response missing action: ${JSON.stringify(parsed)}`);
   }
 
+  if (typeof parsed.reason !== "string" || parsed.reason.trim().length === 0) {
+    throw new Error(`Planner response missing reason: ${JSON.stringify(parsed)}`);
+  }
+
   return {
     action: parsed.action,
     targetId: parsed.targetId,
@@ -1231,7 +1957,7 @@ async function requestPlannerAction({ config, bedrockClient, messages, screensho
     inputPrompt: parsed.inputPrompt,
     interactionPrompt: parsed.interactionPrompt,
     screenshotPrompt: parsed.screenshotPrompt,
-    reason: parsed.reason || "",
+    reason: parsed.reason.trim(),
     tokenUsage,
   };
 }
@@ -1607,6 +2333,7 @@ export async function runScenario(config, options = {}) {
   let stepIndex = 0;
   const actionHistory = [];
   const humanInputs = new Map();
+  let observationTurn = 0;
   let lastUiActionAt = 0;
   let pendingInteractionRequest = null;
   let pendingScreenshotBuffer = null;
@@ -1638,12 +2365,16 @@ export async function runScenario(config, options = {}) {
   async function captureStep(name, plannerAction, execute, stepDebugContext = undefined) {
     throwIfInterrupted();
     stepIndex += 1;
-    const screenshotName = `${String(stepIndex).padStart(2, "0")}-${sanitizeSegment(name)}.png`;
+    const artifactBase = `${String(stepIndex).padStart(2, "0")}-${sanitizeSegment(name)}`;
+    const screenshotName = `${artifactBase}.png`;
+    const htmlName = `${artifactBase}.html`;
     const screenshotPath = path.join(screenshotsDir, screenshotName);
+    const htmlPath = path.join(screenshotsDir, htmlName);
     const started = Date.now();
 
     let stepError = null;
     let stepScreenshotRelativePath;
+    let stepHtmlRelativePath;
     try {
       await execute();
       throwIfInterrupted();
@@ -1656,12 +2387,20 @@ export async function runScenario(config, options = {}) {
         await captureArtifactScreenshot({ path: screenshotPath });
         stepScreenshotRelativePath = path.relative(runDir, screenshotPath);
       }
+
+      if (config.debug) {
+        const html = await page.content();
+        await writeFile(htmlPath, html, "utf8");
+        stepHtmlRelativePath = path.relative(runDir, htmlPath);
+      }
+
       report.steps.push({
         index: stepIndex,
         name,
         durationMs: Date.now() - started,
         url: page.url(),
         screenshot: stepScreenshotRelativePath,
+        html: stepHtmlRelativePath,
         plannerAction,
         observation: stepDebugContext?.observation,
         knownHumanInputs: stepDebugContext?.knownHumanInputs,
@@ -1685,7 +2424,9 @@ export async function runScenario(config, options = {}) {
     for (let i = 0; i < config.maxSteps; i += 1) {
       throwIfInterrupted();
       await waitForUiSettle(page, 550);
-      const observation = await collectObservation(page, observationConfig);
+      observationTurn += 1;
+      const turnToken = `t${observationTurn}`;
+      const observation = await collectObservation(page, observationConfig, turnToken);
       throwIfInterrupted();
       logger.info(`observation ${i + 1}: ${formatObservationSummary(observation)}`);
 
@@ -1866,7 +2607,9 @@ export async function runScenario(config, options = {}) {
             throw new Error(`Planner action ${plannerAction.action} missing targetId.`);
           }
 
-          const target = page.locator(`[data-agentic-id="${plannerAction.targetId}"]`).first();
+          const target = page
+            .locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${plannerAction.targetId}"]`)
+            .first();
           if ((await target.count()) === 0) {
             throw new Error(`Planner target not found: ${plannerAction.targetId}`);
           }
@@ -1952,6 +2695,12 @@ export async function runScenario(config, options = {}) {
       logger.error(report.error);
       const failureScreenshot = path.join(screenshotsDir, "failure.png");
       await captureViewportScreenshot({ path: failureScreenshot });
+
+      if (config.debug) {
+        const failureHtmlPath = path.join(screenshotsDir, "failure.html");
+        const html = await page.content();
+        await writeFile(failureHtmlPath, html, "utf8");
+      }
     }
   } finally {
     report.finishedAt = new Date().toISOString();
@@ -1969,6 +2718,7 @@ export async function runScenario(config, options = {}) {
 
     const reportPath = path.join(runDir, "report.json");
     const summaryPath = path.join(runDir, "summary.md");
+    const summaryHtmlPath = path.join(runDir, "summary.html");
 
     const modelSummary = `${config.llm.provider}:${config.llm.modelId}`;
 
@@ -2003,15 +2753,28 @@ export async function runScenario(config, options = {}) {
         const planner = step.plannerAction
           ? ` action=${step.plannerAction.action}${step.plannerAction.targetId ? ` target=${step.plannerAction.targetId}` : ""}`
           : "";
+        const stepUrlPart = formatSummaryStepUrl(step.url, config.baseUrl);
         const screenshotPart = step.screenshot ? ` [${step.screenshot}](${step.screenshot})` : "";
-        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner} -> ${step.url}${screenshotPart}`;
+        const htmlPart = step.html ? ` [${step.html}](${step.html})` : "";
+        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner} -> ${stepUrlPart}${screenshotPart}${htmlPart}`;
       }),
       "",
-      report.error ? `## Error\n\n${report.error}` : "## Result\n\nScenario objective completed.",
+      report.error ? `## Error\n\n\
+    \`\`\`text\n${report.error}\n\`\`\`` : "## Result\n\nScenario objective completed.",
     ].join("\n");
+
+    const summaryHtml = renderSummaryHtml({
+      report,
+      runId,
+      scenario,
+      screenshots,
+      modelSummary,
+      config,
+    });
 
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
     await writeFile(summaryPath, `${summary}\n`, "utf8");
+    await writeFile(summaryHtmlPath, `${summaryHtml}\n`, "utf8");
 
     const latestManifestPath = path.join(config.outputDir, "latest.json");
     const latestManifest = {
@@ -2023,6 +2786,7 @@ export async function runScenario(config, options = {}) {
       artifactsDir: runDir,
       reportPath,
       summaryPath,
+      summaryHtmlPath,
       provider: config.llm.provider,
       modelId: config.llm.modelId,
       ...(config.llm.region ? { region: config.llm.region } : {}),
@@ -2038,6 +2802,11 @@ export async function runScenario(config, options = {}) {
       : report.status === "interrupted"
         ? "INTERRUPTED"
         : "FAIL";
+
+    if (report.status === "failed" && report.error) {
+      process.stderr.write(`Failure reason: ${report.error}\n`);
+    }
+
     process.stdout.write(`${statusPrefix}: ${runDir}\n`);
     logger.info(`finished run with status ${report.status}`);
 
