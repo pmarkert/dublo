@@ -1,0 +1,221 @@
+import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
+import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
+import { PlannerActionSchema } from "../ports/planner.js";
+import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
+
+export interface BedrockPlannerConfig {
+  additionalModelRequestFields?: Record<string, unknown>;
+  inferenceConfig?: Record<string, unknown>;
+  modelId: string;
+  region: string;
+  serviceTier?: "default" | "priority" | "flex" | "reserved";
+  supportsConditionalToolSchemas?: boolean;
+}
+
+export interface BedrockClient {
+  send(command: ConverseCommand): Promise<unknown>;
+}
+
+export interface CreateBedrockPlannerOptions {
+  client?: BedrockClient;
+}
+
+const EMPTY_TOKEN_USAGE: TokenUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  cacheReadInputTokens: 0,
+  cacheWriteInputTokens: 0
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function normalizeTokenUsage(value: unknown): TokenUsage {
+  if (!isRecord(value)) return { ...EMPTY_TOKEN_USAGE };
+  const inputTokens = numberOrZero(value.inputTokens ?? value.inputTokenCount);
+  const outputTokens = numberOrZero(value.outputTokens ?? value.outputTokenCount);
+  const totalTokens =
+    numberOrZero(value.totalTokens ?? value.totalTokenCount) || inputTokens + outputTokens;
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    cacheReadInputTokens: numberOrZero(
+      value.cacheReadInputTokens ?? value.cacheReadInputTokenCount
+    ),
+    cacheWriteInputTokens: numberOrZero(
+      value.cacheWriteInputTokens ?? value.cacheWriteInputTokenCount
+    )
+  };
+}
+
+function extractJsonObject(value: string): unknown {
+  const candidate = value
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  return JSON.parse(candidate);
+}
+
+function serviceTier(config: BedrockPlannerConfig): "priority" | "flex" | "reserved" | undefined {
+  return config.serviceTier === "priority" ||
+    config.serviceTier === "flex" ||
+    config.serviceTier === "reserved"
+    ? config.serviceTier
+    : undefined;
+}
+
+function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> {
+  const schema: Record<string, unknown> = {
+    type: "object",
+    additionalProperties: false,
+    required: ["action", "reason"],
+    properties: {
+      action: { type: "string" },
+      reason: { type: "string" },
+      targetId: { type: "string" },
+      value: { type: "string" },
+      inputKey: { type: "string" },
+      inputPrompt: { type: "string" },
+      interactionPrompt: { type: "string" },
+      screenshotPrompt: { type: "string" }
+    }
+  };
+  if (config.supportsConditionalToolSchemas !== false) {
+    schema.allOf = [
+      { if: { properties: { action: { const: "click" } } }, then: { required: ["targetId"] } },
+      {
+        if: { properties: { action: { const: "fill" } } },
+        then: { required: ["targetId", "value"] }
+      }
+    ];
+  }
+  return {
+    tools: [
+      {
+        toolSpec: {
+          name: "planner_action",
+          description: "Return the next UI automation action as structured JSON input.",
+          inputSchema: { json: schema }
+        }
+      }
+    ],
+    toolChoice: { tool: { name: "planner_action" } }
+  };
+}
+
+function buildInferenceConfig(
+  config: BedrockPlannerConfig,
+  maxTokens: number
+): Record<string, unknown> {
+  return { maxTokens, ...(config.inferenceConfig ?? {}) };
+}
+
+function buildRequest(
+  config: BedrockPlannerConfig,
+  input: Record<string, unknown>,
+  includeServiceTier: boolean
+): ConverseCommand {
+  const tier = includeServiceTier ? serviceTier(config) : undefined;
+  return new ConverseCommand({
+    modelId: config.modelId,
+    ...(tier ? { serviceTier: tier } : {}),
+    ...input
+  } as unknown as ConverseCommandInput);
+}
+
+async function sendWithServiceTierFallback(
+  client: BedrockClient,
+  config: BedrockPlannerConfig,
+  input: Record<string, unknown>
+): Promise<unknown> {
+  try {
+    return await client.send(buildRequest(config, input, true));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (serviceTier(config) && /unexpected field type/i.test(detail)) {
+      return client.send(buildRequest(config, input, false));
+    }
+    throw error;
+  }
+}
+
+export function createBedrockPlanner(
+  config: BedrockPlannerConfig,
+  options: CreateBedrockPlannerOptions = {}
+): Planner {
+  const client = options.client ?? new BedrockRuntimeClient({ region: config.region });
+
+  return {
+    async preflight() {
+      try {
+        await sendWithServiceTierFallback(client, config, {
+          messages: [
+            { role: "user", content: [{ text: 'Return exactly this JSON: {"ok":true}' }] }
+          ],
+          inferenceConfig: buildInferenceConfig(config, 20),
+          ...(config.additionalModelRequestFields
+            ? { additionalModelRequestFields: config.additionalModelRequestFields }
+            : {})
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Bedrock preflight failed for model '${config.modelId}'. Check AWS credentials, region, and model access. Detail: ${detail}`,
+          { cause: error }
+        );
+      }
+    },
+
+    async nextAction(request: PlannerRequest): Promise<PlannerResponse> {
+      const content: Array<Record<string, unknown>> = [
+        { text: request.messages.staticContextText }
+      ];
+      content.push({ text: request.messages.dynamicContextText });
+      if (request.screenshot) {
+        content.push({ image: { format: "png", source: { bytes: request.screenshot } } });
+      }
+
+      const result = await sendWithServiceTierFallback(client, config, {
+        system: [{ text: request.messages.systemText }],
+        messages: [{ role: "user", content }],
+        inferenceConfig: buildInferenceConfig(config, 700),
+        ...(config.additionalModelRequestFields
+          ? { additionalModelRequestFields: config.additionalModelRequestFields }
+          : {}),
+        ...buildToolConfig(config)
+      });
+      if (!isRecord(result)) throw new Error("Bedrock planner response was not an object.");
+      const output = isRecord(result.output) ? result.output : undefined;
+      const message = output && isRecord(output.message) ? output.message : undefined;
+      const contentItems = Array.isArray(message?.content) ? message.content : [];
+      const toolItem = contentItems.find(
+        (item): item is Record<string, unknown> => isRecord(item) && isRecord(item.toolUse)
+      );
+      const toolUse = toolItem && isRecord(toolItem.toolUse) ? toolItem.toolUse : undefined;
+      const rawAction = toolUse?.input;
+      if (rawAction === undefined) {
+        const text = contentItems
+          .filter(isRecord)
+          .map((item) => (typeof item.text === "string" ? item.text : ""))
+          .join("\n")
+          .trim();
+        if (!text) throw new Error("Bedrock planner API returned no planner action.");
+        return {
+          action: PlannerActionSchema.parse(extractJsonObject(text)),
+          tokenUsage: normalizeTokenUsage(result.usage)
+        };
+      }
+      return {
+        action: PlannerActionSchema.parse(rawAction),
+        tokenUsage: normalizeTokenUsage(result.usage)
+      };
+    }
+  };
+}

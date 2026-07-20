@@ -1,12 +1,12 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { stdin as input, stdout as output } from "node:process";
-import { createInterface } from "node:readline/promises";
-import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import * as yaml from "js-yaml";
-import { chromium } from "playwright";
 import { generateReportArtifacts, rerenderReportArtifacts } from "../reporting/report-artifacts.mjs";
+import { createBedrockPlanner } from "../node/bedrock-planner.js";
+import { createOpenAICompatiblePlanner } from "../node/openai-compatible-planner.js";
+import { createPlaywrightBrowserFactory } from "../node/playwright-browser.js";
+import { createTerminalInteractionProvider } from "../node/terminal-interaction.js";
 
 const FORBIDDEN_CONTEXT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const MAX_INLINE_JSON_LENGTH = 16 * 1024;
@@ -178,28 +178,6 @@ function toNumberOrZero(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function normalizeTokenUsage(rawUsage) {
-  const usage = rawUsage && typeof rawUsage === "object" ? rawUsage : {};
-  return {
-    inputTokens: toNumberOrZero(usage.inputTokens ?? usage.inputTokenCount),
-    outputTokens: toNumberOrZero(usage.outputTokens ?? usage.outputTokenCount),
-    totalTokens: toNumberOrZero(usage.totalTokens ?? usage.totalTokenCount),
-    cacheReadInputTokens: toNumberOrZero(usage.cacheReadInputTokens ?? usage.cacheReadInputTokenCount),
-    cacheWriteInputTokens: toNumberOrZero(usage.cacheWriteInputTokens ?? usage.cacheWriteInputTokenCount),
-  };
-}
-
-function normalizeOpenAITokenUsage(rawUsage) {
-  const usage = rawUsage && typeof rawUsage === "object" ? rawUsage : {};
-  return {
-    inputTokens: toNumberOrZero(usage.prompt_tokens ?? usage.inputTokens),
-    outputTokens: toNumberOrZero(usage.completion_tokens ?? usage.outputTokens),
-    totalTokens: toNumberOrZero(usage.total_tokens ?? usage.totalTokens),
-    cacheReadInputTokens: 0,
-    cacheWriteInputTokens: 0,
-  };
-}
-
 function addTokenUsageTotals(target, delta) {
   if (!target || !delta) {
     return;
@@ -237,196 +215,6 @@ async function isTargetDisabled(target) {
   } catch {
     return false;
   }
-}
-
-function extractJsonFromText(rawText) {
-  const trimmed = rawText.trim();
-  if (!trimmed) {
-    throw new Error("Planner returned empty text.");
-  }
-
-  if (trimmed.startsWith("```")) {
-    const withoutFenceStart = trimmed.replace(/^```(?:json)?\s*/i, "");
-    const withoutFence = withoutFenceStart.replace(/\s*```$/, "");
-    return withoutFence.trim();
-  }
-
-  return trimmed;
-}
-
-function extractFirstJsonObjectFromText(rawText) {
-  const trimmed = String(rawText || "").trim();
-  if (!trimmed) {
-    throw new Error("Planner returned empty text.");
-  }
-
-  // Prefer fenced JSON blocks when present.
-  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (fencedMatch && fencedMatch[1]) {
-    const fencedCandidate = fencedMatch[1].trim();
-    try {
-      return JSON.parse(fencedCandidate);
-    } catch {
-      // Fall through to brace scanning if fenced content is not valid JSON.
-    }
-  }
-
-  // Extract the first balanced top-level JSON object from mixed prose text.
-  let inString = false;
-  let escaped = false;
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < trimmed.length; i += 1) {
-    const ch = trimmed[i];
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) {
-      continue;
-    }
-
-    if (ch === "{") {
-      if (depth === 0) {
-        start = i;
-      }
-      depth += 1;
-      continue;
-    }
-
-    if (ch === "}" && depth > 0) {
-      depth -= 1;
-      if (depth === 0 && start >= 0) {
-        const candidate = trimmed.slice(start, i + 1);
-        return JSON.parse(candidate);
-      }
-    }
-  }
-
-  throw new Error("Planner text did not contain a valid JSON object.");
-}
-
-function plannerBedrockToolSpec(llmConfig) {
-  return {
-    tools: [
-      {
-        toolSpec: {
-          name: "planner_action",
-          description: "Return the next UI automation action as structured JSON input. Click and fill actions require a visible targetId; fill also requires a value.",
-          inputSchema: {
-            json: plannerActionSchema({
-              includeConditionalRequirements: supportsConditionalToolSchemas(llmConfig),
-            }),
-          },
-        },
-      },
-    ],
-  };
-}
-
-function plannerOpenAIToolSpec() {
-  return {
-    tools: [
-      {
-        type: "function",
-        function: {
-          name: "planner_action",
-          description: "Return the next UI automation action as structured JSON input. Click and fill actions require a visible targetId; fill also requires a value.",
-          parameters: plannerActionSchema(),
-        },
-      },
-    ],
-    tool_choice: { type: "function", function: { name: "planner_action" } },
-  };
-}
-
-function plannerActionSchema({ includeConditionalRequirements = true } = {}) {
-  const schema = {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      action: {
-        type: "string",
-        enum: [
-          "click",
-          "fill",
-          "wait",
-          "request_user_input",
-          "request_user_interaction",
-          "request_screenshot",
-          "finish",
-        ],
-      },
-      targetId: {
-        type: "string",
-        description: "Required for click and fill actions. Must match a visible control id from the observation.",
-      },
-      value: {
-        type: "string",
-        description: "Required for fill actions. The value to enter into the target control.",
-      },
-      inputKey: { type: "string" },
-      inputPrompt: { type: "string" },
-      interactionPrompt: { type: "string" },
-      screenshotPrompt: { type: "string" },
-      reason: {
-        type: "string",
-        minLength: 1,
-        description: "Required for every action. Briefly explain why this is the best next step.",
-      },
-    },
-    required: ["action", "reason"],
-  };
-
-  if (!includeConditionalRequirements) {
-    return schema;
-  }
-
-  return {
-    ...schema,
-    allOf: [
-      {
-        if: { properties: { action: { const: "click" } }, required: ["action"] },
-        then: { required: ["targetId"] },
-      },
-      {
-        if: { properties: { action: { const: "fill" } }, required: ["action"] },
-        then: { required: ["targetId", "value"] },
-      },
-      {
-        if: { properties: { action: { const: "request_user_input" } }, required: ["action"] },
-        then: { required: ["inputKey", "inputPrompt"] },
-      },
-      {
-        if: { properties: { action: { const: "request_user_interaction" } }, required: ["action"] },
-        then: { required: ["interactionPrompt"] },
-      },
-      {
-        if: { properties: { action: { const: "request_screenshot" } }, required: ["action"] },
-        then: { required: ["screenshotPrompt"] },
-      },
-    ],
-  };
-}
-
-function supportsConditionalToolSchemas(llmConfig) {
-  if (llmConfig?.supportsConditionalToolSchemas === false) {
-    return false;
-  }
-
-  return true;
 }
 
 function getConfiguredModelPricing(config) {
@@ -499,16 +287,6 @@ function modelSupportsBedrockPromptCaching(modelId) {
     normalized.startsWith("us.anthropic.claude") ||
     normalized.startsWith("amazon.nova")
   );
-}
-
-async function readHumanInputFromTerminal(promptText) {
-  const rl = createInterface({ input, output });
-  try {
-    const value = await rl.question(promptText);
-    return value.trim();
-  } finally {
-    rl.close();
-  }
 }
 
 async function parseContextFile(contextFile) {
@@ -1359,48 +1137,15 @@ async function requestPlannerActionBedrock({ client, modelId, llmConfig, message
   };
 }
 
-async function requestPlannerAction({ config, bedrockClient, messages, screenshotBuffer }) {
-  let plannerResult;
-
-  if (config.llm.provider === "openai-compatible") {
-    plannerResult = await requestPlannerActionOpenAI({
-      baseUrl: config.llm.baseUrl,
-      modelId: config.llm.modelId,
-      apiKey: config.llm.apiKey,
-      messages,
-      screenshotBuffer,
-    });
-  } else {
-    plannerResult = await requestPlannerActionBedrock({
-      client: bedrockClient,
-      modelId: config.llm.modelId,
-      llmConfig: config.llm,
-      messages,
-      screenshotBuffer,
-    });
-  }
-
-  const parsed = plannerResult?.parsed;
-  const tokenUsage = plannerResult?.tokenUsage;
-
-  if (!parsed || typeof parsed !== "object" || typeof parsed.action !== "string") {
-    throw new Error(`Planner response missing action: ${JSON.stringify(parsed)}`);
-  }
-
-  if (typeof parsed.reason !== "string" || parsed.reason.trim().length === 0) {
-    throw new Error(`Planner response missing reason: ${JSON.stringify(parsed)}`);
-  }
+async function requestPlannerAction({ planner, messages, screenshotBuffer }) {
+  const result = await planner.nextAction({
+    messages,
+    ...(screenshotBuffer ? { screenshot: screenshotBuffer } : {}),
+  });
 
   return {
-    action: parsed.action,
-    targetId: parsed.targetId,
-    value: parsed.value,
-    inputKey: parsed.inputKey,
-    inputPrompt: parsed.inputPrompt,
-    interactionPrompt: parsed.interactionPrompt,
-    screenshotPrompt: parsed.screenshotPrompt,
-    reason: parsed.reason.trim(),
-    tokenUsage,
+    ...result.action,
+    tokenUsage: result.tokenUsage,
   };
 }
 
@@ -1720,11 +1465,29 @@ export async function runScenario(config, options = {}) {
     artifactsDir: runDir,
   };
 
-  const bedrockClient =
-    config.llm.provider === "bedrock" ? new BedrockRuntimeClient({ region: config.llm.region }) : null;
+  const planner =
+    config.llm.provider === "openai-compatible"
+      ? createOpenAICompatiblePlanner({
+          baseUrl: config.llm.baseUrl,
+          modelId: config.llm.modelId,
+          ...(config.llm.apiKey ? { apiKey: config.llm.apiKey } : {}),
+        })
+      : createBedrockPlanner({
+          modelId: config.llm.modelId,
+          region: config.llm.region,
+          ...(config.llm.inferenceConfig ? { inferenceConfig: config.llm.inferenceConfig } : {}),
+          ...(config.llm.additionalModelRequestFields
+            ? { additionalModelRequestFields: config.llm.additionalModelRequestFields }
+            : {}),
+          ...(config.llm.serviceTier ? { serviceTier: config.llm.serviceTier } : {}),
+          ...(config.llm.supportsConditionalToolSchemas !== undefined
+            ? { supportsConditionalToolSchemas: config.llm.supportsConditionalToolSchemas }
+            : {}),
+        });
 
   const logger = createRunnerLogger(config.headed);
   const debugLogger = createDebugLogger(config.debug);
+  const interactionProvider = createTerminalInteractionProvider();
   const formatObservationSummary = (observation) => {
     const visibleButtons = observation.controls.filter((control) => control.tag === "button").length;
     const visibleInputs = observation.controls.filter((control) => control.tag === "input").length;
@@ -1738,27 +1501,15 @@ export async function runScenario(config, options = {}) {
 
   logger.info(`starting run ${runId} using ${providerLabel}`);
 
-  if (config.llm.provider === "openai-compatible") {
-    logger.info(`running OpenAI-compatible preflight against model ${config.llm.modelId}`);
-    if (shouldInterrupt()) {
-      return {
-        status: "interrupted",
-        error: "Interrupted by Ctrl-C."
-      };
-    }
-    await runOpenAIPreflight({ baseUrl: config.llm.baseUrl, modelId: config.llm.modelId, apiKey: config.llm.apiKey });
-    logger.info("OpenAI-compatible preflight succeeded");
-  } else {
-    logger.info(`running Bedrock preflight against model ${config.llm.modelId}`);
-    if (shouldInterrupt()) {
-      return {
-        status: "interrupted",
-        error: "Interrupted by Ctrl-C."
-      };
-    }
-    await runBedrockPreflight({ client: bedrockClient, modelId: config.llm.modelId, llmConfig: config.llm });
-    logger.info("Bedrock preflight succeeded");
+  logger.info(`running ${config.llm.provider} preflight against model ${config.llm.modelId}`);
+  if (shouldInterrupt()) {
+    return {
+      status: "interrupted",
+      error: "Interrupted by Ctrl-C."
+    };
   }
+  await planner.preflight();
+  logger.info(`${config.llm.provider} preflight succeeded`);
 
   if (shouldInterrupt()) {
     return {
@@ -1767,11 +1518,11 @@ export async function runScenario(config, options = {}) {
     };
   }
 
-  const browser = await chromium.launch({ headless: !config.headed });
-  const context = await browser.newContext({
+  const browserSession = await createPlaywrightBrowserFactory().launch({
+    headed: config.headed,
     viewport: { width: 1440, height: 900 },
   });
-  const page = await context.newPage();
+  const { page } = browserSession;
 
   let stepIndex = 0;
   const actionHistory = [];
@@ -1899,8 +1650,7 @@ export async function runScenario(config, options = {}) {
       debugLogger.log("planner_user_end");
 
       const plannerResult = await requestPlannerAction({
-        config,
-        bedrockClient,
+        planner,
         messages,
         screenshotBuffer: screenshotBufferForThisTurn,
       });
@@ -1965,7 +1715,7 @@ export async function runScenario(config, options = {}) {
 
             if (!humanInputs.has(inputKey)) {
               logger.info(`requesting human input for key '${inputKey}'`);
-              const enteredValue = await readHumanInputFromTerminal(`${promptText}: `);
+              const enteredValue = await interactionProvider.requestInput(`${promptText}: `);
               throwIfInterrupted();
               if (!enteredValue) {
                 throw new Error(`No value entered for '${inputKey}'.`);
@@ -2018,7 +1768,7 @@ export async function runScenario(config, options = {}) {
             }
 
             logger.info(`prompting for human interaction: ${interactionPrompt}`);
-            const interactionNote = await readHumanInputFromTerminal(`${interactionPrompt}. Optional note: `);
+            const interactionNote = await interactionProvider.requestInput(`${interactionPrompt}. Optional note: `);
             throwIfInterrupted();
             if (interactionNote) {
               const key = `interaction_note_${stepIndex}`;
@@ -2190,8 +1940,7 @@ export async function runScenario(config, options = {}) {
     };
     await writeFile(latestManifestPath, `${JSON.stringify(latestManifest, null, 2)}\n`, "utf8");
 
-    await context.close();
-    await browser.close();
+    await browserSession.close();
 
     const statusPrefix = report.status === "passed"
       ? "PASS"

@@ -49,6 +49,7 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.853.0",
     "@bomb.sh/tab": "^0.0.19",
+    "@inquirer/prompts": "^7.10.1",
     "commander": "^15.0.0",
     "dotenv": "^16.4.5",
     "js-yaml": "^5.2.1",

@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import type { Command } from "commander";
+import { createInquirerConfigPrompts, runConfigWizard } from "./config-wizard.js";
 import { resolveWorkspaceConfig } from "../core/config/resolve.js";
 import { WorkspaceDefaultsPatchSchema, WorkspaceDefaultsSchema } from "../core/config/schemas.js";
 import type { WorkspaceDefaults, WorkspaceDefaultsPatch } from "../core/config/schemas.js";
@@ -165,15 +166,31 @@ async function editPromptDocument(prompt: string): Promise<string> {
   }
 }
 
+async function runInteractiveWorkspaceConfiguration(
+  current: WorkspaceDefaults
+): Promise<WorkspaceDefaults | undefined> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(
+      "Interactive configuration requires a terminal. Use --yes with explicit options instead."
+    );
+  }
+
+  return runConfigWizard({
+    current,
+    prompts: createInquirerConfigPrompts(),
+    write: (text) => process.stdout.write(text)
+  });
+}
+
 export function registerConfigCommands(program: Command): void {
   program
     .command("init")
-    .description("Create a workspace and standard profile directories")
+    .description("Create a workspace and configure its defaults")
     .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
     .option("--base-url <url>", "Initial base URL")
     .option("--llm <name>", "Initial default LLM profile")
     .option("--force", "Replace an existing defaults.json")
-    .option("-y, --yes", "Create without interactive prompts")
+    .option("-y, --yes", "Create from supplied options without interactive prompts")
     .action(async (options: InitOptions) => {
       const store = createWorkspaceStore();
       const workspace = resolveWorkspace(options);
@@ -185,14 +202,41 @@ export function registerConfigCommands(program: Command): void {
       }
 
       await store.ensure(workspace);
-      await store.writeDefaults(
-        workspace,
-        WorkspaceDefaultsSchema.parse({ baseUrl: options.baseUrl, llm: options.llm })
-      );
+      const initial = WorkspaceDefaultsSchema.parse({
+        ...(await store.readDefaults(workspace)),
+        ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
+        ...(options.llm ? { llm: options.llm } : {})
+      });
+      const defaults = options.yes ? initial : await runInteractiveWorkspaceConfiguration(initial);
+      if (defaults === undefined) {
+        process.stdout.write("Canceled. No workspace defaults were changed.\n");
+        return;
+      }
+      await store.writeDefaults(workspace, defaults);
       process.stdout.write(`Initialized workspace at ${workspace}\n`);
     });
 
-  const config = program.command("config").description("Inspect and update workspace defaults");
+  const config = program
+    .command("config")
+    .description("Inspect and update workspace defaults")
+    .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)");
+  config.addHelpText(
+    "after",
+    "\nRun 'dublo config' without a subcommand to configure defaults interactively.\n"
+  );
+  config.action(async (options: WorkspaceOptions) => {
+    const store = createWorkspaceStore();
+    const workspace = resolveWorkspace(options);
+    const defaults = await runInteractiveWorkspaceConfiguration(
+      await store.readDefaults(workspace)
+    );
+    if (defaults === undefined) {
+      process.stdout.write("Canceled. No workspace defaults were changed.\n");
+      return;
+    }
+    await store.writeDefaults(workspace, defaults);
+    process.stdout.write(`Updated ${path.join(workspace, "defaults.json")}\n`);
+  });
 
   config
     .command("show")

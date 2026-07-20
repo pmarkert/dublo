@@ -1,5 +1,24 @@
 import { readdirSync } from "node:fs";
-import { isAbsolute, join, posix, resolve } from "node:path";
+import { isAbsolute, join, posix, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { listAvailableRuns } from "./run-reports.js";
+
+const TEMPLATE_DIRECTORY = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../resources/templates"
+);
+
+const CONFIG_SETTINGS = [
+  "base-url",
+  "llm",
+  "persona",
+  "max-steps",
+  "headless",
+  "screenshots",
+  "debug",
+  "output-dir",
+  "observation-config"
+];
 
 function currentCompletionToken() {
   const argv = process.argv;
@@ -133,10 +152,7 @@ export function collectOrderedContextOperations(argv) {
 }
 
 export function listProfileCompletions(complete, folderName, options = {}) {
-  const workspaceToken = getOptionArgValue("--workspace") || process.env.DUBLO_WORKSPACE || "./.dublo";
-  const workspacePath = isAbsolute(workspaceToken)
-    ? resolve(workspaceToken)
-    : resolve(process.cwd(), workspaceToken);
+  const workspacePath = resolveCompletionWorkspace();
   const folderPath = join(workspacePath, folderName);
 
   let entries;
@@ -176,48 +192,153 @@ export function listProfileCompletions(complete, folderName, options = {}) {
   }
 }
 
+export function listTemplateCompletions(complete, templateType, options = {}) {
+  listEntries(complete, join(TEMPLATE_DIRECTORY, templateType), "built-in template", options);
+}
+
+export function listRunCompletions(complete) {
+  for (const run of listAvailableRuns({ workspace: getOptionArgValue("--workspace") || undefined })) {
+    complete(run.runId, `${run.status} run`);
+  }
+}
+
 export function addRunOptionValueCompletions(completion) {
-  const runCommand = completion.commands.get("run");
-  if (!runCommand) {
+  addWorkspaceCompletionHandlers(completion);
+  addRunCompletionHandlers(completion);
+  addProfileCompletionHandlers(completion);
+  addReportCompletionHandlers(completion);
+  addEnumCompletionHandlers(completion);
+}
+
+function resolveCompletionWorkspace() {
+  const workspaceToken = getOptionArgValue("--workspace") || process.env.DUBLO_WORKSPACE || "./.dublo";
+  return isAbsolute(workspaceToken) ? resolve(workspaceToken) : resolve(process.cwd(), workspaceToken);
+}
+
+function listEntries(complete, directory, label, options) {
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch {
     return;
   }
 
-  const workspaceOption = runCommand.options.get("workspace");
-  if (workspaceOption) {
-    workspaceOption.handler = (complete) => {
-      listPathCompletions(complete);
-    };
+  const seen = new Set();
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const extension = options.fileExtensions?.find((item) =>
+      entry.name.toLowerCase().endsWith(item.toLowerCase())
+    );
+    if (options.fileExtensions?.length && !extension) continue;
+    const value = extension ? entry.name.slice(0, -extension.length) : entry.name;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    complete(value, label);
   }
+}
 
-  const llmOption = runCommand.options.get("llm");
-  if (llmOption) {
-    llmOption.handler = (complete) => {
-      listPathCompletions(complete, { fileExtensions: [".json"] });
-      listProfileCompletions(complete, "llm", { fileExtensions: [".json"] });
-    };
+function addWorkspaceCompletionHandlers(completion) {
+  for (const command of completion.commands.values()) {
+    setOptionHandler(command, "workspace", (complete) => listPathCompletions(complete));
   }
+}
 
-  const personaOption = runCommand.options.get("persona");
-  if (personaOption) {
-    personaOption.handler = (complete) => {
-      listPathCompletions(complete, { fileExtensions: [".md", ".txt"] });
-      listProfileCompletions(complete, "personas", { fileExtensions: [".md", ".txt"] });
-    };
-  }
+function addRunCompletionHandlers(completion) {
+  const llm = (complete) => {
+    listPathCompletions(complete, { fileExtensions: [".json"] });
+    listProfileCompletions(complete, "llm", { fileExtensions: [".json"] });
+  };
+  const persona = (complete) => {
+    listPathCompletions(complete, { fileExtensions: [".md", ".txt"] });
+    listProfileCompletions(complete, "personas", { fileExtensions: [".md", ".txt"] });
+    listTemplateCompletions(complete, "personas", { fileExtensions: [".md", ".txt"] });
+  };
+  const scenario = (complete) => {
+    listPathCompletions(complete, { fileExtensions: [".md", ".txt"] });
+    listProfileCompletions(complete, "scenarios", { fileExtensions: [".md", ".txt"] });
+    listTemplateCompletions(complete, "scenarios", { fileExtensions: [".md", ".txt"] });
+  };
+  const context = (complete) => {
+    listPathCompletions(complete, { fileExtensions: [".json", ".yaml", ".yml"] });
+    listProfileCompletions(complete, "context", { fileExtensions: [".json", ".yaml", ".yml"] });
+  };
 
-  const scenarioOption = runCommand.options.get("scenario");
-  if (scenarioOption) {
-    scenarioOption.handler = (complete) => {
-      listPathCompletions(complete, { fileExtensions: [".md", ".txt"] });
-      listProfileCompletions(complete, "scenarios", { fileExtensions: [".md", ".txt"] });
-    };
-  }
+  setOptionHandler(getCommand(completion, "run"), "llm", llm);
+  setOptionHandler(getCommand(completion, "run"), "persona", persona);
+  setOptionHandler(getCommand(completion, "run"), "scenario", scenario);
+  setOptionHandler(getCommand(completion, "run"), "context", context);
+  setArgumentHandler(getCommand(completion, "run"), scenario);
+  setOptionHandler(getCommand(completion, "init"), "llm", llm);
+}
 
-  const contextOption = runCommand.options.get("context");
-  if (contextOption) {
-    contextOption.handler = (complete) => {
-      listPathCompletions(complete, { fileExtensions: [".json", ".yaml", ".yml"] });
-      listProfileCompletions(complete, "context", { fileExtensions: [".json", ".yaml", ".yml"] });
-    };
+function addProfileCompletionHandlers(completion) {
+  const llm = (complete) => listProfileCompletions(complete, "llm", { fileExtensions: [".json"] });
+  const persona = (complete) => {
+    listProfileCompletions(complete, "personas", { fileExtensions: [".md", ".txt"] });
+    listTemplateCompletions(complete, "personas", { fileExtensions: [".md", ".txt"] });
+  };
+  const scenario = (complete) => {
+    listProfileCompletions(complete, "scenarios", { fileExtensions: [".md", ".txt"] });
+    listTemplateCompletions(complete, "scenarios", { fileExtensions: [".md", ".txt"] });
+  };
+  const context = (complete) => listProfileCompletions(complete, "context", { fileExtensions: [".json", ".yaml", ".yml"] });
+
+  for (const commandName of ["llm config", "llm show", "llm validate"]) {
+    const command = getCommand(completion, commandName);
+    setArgumentHandler(command, llm);
+    setOptionHandler(command, "name", llm);
   }
+  for (const commandName of ["persona show", "persona edit"]) {
+    setArgumentHandler(getCommand(completion, commandName), persona);
+  }
+  for (const commandName of ["scenario show", "scenario edit"]) {
+    setArgumentHandler(getCommand(completion, commandName), scenario);
+  }
+  for (const commandName of ["context show", "context edit", "context validate"]) {
+    const command = getCommand(completion, commandName);
+    setArgumentHandler(command, context);
+    setOptionHandler(command, "name", context);
+  }
+  for (const commandName of ["config context add", "config context remove"]) {
+    setArgumentHandler(getCommand(completion, commandName), context);
+  }
+}
+
+function addReportCompletionHandlers(completion) {
+  for (const commandName of ["report show", "report render", "report open"]) {
+    setArgumentHandler(getCommand(completion, commandName), listRunCompletions);
+  }
+}
+
+function addEnumCompletionHandlers(completion) {
+  const choiceHandler = (choices) => (complete) => {
+    for (const choice of choices) complete(choice, "option");
+  };
+  for (const commandName of ["config set", "config unset"]) {
+    setArgumentHandler(getCommand(completion, commandName), choiceHandler(CONFIG_SETTINGS));
+  }
+  for (const commandName of ["config show", "config validate", "report list", "report show"]) {
+    setOptionHandler(getCommand(completion, commandName), "format", choiceHandler(["text", "json"]));
+  }
+  setOptionHandler(getCommand(completion, "report list"), "status", choiceHandler(["passed", "failed", "interrupted"]));
+  setOptionHandler(getCommand(completion, "report render"), "report", choiceHandler(["markdown", "html"]));
+  for (const commandName of ["config report add", "config report remove"]) {
+    setArgumentHandler(getCommand(completion, commandName), choiceHandler(["markdown", "html"]));
+  }
+  setOptionHandler(getCommand(completion, "llm config"), "inference-profile", choiceHandler(["global", "us"]));
+  setOptionHandler(getCommand(completion, "llm config"), "service-tier", choiceHandler(["default", "priority", "flex", "reserved"]));
+}
+
+function getCommand(completion, name) {
+  return completion.commands.get(name);
+}
+
+function setOptionHandler(command, optionName, handler) {
+  const option = command?.options.get(optionName);
+  if (option) option.handler = handler;
+}
+
+function setArgumentHandler(command, handler) {
+  const argument = command?.arguments.values().next().value;
+  if (argument) argument.handler = handler;
 }
