@@ -35,6 +35,7 @@ test("resolves environment before workspace and built-in defaults", () => {
   assert.equal(result.sources.maxSteps, "workspace");
   assert.equal(result.values.headless, true);
   assert.deepEqual(result.values.reports, []);
+  assert.equal(result.values.outputDir, "./reports");
   assert.equal(result.sources.debug, "built-in");
 });
 

@@ -16,7 +16,7 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
   screenshots: "none",
   reports: ["markdown", "html"],
   debug: false,
-  outputDir: "./output/reports",
+  outputDir: "./reports",
   observationConfigFile: ""
 } as const;
 

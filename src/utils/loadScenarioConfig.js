@@ -82,7 +82,7 @@ function normalizeContextOperations(value) {
     return [];
   }
 
-  const allowedTypes = new Set(["context", "set", "json"]);
+  const allowedTypes = new Set(["context", "set", "json", "secret"]);
   return value
     .map((entry) => {
       if (!entry || typeof entry !== "object") {
@@ -112,6 +112,7 @@ function resolvePathFromWorkspaceOrCwd(value, workspace) {
 
 export function loadScenarioConfig(overrides = {}) {
   const overrideContextRefs = normalizeStringArray(overrides.context);
+  const environmentContextRefs = normalizeStringArray(process.env.DUBLO_CONTEXT);
   const overrideSetEntries = normalizeOptionArray(overrides.set);
   const overrideJsonEntries = normalizeOptionArray(overrides.json);
   const overrideContextOperations = normalizeContextOperations(overrides.contextOperations);
@@ -164,7 +165,8 @@ export function loadScenarioConfig(overrides = {}) {
     llmRef: firstDefined(process.env.DUBLO_LLM),
     persona: firstDefined(process.env.DUBLO_PERSONA),
     scenario: firstDefined(process.env.DUBLO_SCENARIO),
-    contextRefs: normalizeStringArray(process.env.DUBLO_CONTEXT),
+    contextRefs: environmentContextRefs,
+    environmentContextRefs,
     llm: cleanUndefined({
       provider: firstDefined(process.env.DUBLO_LLM_PROVIDER),
       region: firstDefined(process.env.DUBLO_LLM_REGION, process.env.AWS_REGION),
@@ -192,11 +194,13 @@ export function loadScenarioConfig(overrides = {}) {
     screenshots: "none",
     reports: [...DEFAULT_REPORT_GENERATORS],
     debug: false,
-    outputDir: "./output/reports",
+    outputDir: "./reports",
     llmRef: "",
     workspaceLlmRef: "",
     workspacePersonaRef: "",
     contextRefs: [],
+    cliContextRefs: [],
+    environmentContextRefs: [],
     workspaceContextRefs: [],
     contextOperations: [],
     setEntries: [],
@@ -212,7 +216,9 @@ export function loadScenarioConfig(overrides = {}) {
       persona: overrides.persona,
       scenario: overrides.scenario,
       adhocScenario: overrides.adhocScenario,
-      ...(overrideContextRefs.length > 0 ? { contextRefs: overrideContextRefs } : {}),
+      ...(overrideContextRefs.length > 0
+        ? { contextRefs: overrideContextRefs, cliContextRefs: overrideContextRefs }
+        : {}),
       ...(overrideSetEntries.length > 0 ? { setEntries: overrideSetEntries } : {}),
       ...(overrideJsonEntries.length > 0 ? { jsonEntries: overrideJsonEntries } : {}),
       ...(overrideContextOperations.length > 0 ? { contextOperations: overrideContextOperations } : {})

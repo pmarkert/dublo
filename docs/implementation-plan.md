@@ -127,7 +127,7 @@ Rules:
 - `--prompt` is the only inline scenario option. Piped stdin is allowed only when neither a scenario nor `--prompt` is provided.
 - `report` is the sole namespace for persisted run results. Do not add a `runs` command or a `run list` subcommand.
 - `report list` displays recent reports in reverse chronological order with run ID, status, completion time, objective, and final URL. It accepts `--limit <count>`, `--status <passed|failed|interrupted>`, and `--format <text|json>`.
-- `report show [run-id]` writes a console summary for the selected report. Without a run ID, it resolves `output/reports/latest.json` and shows the most recent report. `--format json` writes the validated raw report document; `--steps` includes per-step detail in text output.
+- `report show [run-id]` writes a console summary for the selected report. Without a run ID, it resolves `reports/latest.json` and shows the most recent report. `--format json` writes the validated raw report document; `--steps` includes per-step detail in text output.
 - `report open [run-id]` opens the selected report in the system viewer and defaults to the most recent report. It opens the HTML summary by default; `--markdown` selects the Markdown summary and `--json` selects `report.json`.
 - `report render [run-id]` regenerates selected report artifacts and defaults to the most recent report. It accepts repeatable `--report <id>` values, defaults to all configured built-in renderers, and uses `--open` only to open the artifacts it generated.
 - All report commands accept either a run ID under the configured report output directory or an explicit `report.json` path. The help text calls this optional argument `[run-id]` and documents the path behavior in the command description.
@@ -139,7 +139,7 @@ Rules:
 - Human-readable output goes to stdout/stderr according to command intent; `--format json` emits one machine-readable result document on stdout with logs on stderr.
 - Exit codes are: `0` successful command or passed run, `1` operational or failed-run error, `2` invalid input or configuration, and `130` interrupted run.
 
-The default report output directory is `./output/reports`, resolved relative to the workspace. Each run remains in a directory named `${runDateTime}_${pass|fail|abort}_${scenarioName|adhoc}`: `runDateTime` is a filesystem-safe UTC start timestamp, `scenarioName` is the scenario profile filename without its extension, and inline or stdin objectives use `adhoc`. `latest.json` remains at the output-directory root.
+The default report output directory is `./reports`, resolved relative to the workspace. Each run remains in a directory named `${runDateTime}_${pass|fail|abort}_${scenarioName|adhoc}`: `runDateTime` is a filesystem-safe UTC start timestamp, `scenarioName` is the scenario profile filename without its extension, and inline or stdin objectives use `adhoc`. `latest.json` remains at the output-directory root.
 
 ## Target Architecture
 
@@ -330,7 +330,7 @@ Validation gate:
 2. Deduplicate current LLM, persona, scenario, and context profile lookup rules into a single typed profile repository with resource-specific codecs.
 3. Implement a Playwright browser adapter that contains all locator, observation, screenshot, wait, and page operations.
 4. Implement separate Bedrock and OpenAI-compatible planner adapters behind the same planner port.
-5. Implement a file artifact store that persists report JSON, screenshots, debug HTML, `latest.json`, and generated reports under the default `./output/reports` directory.
+5. Implement a file artifact store that persists report JSON, screenshots, debug HTML, `latest.json`, and generated reports under the default `./reports` directory.
 6. Adapt report generators to consume the typed report contract. Make the registry injectable so library consumers can register renderers without modifying package internals.
 7. Implement terminal interaction and structured console logging as Node adapters, not core behavior.
 8. Add adapter tests with mocked fetch/AWS client calls, a temporary directory, and Playwright-free browser fakes. Add a small Playwright integration fixture for the adapter boundary only.

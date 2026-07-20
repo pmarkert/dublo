@@ -120,7 +120,8 @@ export const reportGenerator = {
       .map((step) => {
         const planner = step.plannerAction
           ? `${escapeHtml(step.plannerAction.action)}${step.plannerAction.targetId ? ` target=${escapeHtml(step.plannerAction.targetId)}` : ""}`
-          : "";
+          : escapeHtml(step.name);
+        const reason = step.plannerAction?.reason ? escapeHtml(step.plannerAction.reason) : "";
         const stepUrl = getSummaryStepUrlParts(step.url, config.baseUrl);
         const screenshotLink = step.screenshot ? `<a class="chip" href="${escapeHtml(step.screenshot)}">Screenshot</a>` : "";
         const htmlLink = step.html ? `<a class="chip" href="${escapeHtml(step.html)}">Page HTML</a>` : "";
@@ -141,10 +142,10 @@ export const reportGenerator = {
           <summary>
             <div class="step-summary">
               <span class="step-index">${step.index}.</span>
-              <span class="step-name">${escapeHtml(step.name)}</span>
-              <span class="step-meta">${escapeHtml(planner)}</span>
-              <span class="step-meta">${step.durationMs}ms</span>
+              <span class="step-action">${planner}</span>
               <span class="step-url">${stepUrl.href ? `<a href="${escapeHtml(stepUrl.href)}">${escapeHtml(stepUrl.label)}</a>` : escapeHtml(stepUrl.label)}</span>
+              <span class="step-duration">${step.durationMs}ms</span>
+              ${reason ? `<span class="step-reason">${reason}</span>` : ""}
             </div>
           </summary>
           <div class="step-body">
@@ -184,13 +185,16 @@ export const reportGenerator = {
       .badge { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 0.85rem; font-weight: 700; background: var(--accent-soft); color: var(--accent); }
       .badge.failed { background: #fce7e7; color: var(--error); }
       .prompt, .error-card { padding: 20px; margin-bottom: 20px; }
-      .steps { display: grid; gap: 14px; }
-      .step-card summary { list-style: none; cursor: pointer; padding: 18px 20px; }
+      .steps { display: grid; gap: 14px; min-width: 0; }
+      .step-card { min-width: 0; max-width: 100%; }
+      .step-card summary { min-width: 0; max-width: 100%; list-style: none; cursor: pointer; padding: 18px 20px; }
       .step-card summary::-webkit-details-marker { display: none; }
-      .step-summary { display: grid; gap: 8px; grid-template-columns: auto minmax(180px, 1.5fr) minmax(120px, 1fr) auto minmax(120px, 1fr); align-items: center; }
+      .step-summary { display: grid; min-width: 0; max-width: 100%; gap: 8px; grid-template-columns: auto minmax(0, 1fr) minmax(120px, auto) auto; align-items: center; }
       .step-index { font-weight: 700; color: var(--accent); }
-      .step-name { font-weight: 700; }
-      .step-meta, .step-url { color: var(--muted); font-size: 0.95rem; }
+      .step-action { min-width: 0; max-width: 100%; overflow-x: auto; font-weight: 700; white-space: nowrap; }
+      .step-url, .step-duration, .step-reason { color: var(--muted); font-size: 0.95rem; }
+      .step-duration { justify-self: end; white-space: nowrap; }
+      .step-reason { grid-column: 1 / -1; line-height: 1.45; }
       .step-url a, a { color: var(--accent); text-decoration: none; }
       .step-body { border-top: 1px solid var(--line); padding: 18px 20px 20px; }
       .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
@@ -214,10 +218,11 @@ export const reportGenerator = {
       .control-kind { color: var(--muted); font-size: 0.9rem; text-align: right; }
       .field-grid { display: grid; gap: 10px; }
       .field-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; }
-      .raw-json-toggle { border: 1px solid #ece2d1; border-radius: 14px; background: #fff; padding: 12px 14px; }
+      .raw-json-toggle { min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid #ece2d1; border-radius: 14px; background: #fff; padding: 12px 14px; }
       .raw-json-toggle summary { cursor: pointer; font-weight: 700; color: var(--accent); margin-bottom: 12px; }
+      .raw-json-toggle pre { min-width: 0; max-width: 100%; overflow-x: auto; }
       pre { margin: 0; padding: 14px; overflow: auto; border-radius: 12px; background: #f7f7f7; border: 1px solid #ece7dc; font-size: 0.9rem; line-height: 1.45; }
-      @media (max-width: 860px) { .step-summary { grid-template-columns: auto 1fr; } }
+      @media (max-width: 860px) { .step-summary { grid-template-columns: auto 1fr; } .step-url, .step-duration { grid-column: 2; justify-self: start; } }
     </style>
   </head>
   <body>

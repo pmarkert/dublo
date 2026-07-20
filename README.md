@@ -162,9 +162,11 @@ Options:
   --scenario <value>    Scenario file path or profile name in <workspace>/scenarios
   --headless            Run browser in headless mode (default is headed)
   --debug               Enable debug logging for this run
+  --open                Open the generated HTML report when the run finishes
   --context <value>     Context file path or profile name in <workspace>/context (repeatable)
   --set <keyValue>      Inline context assignment key.path=value (or key.path:value); repeatable
   --json <object>       Inline JSON object merged into context (repeatable)
+  --secret <pathEnv>    Environment-backed secret path=ENV_VAR for {{secret:path}} fills (repeatable)
 
 `dublo init` creates a new workspace and refuses to overwrite existing defaults without `--force`.
 
@@ -287,7 +289,7 @@ Workspace runtime config (`<workspace>/defaults.json`) structure:
   "headless": false,
   "screenshots": "none",
   "debug": false,
-  "outputDir": "./output/reports"
+  "outputDir": "./reports"
 }
 ```
 
@@ -346,20 +348,30 @@ Persona selector fallback order:
 - `<workspace>/defaults.json` field `persona`
 - If `<workspace>/personas` contains exactly one `.md` or `.txt` file, that file is used automatically.
 
-Context selector fallback order:
+Context sources are combined in this order, with later files overriding earlier top-level keys:
 
-- `--context` (repeatable)
-- `DUBLO_CONTEXT` (comma-separated)
 - `<workspace>/defaults.json` field `context` (string or array)
-- If none are set, no context file is loaded.
+- `DUBLO_CONTEXT` (comma-separated)
+- `--context` (repeatable)
+- If none are set, no context file is loaded. An explicit `--context` adds to inherited context sources; it does not replace them.
 
 Inline context updates:
 
 - `--set` applies dotted-path assignments.
 - `--json` applies top-level object merges.
-- `--context`, `--set`, and `--json` are all repeatable.
+- `--context`, `--set`, `--json`, and `--secret` are all repeatable.
 - Mixed options are applied strictly in the order they are provided on the CLI.
 - Value parsing for `--set`: `true`/`false` => booleans, `null` => null, numeric values => numbers, everything else => string.
+
+Environment-backed secrets:
+
+- `DUBLO_SECRET_password` automatically provides the `password` secret. Use `__` for dotted paths, such as `DUBLO_SECRET_checkout__token` for `checkout.token`.
+- `--secret context.path=ENV_VAR` reads a non-empty value from `ENV_VAR`; `--secret context.path` requires `DUBLO_SECRET_context__path`. Explicit references override auto-discovered values for the same path.
+- A referenced or auto-discovered secret that is missing or empty fails the run before browser automation starts. Secret values are never written to context files or planner messages.
+- The planner receives the available secret paths, but not their values. It can fill a visible control with `{{secret:context.path}}`.
+- Exact string matches in browser observations are replaced with `*******` before those observations are sent to the planner.
+- Screenshots remain available to the planner and may reveal secret values rendered in the browser. Use `--screenshots none` when that disclosure risk is unacceptable.
+- Secret references use `=` and accept dotted paths plus standard environment variable names (letters, numbers, and underscores).
 
 Examples:
 
@@ -372,6 +384,12 @@ dublo run --set auth.user.name=phillip --set auth.user.admin=true
 
 # merge object JSON
 dublo run --json '{"featureFlags":{"newCheckout":true}}'
+
+# provide a password from the environment without exposing it to the planner
+CHECKOUT_PASSWORD='correct-horse-battery-staple' dublo run --secret checkout.password=CHECKOUT_PASSWORD
+
+# auto-discover a secret without adding a CLI option
+DUBLO_SECRET_password='correct-horse-battery-staple' dublo run myday
 
 # combine files + inline overrides
 dublo run --context shared --context qa-user --set auth.user.name=phillip --json '{"region":"us-east-1"}'

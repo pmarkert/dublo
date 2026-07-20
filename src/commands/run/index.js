@@ -7,6 +7,7 @@ import { resolvePersonaProfilePath } from "../persona/shared.js";
 import { resolveScenarioProfilePath } from "../scenario/shared.js";
 import { logger } from "../../utils/logger.js";
 import { collectOptionValues, collectOrderedContextOperations } from "../../utils/command-registration-helpers.js";
+import { openInDefaultViewer } from "../../utils/open-file.js";
 
 export async function runCommand(options) {
   const config = loadScenarioConfig(options);
@@ -57,8 +58,19 @@ export async function runCommand(options) {
     }
   }
 
-  const contextSelections = firstNonEmptyArray(config.contextRefs, config.workspaceContextRefs);
+  const inheritedContextSelections = resolveInheritedContextSelections(config);
+  const contextSelections = resolveContextSelections(config);
   config.contextFiles = contextSelections.map((value) =>
+    resolveReference({
+      value,
+      workspace: config.workspace,
+      folder: "context",
+      exts: [".json", ".yaml", ".yml"],
+      required: true,
+      kind: "context"
+    })
+  );
+  config.inheritedContextFiles = inheritedContextSelections.map((value) =>
     resolveReference({
       value,
       workspace: config.workspace,
@@ -135,6 +147,12 @@ export async function runCommand(options) {
       process.stderr.write("Interrupted.\n");
       process.exitCode = 130;
       return;
+    }
+
+    if (options.open && report?.artifactsDir) {
+      const summaryPath = path.join(report.artifactsDir, "summary.html");
+      await openInDefaultViewer(summaryPath);
+      process.stdout.write(`Opened ${summaryPath}\n`);
     }
   } finally {
     process.off("SIGINT", onInterrupt);
@@ -256,46 +274,62 @@ function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null && value !== "");
 }
 
-function firstNonEmptyArray(...arrays) {
-  for (const value of arrays) {
-    if (Array.isArray(value) && value.length > 0) {
-      return value;
-    }
-  }
+export function resolveContextSelections(config) {
+  const inheritedContextRefs = resolveInheritedContextSelections(config);
+  const cliContextRefs = normalizeContextRefs(config.cliContextRefs);
+  const selections = [...inheritedContextRefs, ...cliContextRefs];
 
-  return [];
+  return selections.length > 0 ? selections : normalizeContextRefs(config.contextRefs);
 }
 
-function resolveContextOperations(config) {
-  if (Array.isArray(config.contextOperations) && config.contextOperations.length > 0) {
-    return config.contextOperations.map((operation) => {
-      if (operation.type !== "context") {
-        return operation;
-      }
+export function resolveInheritedContextSelections(config) {
+  return [
+    ...normalizeContextRefs(config.workspaceContextRefs),
+    ...normalizeContextRefs(config.environmentContextRefs)
+  ];
+}
 
-      return {
-        type: "context",
-        value: resolveReference({
-          value: operation.value,
-          workspace: config.workspace,
-          folder: "context",
-          exts: [".json", ".yaml", ".yml"],
-          required: true,
-          kind: "context"
-        })
-      };
-    });
-  }
+function normalizeContextRefs(value) {
+  return Array.isArray(value) ? value.filter((entry) => typeof entry === "string" && entry.trim()) : [];
+}
 
+export function resolveContextOperations(config) {
+  const inlineOperations = Array.isArray(config.contextOperations) ? config.contextOperations : [];
+  const hasExplicitContext = inlineOperations.some((operation) => operation?.type === "context");
   const operations = [];
-  for (const contextFile of config.contextFiles) {
+  const baseContextFiles = hasExplicitContext ? config.inheritedContextFiles ?? [] : config.contextFiles;
+  for (const contextFile of baseContextFiles) {
     operations.push({ type: "context", value: contextFile });
   }
-  for (const entry of Array.isArray(config.setEntries) ? config.setEntries : []) {
-    operations.push({ type: "set", value: entry });
+
+  for (const operation of inlineOperations) {
+    if (operation?.type !== "context") {
+      operations.push(operation);
+      continue;
+    }
+
+    operations.push({
+      type: "context",
+      value: resolveReference({
+        value: operation.value,
+        workspace: config.workspace,
+        folder: "context",
+        exts: [".json", ".yaml", ".yml"],
+        required: true,
+        kind: "context"
+      })
+    });
   }
-  for (const entry of Array.isArray(config.jsonEntries) ? config.jsonEntries : []) {
-    operations.push({ type: "json", value: entry });
+  if (inlineOperations.length === 0) {
+    for (const entry of Array.isArray(config.setEntries) ? config.setEntries : []) {
+      operations.push({ type: "set", value: entry });
+    }
+    for (const entry of Array.isArray(config.jsonEntries) ? config.jsonEntries : []) {
+      operations.push({ type: "json", value: entry });
+    }
+    for (const entry of Array.isArray(config.secretEntries) ? config.secretEntries : []) {
+      operations.push({ type: "secret", value: entry });
+    }
   }
 
   return operations;
@@ -312,9 +346,11 @@ export default function registerRunCommand(program) {
     .option("--adhoc <text>", "Inline ad hoc scenario text to run without a scenario file")
     .option("--headless", "Run browser in headless mode")
     .option("--debug", "Enable debug logging for this run")
+    .option("--open", "Open the generated HTML report when the run finishes")
     .option("--context <value>", "Context file path or profile name in <workspace>/context (repeatable)", collectOptionValues)
     .option("--set <keyValue>", "Inline context assignment key.path=value (or key.path:value); repeatable", collectOptionValues)
     .option("--json <object>", "Inline JSON object merged into context (repeatable)", collectOptionValues)
+    .option("--secret <pathEnv>", "Secret path or path=ENV_VAR for {{secret:path}} fills (repeatable)", collectOptionValues)
     .action(async (scenarioArg, options) => {
       const orderedContextOperations = collectOrderedContextOperations(process.argv);
       await runCommand({

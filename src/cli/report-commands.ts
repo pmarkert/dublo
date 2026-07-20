@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import type { Command } from "commander";
@@ -9,6 +8,7 @@ import {
   generateReportArtifacts
 } from "../reporting/report-artifacts.mjs";
 import { loadScenarioConfig } from "../utils/loadScenarioConfig.js";
+import { openInDefaultViewer } from "../utils/open-file.js";
 import { listAvailableRuns, resolveReportPath } from "../utils/run-reports.js";
 
 interface WorkspaceOptions {
@@ -141,26 +141,6 @@ function writeReportSummary(report: RunReport, includeSteps: boolean): void {
   if (report.error) process.stdout.write(`Error: ${report.error}\n`);
   process.stdout.write(`Steps: ${report.steps.length}\n`);
   if (includeSteps) writeJson(report.steps);
-}
-
-async function openInDefaultViewer(targetPath: string): Promise<void> {
-  const command =
-    process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-  const args =
-    process.platform === "darwin"
-      ? [targetPath]
-      : process.platform === "win32"
-        ? ["/c", "start", "", targetPath]
-        : [targetPath];
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { detached: process.platform !== "win32", stdio: "ignore" });
-    child.once("error", reject);
-    child.once("spawn", () => {
-      if (process.platform !== "win32") child.unref();
-      resolve();
-    });
-  });
 }
 
 export function registerReportCommands(program: Command): void {

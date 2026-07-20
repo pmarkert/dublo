@@ -47,4 +47,8 @@ void test("Bedrock planner validates tool-use actions through an injected client
     cacheWriteInputTokens: 0
   });
   assert.equal(requests.length, 1);
+  const requestJson = JSON.stringify(requests[0]);
+  assert.match(requestJson, /"toolConfig"/);
+  assert.match(requestJson, /"toolConfig":\{"tools"/);
+  assert.match(requestJson, /"toolChoice":\{"tool":\{"name":"planner_action"/);
 });

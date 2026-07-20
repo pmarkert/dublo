@@ -97,16 +97,18 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
     ];
   }
   return {
-    tools: [
-      {
-        toolSpec: {
-          name: "planner_action",
-          description: "Return the next UI automation action as structured JSON input.",
-          inputSchema: { json: schema }
+    toolConfig: {
+      tools: [
+        {
+          toolSpec: {
+            name: "planner_action",
+            description: "Return the next UI automation action as structured JSON input.",
+            inputSchema: { json: schema }
+          }
         }
-      }
-    ],
-    toolChoice: { tool: { name: "planner_action" } }
+      ],
+      toolChoice: { tool: { name: "planner_action" } }
+    }
   };
 }
 

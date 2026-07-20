@@ -10,6 +10,7 @@ import { createTerminalInteractionProvider } from "../node/terminal-interaction.
 
 const FORBIDDEN_CONTEXT_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const MAX_INLINE_JSON_LENGTH = 16 * 1024;
+const SECRET_ENV_PREFIX = "DUBLO_SECRET_";
 
 const DEFAULT_OBSERVATION_CONFIG = {
   controlsSelector:
@@ -314,13 +315,10 @@ async function parseContextFile(contextFile) {
   return parsed;
 }
 
-async function loadContextFromOperations(operations) {
-  if (!Array.isArray(operations) || operations.length === 0) {
-    return {};
-  }
-
+export async function loadContextFromOperations(operations, environment = process.env) {
   const merged = {};
-  for (const operation of operations) {
+  const secretValues = loadEnvironmentSecrets(environment);
+  for (const operation of Array.isArray(operations) ? operations : []) {
     if (!operation || typeof operation !== "object") {
       continue;
     }
@@ -340,10 +338,16 @@ async function loadContextFromOperations(operations) {
     if (operation.type === "json") {
       const parsed = parseJsonEntry(operation.value);
       Object.assign(merged, parsed);
+      continue;
+    }
+
+    if (operation.type === "secret") {
+      const parsed = parseSecretEntry(operation.value, environment);
+      secretValues.set(parsed.path, parsed.value);
     }
   }
 
-  return merged;
+  return { contextData: merged, secretValues };
 }
 
 function isPlainObject(value) {
@@ -444,6 +448,66 @@ function parseSetEntry(entry) {
   };
 }
 
+function parseSecretEntry(entry, environment) {
+  const raw = String(entry || "").trim();
+  const equalsIndex = raw.indexOf("=");
+  const path = parseSecretPath(equalsIndex < 0 ? raw : raw.slice(0, equalsIndex), "--secret");
+  const environmentVariable = equalsIndex < 0
+    ? secretEnvironmentVariable(path)
+    : raw.slice(equalsIndex + 1).trim();
+  return { path, value: readSecretEnvironmentVariable(environmentVariable, environment) };
+}
+
+function loadEnvironmentSecrets(environment) {
+  const secrets = new Map();
+  for (const [environmentVariable, value] of Object.entries(environment).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!environmentVariable.startsWith(SECRET_ENV_PREFIX)) {
+      continue;
+    }
+
+    const path = parseSecretPath(environmentVariable.slice(SECRET_ENV_PREFIX.length).replaceAll("__", "."), environmentVariable);
+    if (typeof value !== "string" || value.length === 0) {
+      throw new Error(`Secret environment variable '${environmentVariable}' is not set or is empty.`);
+    }
+    secrets.set(path, value);
+  }
+
+  return secrets;
+}
+
+function parseSecretPath(value, sourceLabel) {
+  const path = String(value || "").trim();
+  const pathParts = path
+    .split(".")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (pathParts.length === 0 || pathParts.join(".") !== path) {
+    throw new Error(`Invalid secret path '${path}' in ${sourceLabel}. Expected a dotted path.`);
+  }
+  for (const key of pathParts) {
+    assertSafeContextKey(key, sourceLabel);
+  }
+
+  return path;
+}
+
+function secretEnvironmentVariable(path) {
+  return `${SECRET_ENV_PREFIX}${path.replaceAll(".", "__")}`;
+}
+
+function readSecretEnvironmentVariable(environmentVariable, environment) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(environmentVariable)) {
+    throw new Error(`Invalid secret environment variable '${environmentVariable}'. Names use letters, numbers, and underscores.`);
+  }
+
+  const value = environment[environmentVariable];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Secret environment variable '${environmentVariable}' is not set or is empty.`);
+  }
+
+  return value;
+}
+
 function parseJsonEntry(rawJson) {
   const jsonText = String(rawJson || "").trim();
   if (!jsonText) {
@@ -528,7 +592,7 @@ function getValueByPath(source, rawPath) {
   return current;
 }
 
-function resolveFillValue(rawValue, contextData, humanInputs) {
+export function resolveFillValue(rawValue, contextData, humanInputs, secretValues = new Map()) {
   if (typeof rawValue !== "string") {
     throw new Error("Planner fill action value must be a string.");
   }
@@ -569,7 +633,38 @@ function resolveFillValue(rawValue, contextData, humanInputs) {
     return String(value);
   }
 
+  const secretMatch = rawValue.match(/^\{\{secret:([^}]+)\}\}$/);
+  if (secretMatch) {
+    const secretPath = secretMatch[1].trim();
+    const value = secretValues.get(secretPath);
+    if (value === undefined) {
+      throw new Error(`Missing secret value for path '${secretPath}'. Use an available secret path from the planner context.`);
+    }
+    return value;
+  }
+
   return rawValue;
+}
+
+export function redactSecretValues(value, secretValues) {
+  const values = new Set(secretValues.values());
+  return redactSecretValue(value, values);
+}
+
+function redactSecretValue(value, secretValues) {
+  if (typeof value === "string") {
+    return secretValues.has(value) ? "*******" : value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactSecretValue(entry, secretValues));
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  return Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, redactSecretValue(nested, secretValues)]));
 }
 
 async function collectObservation(page, observationConfig, turnToken) {
@@ -939,7 +1034,7 @@ async function collectObservation(page, observationConfig, turnToken) {
   }, { config: observationConfig, turnToken });
 }
 
-function buildPlannerMessages({
+export function buildPlannerMessages({
   testPrompt,
   personaText,
   workspacePromptText,
@@ -947,9 +1042,11 @@ function buildPlannerMessages({
   observation,
   actionHistory,
   humanInputs,
+  secretValues = new Map(),
   screenshotRequested,
 }) {
-  const compactControls = observation.controls.map((control) => ({
+  const redactedObservation = redactSecretValues(observation, secretValues);
+  const compactControls = redactedObservation.controls.map((control) => ({
     id: control.id,
     tag: control.tag,
     role: control.role,
@@ -969,6 +1066,7 @@ function buildPlannerMessages({
 
   const staticContext = {
     contextData,
+    ...(secretValues.size > 0 ? { availableSecretPaths: [...secretValues.keys()] } : {}),
     planningRules: [
       "Use visible controls only.",
       "Always provide a non-empty reason for the chosen action.",
@@ -978,6 +1076,9 @@ function buildPlannerMessages({
       "For click and fill actions, always provide a targetId that matches a visible control.",
       "Never emit click or fill without targetId.",
       "For fill actions, also provide a value.",
+      ...(secretValues.size > 0
+        ? ["Secret values are unavailable. Fill registered secrets with {{secret:path}}, using a path from availableSecretPaths."]
+        : []),
       "Do not use the 'Continue with Google' login because the Google page will not load properly in this browser.",
       "Do not fill the same field with a different value unless visible validation or error evidence shows correction is needed.",
       "Use observation.documentText as the main source of visible page text when deciding whether login or onboarding is still loading or has finished.",
@@ -995,12 +1096,12 @@ function buildPlannerMessages({
   const dynamicContext = {
     knownHumanInputs,
     observation: {
-      url: observation.url,
-      title: observation.title,
-      modal: observation.modal,
-      headings: observation.headings,
-      alerts: observation.alerts,
-      documentText: clip(observation.documentText, 1600),
+      url: redactedObservation.url,
+      title: redactedObservation.title,
+      modal: redactedObservation.modal,
+      headings: redactedObservation.headings,
+      alerts: redactedObservation.alerts,
+      documentText: clip(redactedObservation.documentText, 1600),
       controls: compactControls,
     },
     screenshotRequested,
@@ -1415,7 +1516,7 @@ export async function runScenario(config, options = {}) {
     }
   };
 
-  const contextData = await loadContextFromOperations(config.contextOperations);
+  const { contextData, secretValues } = await loadContextFromOperations(config.contextOperations);
   const personaText = await loadPersonaText(config.personaFile);
   const workspacePromptText = await loadWorkspacePromptText(config.workspacePromptFile);
   const scenario = await resolveScenarioText(config);
@@ -1633,6 +1734,7 @@ export async function runScenario(config, options = {}) {
         personaText,
         workspacePromptText,
         contextData,
+        secretValues,
         observation,
         actionHistory,
         humanInputs,
@@ -1673,7 +1775,7 @@ export async function runScenario(config, options = {}) {
       let recoverableErrorMessage = "";
       const stepDebugContext = config.debug
         ? {
-            observation,
+            observation: redactSecretValues(observation, secretValues),
             knownHumanInputs: knownHumanInputsSnapshot,
             plannerTokenUsage,
           }
@@ -1824,7 +1926,7 @@ export async function runScenario(config, options = {}) {
           }
 
           if (plannerAction.action === "fill") {
-            const fillValue = resolveFillValue(plannerAction.value, contextData, humanInputs);
+            const fillValue = resolveFillValue(plannerAction.value, contextData, humanInputs, secretValues);
             logger.info(`filling target ${plannerAction.targetId}`);
 
             await target.fill(fillValue);

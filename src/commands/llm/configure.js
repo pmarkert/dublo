@@ -123,12 +123,10 @@ export async function configureLlmCommand(options = {}) {
 
     await writeJsonFile(llmProfilePath, nextProfile);
 
-    const currentWorkspaceDefault = String(workspaceConfig.llm || "").trim();
-    const setDefault = await askBoolean(
-      rl,
-      "Set this llm as the workspace default?",
-      !currentWorkspaceDefault || currentWorkspaceDefault === profileName
-    );
+    const isCurrentWorkspaceDefault = isWorkspaceDefaultProfile(workspaceConfig.llm, profileName);
+    const setDefault = isCurrentWorkspaceDefault
+      ? false
+      : await askBoolean(rl, "Set this llm as the workspace default?", !workspaceConfig.llm);
     if (setDefault) {
       await updateWorkspaceLlmDefault(workspaceConfigPath, profileName);
     }
@@ -177,6 +175,15 @@ function buildNonInteractiveProfile(seed, options) {
     ...modelRequestDefaults,
     ...modelPricingDefaults
   });
+}
+
+export function isWorkspaceDefaultProfile(workspaceDefault, profileName) {
+  const normalizedDefault = String(workspaceDefault || "").trim();
+  if (!normalizedDefault) {
+    return false;
+  }
+
+  return sanitizeProfileName(normalizedDefault) === sanitizeProfileName(profileName);
 }
 
 async function askModelSelection(rl, region, defaultModelId) {

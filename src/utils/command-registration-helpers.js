@@ -109,7 +109,7 @@ export function collectOptionValues(value, previous) {
 
 export function collectOrderedContextOperations(argv) {
   const operations = [];
-  const tracked = new Set(["--context", "--set", "--json"]);
+  const tracked = new Set(["--context", "--set", "--json", "--secret"]);
 
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
