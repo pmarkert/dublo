@@ -192,7 +192,7 @@ export function loadScenarioConfig(overrides = {}) {
     screenshots: "none",
     reports: [...DEFAULT_REPORT_GENERATORS],
     debug: false,
-    outputDir: "./output/runs",
+    outputDir: "./output/reports",
     llmRef: "",
     workspaceLlmRef: "",
     workspacePersonaRef: "",

@@ -2,6 +2,8 @@
 
 Agentic LLM-in-the-loop web testing CLI using Playwright and AWS Bedrock.
 
+The TypeScript migration, library API, CLI redesign, and quality roadmap are documented in [the implementation plan](docs/implementation-plan.md).
+
 ## Requirements
 
 - Node.js 20+
@@ -270,7 +272,7 @@ Workspace runtime config (`<workspace>/defaults.json`) structure:
   "headless": false,
   "screenshots": "none",
   "debug": false,
-  "outputDir": "./output/runs"
+  "outputDir": "./output/reports"
 }
 ```
 

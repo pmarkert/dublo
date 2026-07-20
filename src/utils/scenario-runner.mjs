@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { stdin as input, stdout as output } from "node:process";
@@ -94,14 +94,28 @@ function sanitizeSegment(value) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function resolveRunLabel(config, scenario) {
+function resolveRunLabel(config) {
   if (config.scenarioFile) {
     const fileName = path.basename(String(config.scenarioFile));
     const profileName = path.basename(fileName, path.extname(fileName));
     return sanitizeSegment(profileName || "scenario");
   }
 
-  return sanitizeSegment(String(scenario || "scenario").slice(0, 48));
+  return "adhoc";
+}
+
+function formatRunDateTime(value) {
+  return value.toISOString().replace(/[.:]/g, "-");
+}
+
+function resolveRunOutcome(status) {
+  if (status === "passed") return "pass";
+  if (status === "interrupted") return "abort";
+  return "fail";
+}
+
+function createRunId(startedAt, outcome, label) {
+  return `${formatRunDateTime(startedAt)}_${outcome}_${label}`;
 }
 
 function clip(value, limit = 180) {
@@ -1663,9 +1677,9 @@ export async function runScenario(config, options = {}) {
   const observationConfig = await loadObservationConfig(config.observationConfigFile);
   const screenshots = normalizeScreenshotMode(config.screenshots);
 
-  const runLabel = resolveRunLabel(config, scenario);
-  const runId = `${startedAt.toISOString().replace(/[.:]/g, "-")}-${runLabel}`;
-  const runDir = path.join(config.outputDir, runId);
+  const runLabel = resolveRunLabel(config);
+  let runId = createRunId(startedAt, "pending", runLabel);
+  let runDir = path.join(config.outputDir, runId);
   const screenshotsDir = path.join(runDir, "screenshots");
 
   await mkdir(screenshotsDir, { recursive: true });
@@ -2144,6 +2158,14 @@ export async function runScenario(config, options = {}) {
       };
       report.costEstimate = calculateCostEstimate(report.tokenUsage, configuredPricing);
     }
+
+    const finalRunId = createRunId(startedAt, resolveRunOutcome(report.status), runLabel);
+    const finalRunDir = path.join(config.outputDir, finalRunId);
+    await rename(runDir, finalRunDir);
+    runId = finalRunId;
+    runDir = finalRunDir;
+    report.runId = runId;
+    report.artifactsDir = runDir;
 
     const reportPath = path.join(runDir, "report.json");
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");

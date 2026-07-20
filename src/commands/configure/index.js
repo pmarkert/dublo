@@ -16,7 +16,7 @@ const DEFAULT_CONFIG = {
   screenshots: "none",
   reports: [...DEFAULT_REPORT_GENERATORS],
   debug: false,
-  outputDir: "./output/runs"
+  outputDir: "./output/reports"
 };
 
 const DEFAULT_WORKSPACE_PROMPT = `# Application Notes
