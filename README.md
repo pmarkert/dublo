@@ -30,11 +30,10 @@ npx playwright install-deps chromium
 
 ## Quick start
 
-1. Create a workspace and runtime config:
+1. Create a workspace:
 
 ```bash
-mkdir -p .dublo/llm .dublo/personas .dublo/scenarios .dublo/context
-cp dublo.workspace.example.json .dublo/defaults.json
+dublo init --workspace ./.dublo --base-url https://example.com
 ```
 
 2. Install Chromium (one-time):
@@ -43,36 +42,39 @@ cp dublo.workspace.example.json .dublo/defaults.json
 npx playwright install chromium
 ```
 
-3. Run with profile selectors:
+3. Create or select an LLM profile, then run a scenario:
 
 ```bash
-npm run run -- --workspace ./.dublo --scenario "Verify the home page loads and primary CTA is visible."
+dublo llm config default --workspace ./.dublo
+dublo run homepage-smoke --workspace ./.dublo
 ```
 
-If no scenario is specified in config or via `--scenario`, dublo reads scenario text from stdin:
+If no scenario is specified, dublo reads scenario text from stdin:
 
 ```bash
-echo "Verify the home page loads and primary CTA is visible." | npm run run -- --workspace ./.dublo
+echo "Verify the home page loads and primary CTA is visible." | dublo run --workspace ./.dublo
 ```
 
-Before running a scenario, create at least one LLM profile with `dublo llm config` or place a profile under `<workspace>/llm`.
-
-Or call directly:
+For local development, use the compiled CLI after building:
 
 ```bash
-node src/dublo.js run --workspace ./.dublo
+npm run build
+node dist/cli.js run homepage-smoke --workspace ./.dublo
 ```
 
-Interactive workspace setup:
+Workspace defaults can be inspected and updated without rerunning the full setup flow:
 
 ```bash
-dublo config
+dublo config show --workspace ./.dublo
+dublo config set max-steps 60 --workspace ./.dublo
+dublo config context add qa-user --workspace ./.dublo
+dublo config validate --workspace ./.dublo
 
 # edit the workspace prompt markdown file
-dublo config --prompt
+dublo config prompt edit --workspace ./.dublo
 
 # print the workspace prompt markdown file
-dublo config --show-prompt
+dublo config prompt show --workspace ./.dublo
 ```
 
 Interactive LLM profile setup:
@@ -86,7 +88,7 @@ The LLM wizard lets users:
 - choose from a recommended Bedrock model list for the selected region, or
 - enter any custom Bedrock model ID manually.
 
-This guided flow creates/updates `<workspace>/defaults.json` and can initialize:
+`dublo init` creates `<workspace>/defaults.json` and initializes:
 
 - `<workspace>/llm`
 - `<workspace>/personas`
@@ -95,8 +97,8 @@ This guided flow creates/updates `<workspace>/defaults.json` and can initialize:
 
 Workspace prompt:
 
-- `dublo config --prompt` edits `<workspace>/prompt.md`
-- `dublo config --show-prompt` writes `<workspace>/prompt.md` to stdout
+- `dublo config prompt edit` edits `<workspace>/prompt.md`
+- `dublo config prompt show` writes `<workspace>/prompt.md` to stdout
 - if `prompt.md` exists, its contents are injected into the LLM prompt as application-specific background and testing instructions
 
 ## Shell completion
@@ -122,9 +124,18 @@ dublo completion fish | source
 
 ## CLI usage
 
-```bash
-dublo run [options]
-dublo config [options]
+````bash
+dublo init [options]
+dublo config show [options]
+dublo config show --effective [options]
+dublo config edit [options]
+dublo config set <setting> <value> [options]
+dublo config unset <setting> [options]
+dublo config validate [options]
+dublo config context add|remove|clear [options]
+dublo config report add|remove|clear [options]
+dublo config prompt edit|show [options]
+dublo run [scenario] [options]
 dublo llm config [profile] [options]
 dublo llm list [options]
 dublo llm show [profile] [options]
@@ -139,6 +150,10 @@ dublo context list [options]
 dublo context show <profile> [options]
 dublo context edit <profile> [options]
 dublo context validate [profile] [options]
+dublo report list [options]
+dublo report show [run-id] [options]
+dublo report open [run-id] [options]
+dublo report render [run-id] [options]
 
 Options:
   --workspace <path>    Workspace directory containing defaults.json and llm/personas/scenarios/context folders
@@ -151,15 +166,15 @@ Options:
   --set <keyValue>      Inline context assignment key.path=value (or key.path:value); repeatable
   --json <object>       Inline JSON object merged into context (repeatable)
 
-dublo config [options]
+`dublo init` creates a new workspace and refuses to overwrite existing defaults without `--force`.
 
-Options:
-  --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
-  --prompt              Edit the workspace prompt markdown file
-  --show-prompt         Write the workspace prompt markdown file to stdout
-  -y, --yes             Accept defaults and write config without prompts
+`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `persona`, `max-steps`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`.
 
-dublo llm config [profile] [options]
+`dublo report list` shows saved reports. `dublo report show`, `open`, and `render` default to the report named by `latest.json` when no run ID is provided.
+
+Legacy profile command details:
+
+```text
 
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
@@ -258,7 +273,7 @@ Current built-in persona templates:
 - `exploratory`
 - `accessibility`
 - `performance`
-```
+````
 
 Workspace runtime config (`<workspace>/defaults.json`) structure:
 
@@ -365,11 +380,10 @@ dublo run --context shared --context qa-user --set auth.user.name=phillip --json
 dublo run --context base --set auth.user.name=phillip --json '{"auth":{"role":"admin"}}' --context final-overrides
 ```
 
-Environment variable fallback (optional):
+Environment variable precedence:
 
 - Only names: `DUBLO_*`
-- `<workspace>/defaults.json` overrides env for runtime options
-- `--llm/--persona/--scenario/--context` override env selectors
+- CLI options override environment values, which override `<workspace>/defaults.json`, which override built-in defaults
 
 Workspace env var:
 

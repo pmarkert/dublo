@@ -4,15 +4,38 @@
   "description": "Agentic LLM loop web-testing framework using Playwright and AWS Bedrock",
   "type": "module",
   "bin": {
-    "dublo": "./src/dublo.js"
+    "dublo": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
-    "src",
-    "resources"
+    "dist",
+    "resources",
+    "README.md"
   ],
   "scripts": {
-    "start": "node ./src/dublo.js",
-    "run": "node ./src/dublo.js run"
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/cli.ts",
+    "format": "prettier --write package.json tsconfig.json eslint.config.js .prettierrc.json src/**/*.ts test/**/*.ts",
+    "format:check": "prettier --check package.json tsconfig.json eslint.config.js .prettierrc.json src/**/*.ts test/**/*.ts",
+    "lint": "eslint src/**/*.ts test/**/*.ts",
+    "run": "tsx src/cli.ts run",
+    "start": "tsx src/cli.ts",
+    "test": "node --import tsx --test $(find test -name '*.test.ts' -print)",
+    "test:watch": "node --import tsx --test --watch $(find test -name '*.test.ts' -print)",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
+    "prepack": "npm run check"
   },
   "keywords": [
     "cli",
@@ -29,9 +52,20 @@
     "commander": "^15.0.0",
     "dotenv": "^16.4.5",
     "js-yaml": "^5.2.1",
-    "playwright": "^1.54.1"
+    "playwright": "^1.54.1",
+    "zod": "^4.4.3"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^26.1.1",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
+    "tsx": "^4.23.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.64.0"
   }
 }
