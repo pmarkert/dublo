@@ -1,9 +1,14 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import * as yaml from "js-yaml";
 import type { Command } from "commander";
+import { resolveContextProfilePath } from "../context/shared.js";
+import { resolveScenarioProfilePath } from "../scenario/shared.js";
+import { runEditor } from "../../utils/editor.js";
 import { loadScenarioConfig } from "../../utils/loadScenarioConfig.js";
+import { openInDefaultViewer } from "../../utils/open-file.js";
 import {
 	SuiteManifestSchema,
 	expandTasks,
@@ -33,6 +38,90 @@ function statusLabel(result: TaskResult): string {
 	if (result.status === "passed") return "PASS";
 	if (result.status === "failed") return "FAIL";
 	return "ERROR";
+}
+
+function resolveWorkspacePath(workspace?: string): string {
+	return path.resolve(process.cwd(), workspace || process.env.DUBLO_WORKSPACE || ".dublo");
+}
+
+function isSuiteManifestFile(name: string): boolean {
+	return /\.(json|yaml|yml)$/i.test(name);
+}
+
+function suiteName(value: string): string {
+	const normalized = value
+		.trim()
+		.replace(/\.(json|yaml|yml)$/i, "")
+		.replace(/[^a-zA-Z0-9._-]/g, "-");
+	if (!normalized) {
+		throw new Error("Suite name cannot be empty.");
+	}
+	return normalized;
+}
+
+export function initialSuiteManifestContent(): string {
+	return [
+		"# A suite runs one or more saved scenario profiles.",
+		"# Optional suite-wide settings:",
+		"# workspace: ./.dublo",
+		"# concurrency: 3",
+		"# headless: true",
+		"# outputDir: ./suite-reports",
+		"# llm: default",
+		"# persona: qa-strict",
+		"",
+		"# Define individual tasks. Each task can override the suite-wide LLM and persona.",
+		"tasks:",
+		"  - scenario: homepage-smoke",
+		"    # context: qa-user",
+		"    # label: homepage smoke",
+		"    # llm: default",
+		"    # persona: qa-strict",
+		"",
+		"# Or replace tasks above with a matrix to run every scenario with every context.",
+		"# matrix:",
+		"#   scenarios:",
+		"#     - homepage-smoke",
+		"#     - checkout-happy-path",
+		"#   contexts:",
+		"#     - qa-user",
+		"#     - [qa-user, tenant-a]",
+		""
+	].join("\n");
+}
+
+function resolveSuiteManifestPath(value: string, workspace?: string): string {
+	const direct = path.resolve(process.cwd(), value);
+	if (existsSync(direct)) {
+		return direct;
+	}
+
+	const suiteDirectory = path.join(resolveWorkspacePath(workspace), "suites");
+	const name = suiteName(value);
+	for (const candidate of [
+		path.join(suiteDirectory, value),
+		path.join(suiteDirectory, `${name}.yaml`),
+		path.join(suiteDirectory, `${name}.yml`),
+		path.join(suiteDirectory, `${name}.json`),
+	]) {
+		if (existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	return "";
+}
+
+function listSuiteNames(workspace?: string): string[] {
+	const suiteDirectory = path.join(resolveWorkspacePath(workspace), "suites");
+	try {
+		return readdirSync(suiteDirectory, { withFileTypes: true })
+			.filter((entry) => entry.isFile() && isSuiteManifestFile(entry.name))
+			.map((entry) => entry.name.replace(/\.(json|yaml|yml)$/i, ""))
+			.sort((left, right) => left.localeCompare(right));
+	} catch {
+		return [];
+	}
 }
 
 async function loadManifest(manifestPath: string): Promise<SuiteManifest> {
@@ -72,8 +161,17 @@ interface SuiteRunCommandOptions {
 	dryRun?: boolean;
 }
 
+interface SuiteOpenCommandOptions {
+	workspace?: string;
+	markdown?: boolean;
+	json?: boolean;
+}
+
 async function suiteRunCommand(manifestArg: string, options: SuiteRunCommandOptions): Promise<void> {
-	const manifestPath = path.resolve(process.cwd(), manifestArg);
+	const manifestPath = resolveSuiteManifestPath(manifestArg, options.workspace);
+	if (!manifestPath) {
+		throw new Error(`Could not resolve suite manifest '${manifestArg}'.`);
+	}
 	const manifest = await loadManifest(manifestPath);
 
 	// Resolve workspace: CLI flag > manifest field > workspace default
@@ -161,8 +259,213 @@ async function suiteRunCommand(manifestArg: string, options: SuiteRunCommandOpti
 	}
 }
 
+async function suiteListCommand(options: { workspace?: string }): Promise<void> {
+	const workspace = resolveWorkspacePath(options.workspace);
+	const suiteDirectory = path.join(workspace, "suites");
+	const names = listSuiteNames(options.workspace);
+	if (names.length === 0) {
+		process.stdout.write(`No suites found under ${suiteDirectory}.\n`);
+		return;
+	}
+
+	process.stdout.write(`Suites in ${suiteDirectory}:\n`);
+	for (const name of names) {
+		process.stdout.write(`- ${name}\n`);
+	}
+}
+
+export function resolveSuiteArtifactPath(
+	suiteId: string | undefined,
+	options: { workspace?: string; markdown?: boolean; json?: boolean } = {}
+): string {
+	if (options.markdown && options.json) {
+		throw new Error("Use either --markdown or --json, not both.");
+	}
+
+	const config = loadScenarioConfig({ workspace: options.workspace });
+	const outputDir = config.outputDir;
+	let suiteDir = "";
+	if (suiteId) {
+		const directSuiteDir = path.resolve(process.cwd(), suiteId);
+		if (existsSync(path.join(directSuiteDir, "suite.json"))) {
+			suiteDir = directSuiteDir;
+		} else {
+			const outputSuiteDir = path.join(outputDir, suiteId);
+			if (existsSync(path.join(outputSuiteDir, "suite.json"))) {
+				suiteDir = outputSuiteDir;
+			}
+		}
+		if (!suiteDir) {
+			throw new Error(`Could not find suite '${suiteId}' under ${outputDir}.`);
+		}
+	} else {
+		try {
+			suiteDir = readdirSync(outputDir, { withFileTypes: true })
+				.filter((entry) => entry.isDirectory() && entry.name.startsWith("suite-"))
+				.map((entry) => entry.name)
+				.filter((entry) => existsSync(path.join(outputDir, entry, "suite.json")))
+				.sort((left, right) => right.localeCompare(left))[0] ?? "";
+		} catch {
+			suiteDir = "";
+		}
+		if (!suiteDir) {
+			throw new Error(`No suite reports found under ${outputDir}.`);
+		}
+		suiteDir = path.join(outputDir, suiteDir);
+	}
+
+	const artifactName = options.json
+		? "suite.json"
+		: options.markdown
+			? "suite-summary.md"
+			: "suite-summary.html";
+	const artifactPath = path.join(suiteDir, artifactName);
+	if (!existsSync(artifactPath)) {
+		throw new Error(`Suite report artifact '${artifactName}' does not exist in ${suiteDir}.`);
+	}
+	return artifactPath;
+}
+
+async function suiteOpenCommand(suiteId: string | undefined, options: SuiteOpenCommandOptions): Promise<void> {
+	const artifactPath = resolveSuiteArtifactPath(suiteId, options);
+	await openInDefaultViewer(artifactPath);
+	process.stdout.write(`${artifactPath}\n`);
+}
+
+async function suiteShowCommand(name: string, options: { workspace?: string }): Promise<void> {
+	const manifestPath = resolveSuiteManifestPath(name, options.workspace);
+	if (!manifestPath) {
+		throw new Error(`Could not resolve suite manifest '${name}'.`);
+	}
+	const content = await readFile(manifestPath, "utf8");
+	process.stdout.write(`File: ${manifestPath}\n--\n${content}`);
+	if (!content.endsWith("\n")) {
+		process.stdout.write("\n");
+	}
+}
+
+async function suiteEditCommand(name: string, options: { workspace?: string }): Promise<void> {
+	const workspace = resolveWorkspacePath(options.workspace);
+	const suiteDirectory = path.join(workspace, "suites");
+	await mkdir(suiteDirectory, { recursive: true });
+	const manifestPath = resolveSuiteManifestPath(name, options.workspace) || path.join(suiteDirectory, `${suiteName(name)}.yaml`);
+
+	if (!process.stdin.isTTY) {
+		let content = "";
+		for await (const chunk of process.stdin) {
+			content += String(chunk);
+		}
+		await writeFile(manifestPath, content, "utf8");
+		process.stdout.write(`Wrote ${manifestPath}\n`);
+		return;
+	}
+
+	if (!existsSync(manifestPath)) {
+		await writeFile(manifestPath, initialSuiteManifestContent(), "utf8");
+	}
+	const result = runEditor(process.env.VISUAL || process.env.EDITOR || "vi", manifestPath);
+	if (result.error) {
+		throw result.error;
+	}
+	if (typeof result.status === "number" && result.status !== 0) {
+		throw new Error(`Editor exited with status ${result.status}.`);
+	}
+}
+
+function validateManifestReferences(manifest: SuiteManifest, workspace: string): string[] {
+	const errors: string[] = [];
+	for (const task of expandTasks(manifest, "")) {
+		if (!resolveScenarioProfilePath(workspace, task.scenario)) {
+			errors.push(`task '${task.label}': scenario '${task.scenario}' could not be resolved`);
+		}
+
+		for (const context of task.context) {
+			if (!resolveContextProfilePath(workspace, context)) {
+				errors.push(`task '${task.label}': context '${context}' could not be resolved`);
+			}
+		}
+	}
+	return errors;
+}
+
+async function suiteValidateCommand(name: string | undefined, options: { workspace?: string }): Promise<void> {
+	const targets = name ? [name] : listSuiteNames(options.workspace);
+	if (targets.length === 0) {
+		throw new Error("No suites found to validate.");
+	}
+
+	let hasErrors = false;
+	for (const target of targets) {
+		const manifestPath = resolveSuiteManifestPath(target, options.workspace);
+		if (!manifestPath) {
+			process.stdout.write(`FAIL ${target}: suite manifest could not be resolved\n`);
+			hasErrors = true;
+			continue;
+		}
+		try {
+			const manifest = await loadManifest(manifestPath);
+			const workspace = resolveWorkspacePath(options.workspace ?? manifest.workspace);
+			const referenceErrors = validateManifestReferences(manifest, workspace);
+			if (referenceErrors.length > 0) {
+				throw new Error(referenceErrors.join("\n"));
+			}
+			process.stdout.write(`OK   ${target} (${manifestPath})\n`);
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			process.stdout.write(`FAIL ${target}: ${detail}\n`);
+			hasErrors = true;
+		}
+	}
+
+	if (hasErrors) {
+		throw new Error("One or more suites are invalid.");
+	}
+}
+
 export default function registerSuiteCommands(program: Command): void {
 	const suite = program.command("suite").description("Manage and run test suites");
+
+	suite
+		.command("list")
+		.description("List suite manifests in the workspace")
+		.option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+		.action(async (options: { workspace?: string }) => {
+			await suiteListCommand(options);
+		});
+
+	suite
+		.command("show <suite>")
+		.description("Print a suite manifest")
+		.option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+		.action(async (name: string, options: { workspace?: string }) => {
+			await suiteShowCommand(name, options);
+		});
+
+	suite
+		.command("edit <suite>")
+		.description("Write a suite manifest from stdin or open an interactive editor")
+		.option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+		.action(async (name: string, options: { workspace?: string }) => {
+			await suiteEditCommand(name, options);
+		});
+
+	suite
+		.command("validate [suite]")
+		.description("Validate one or all suite manifests")
+		.option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+		.action(async (name: string | undefined, options: { workspace?: string }) => {
+			await suiteValidateCommand(name, options);
+		});
+
+	suite
+		.command("open [suite-id]")
+		.description("Open a suite report, defaulting to the latest suite")
+		.option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+		.option("--markdown", "Open the Markdown summary")
+		.option("--json", "Open suite.json")
+		.action(async (suiteId: string | undefined, options: SuiteOpenCommandOptions) => {
+			await suiteOpenCommand(suiteId, options);
+		});
 
 	suite
 		.command("run <manifest>")

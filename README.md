@@ -95,6 +95,7 @@ The LLM wizard lets users:
 - `<workspace>/scenarios`
 - `<workspace>/context`
 - `<workspace>/blocks`
+- `<workspace>/suites`
 
 Workspace prompt:
 
@@ -157,6 +158,12 @@ dublo block list [options]
 dublo block show <name> [options]
 dublo block edit <name> [options]
 dublo block validate [name] [options]
+dublo suite list [options]
+dublo suite show <suite> [options]
+dublo suite edit <suite> [options]
+dublo suite validate [suite] [options]
+dublo suite run <manifest> [options]
+dublo suite open [suite-id] [options]
 dublo report list [options]
 dublo report show [run-id] [options]
 dublo report open [run-id] [options]

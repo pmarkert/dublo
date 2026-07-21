@@ -2,65 +2,63 @@ import path from "node:path";
 import type { SuiteResult, TaskResult } from "../utils/suite-runner.js";
 
 function escapeHtml(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;");
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function formatDuration(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-	const minutes = Math.floor(ms / 60_000);
-	const seconds = Math.round((ms % 60_000) / 1000);
-	return `${minutes}m ${seconds}s`;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
 }
 
 function statusBadge(status: TaskResult["status"]): string {
-	const classes: Record<TaskResult["status"], string> = {
-		passed: "badge-pass",
-		failed: "badge-fail",
-		error: "badge-error",
-	};
-	const labels: Record<TaskResult["status"], string> = {
-		passed: "PASS",
-		failed: "FAIL",
-		error: "ERROR",
-	};
-	return `<span class="badge ${classes[status]}">${labels[status]}</span>`;
+  const classes: Record<TaskResult["status"], string> = {
+    passed: "badge-pass",
+    failed: "badge-fail",
+    error: "badge-error"
+  };
+  const labels: Record<TaskResult["status"], string> = {
+    passed: "PASS",
+    failed: "FAIL",
+    error: "ERROR"
+  };
+  return `<span class="badge ${classes[status]}">${labels[status]}</span>`;
 }
 
 function renderContextList(context: string[]): string {
-	if (context.length === 0) return '<span class="muted">—</span>';
-	return context.map((c) => `<code>${escapeHtml(c)}</code>`).join(" + ");
+  if (context.length === 0) return '<span class="muted">—</span>';
+  return context.map((c) => `<code>${escapeHtml(c)}</code>`).join(" + ");
 }
 
 function relativeLinkTo(from: string, to: string): string {
-	return path.relative(from, to).replace(/\\/g, "/");
+  return path.relative(from, to).replace(/\\/g, "/");
 }
 
 export function renderSuiteReportHtml(result: SuiteResult): string {
-	const startedAt = new Date(result.startedAt);
-	const finishedAt = new Date(result.finishedAt);
-	const totalMs = finishedAt.getTime() - startedAt.getTime();
-	const passRate =
-		result.total > 0 ? Math.round((result.passed / result.total) * 100) : 0;
+  const startedAt = new Date(result.startedAt);
+  const finishedAt = new Date(result.finishedAt);
+  const totalMs = finishedAt.getTime() - startedAt.getTime();
+  const passRate = result.total > 0 ? Math.round((result.passed / result.total) * 100) : 0;
 
-	const taskRows = result.tasks
-		.map((task) => {
-			const htmlLink =
-				task.summaryHtmlPath
-					? `<a href="${escapeHtml(relativeLinkTo(result.suiteDir, task.summaryHtmlPath))}">report</a>`
-					: task.reportPath
-						? `<a href="${escapeHtml(relativeLinkTo(result.suiteDir, path.dirname(task.reportPath)))}">dir</a>`
-						: "—";
+  const taskRows = result.tasks
+    .map((task) => {
+      const htmlLink = task.summaryHtmlPath
+        ? `<a href="${escapeHtml(relativeLinkTo(result.suiteDir, task.summaryHtmlPath))}">report</a>`
+        : task.reportPath
+          ? `<a href="${escapeHtml(relativeLinkTo(result.suiteDir, path.dirname(task.reportPath)))}">dir</a>`
+          : "—";
 
-			const errorNote = task.errorMessage
-				? `<div class="error-note">${escapeHtml(task.errorMessage.slice(0, 200))}</div>`
-				: "";
+      const errorNote = task.errorMessage
+        ? `<div class="error-note">${escapeHtml(task.errorMessage.slice(0, 200))}</div>`
+        : "";
 
-			return `
+      return `
       <tr class="row-${task.status}">
         <td class="col-num">${task.index + 1}</td>
         <td class="col-scenario"><code>${escapeHtml(task.scenario)}</code></td>
@@ -69,10 +67,10 @@ export function renderSuiteReportHtml(result: SuiteResult): string {
         <td class="col-duration">${escapeHtml(formatDuration(task.durationMs))}</td>
         <td class="col-report">${htmlLink}${errorNote}</td>
       </tr>`;
-		})
-		.join("\n");
+    })
+    .join("\n");
 
-	return `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -151,41 +149,39 @@ ${taskRows}
 }
 
 export function renderSuiteReportMarkdown(result: SuiteResult): string {
-	const startedAt = new Date(result.startedAt);
-	const finishedAt = new Date(result.finishedAt);
-	const totalMs = finishedAt.getTime() - startedAt.getTime();
-	const passRate =
-		result.total > 0 ? Math.round((result.passed / result.total) * 100) : 0;
+  const startedAt = new Date(result.startedAt);
+  const finishedAt = new Date(result.finishedAt);
+  const totalMs = finishedAt.getTime() - startedAt.getTime();
+  const passRate = result.total > 0 ? Math.round((result.passed / result.total) * 100) : 0;
 
-	const taskLines = result.tasks.map((task) => {
-		const status =
-			task.status === "passed" ? "✅ PASS" : task.status === "failed" ? "❌ FAIL" : "⚠️ ERROR";
-		const ctx = task.context.length > 0 ? task.context.join("+") : "—";
-		const duration = formatDuration(task.durationMs);
-		const reportRef =
-			task.summaryHtmlPath
-				? `[report](${relativeLinkTo(result.suiteDir, task.summaryHtmlPath)})`
-				: task.reportPath
-					? `[dir](${relativeLinkTo(result.suiteDir, path.dirname(task.reportPath))})`
-					: "—";
-		const errorNote = task.errorMessage ? ` · \`${task.errorMessage.split("\n")[0] ?? ""}\`` : "";
-		return `| ${task.index + 1} | \`${task.scenario}\` | ${ctx} | ${status} | ${duration} | ${reportRef}${errorNote} |`;
-	});
+  const taskLines = result.tasks.map((task) => {
+    const status =
+      task.status === "passed" ? "✅ PASS" : task.status === "failed" ? "❌ FAIL" : "⚠️ ERROR";
+    const ctx = task.context.length > 0 ? task.context.join("+") : "—";
+    const duration = formatDuration(task.durationMs);
+    const reportRef = task.summaryHtmlPath
+      ? `[report](${relativeLinkTo(result.suiteDir, task.summaryHtmlPath)})`
+      : task.reportPath
+        ? `[dir](${relativeLinkTo(result.suiteDir, path.dirname(task.reportPath))})`
+        : "—";
+    const errorNote = task.errorMessage ? ` · \`${task.errorMessage.split("\n")[0] ?? ""}\`` : "";
+    return `| ${task.index + 1} | \`${task.scenario}\` | ${ctx} | ${status} | ${duration} | ${reportRef}${errorNote} |`;
+  });
 
-	return [
-		"# Dublo Suite Report",
-		"",
-		`- **Suite ID:** ${result.suiteId}`,
-		`- **Started:** ${startedAt.toISOString()}`,
-		`- **Finished:** ${finishedAt.toISOString()}`,
-		`- **Duration:** ${formatDuration(totalMs)}`,
-		`- **Concurrency:** ${result.concurrency}`,
-		`- **Result:** ${result.passed} passed / ${result.failed} failed / ${result.errored} errored (${passRate}% pass rate)`,
-		"",
-		"## Tasks",
-		"",
-		"| # | Scenario | Context | Status | Duration | Report |",
-		"|---|----------|---------|--------|----------|--------|",
-		...taskLines,
-	].join("\n");
+  return [
+    "# Dublo Suite Report",
+    "",
+    `- **Suite ID:** ${result.suiteId}`,
+    `- **Started:** ${startedAt.toISOString()}`,
+    `- **Finished:** ${finishedAt.toISOString()}`,
+    `- **Duration:** ${formatDuration(totalMs)}`,
+    `- **Concurrency:** ${result.concurrency}`,
+    `- **Result:** ${result.passed} passed / ${result.failed} failed / ${result.errored} errored (${passRate}% pass rate)`,
+    "",
+    "## Tasks",
+    "",
+    "| # | Scenario | Context | Status | Duration | Report |",
+    "|---|----------|---------|--------|----------|--------|",
+    ...taskLines
+  ].join("\n");
 }
