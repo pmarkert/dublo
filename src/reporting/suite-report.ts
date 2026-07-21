@@ -21,12 +21,14 @@ function statusBadge(status: TaskResult["status"]): string {
   const classes: Record<TaskResult["status"], string> = {
     passed: "badge-pass",
     failed: "badge-fail",
-    error: "badge-error"
+    error: "badge-error",
+    skipped: "badge-skipped"
   };
   const labels: Record<TaskResult["status"], string> = {
     passed: "PASS",
     failed: "FAIL",
-    error: "ERROR"
+    error: "ERROR",
+    skipped: "SKIPPED"
   };
   return `<span class="badge ${classes[status]}">${labels[status]}</span>`;
 }
@@ -48,9 +50,13 @@ export function renderSuiteReportHtml(result: SuiteResult): string {
   const tokenSummary = result.tokenUsage
     ? `<span><strong>Tokens:</strong> ${result.tokenUsage.totalTokens.toLocaleString()} across ${result.tokenUsage.plannerCalls.toLocaleString()} planner calls</span>`
     : "";
-  const costSummary = result.costTotals
-    ?.map((cost) => `<span><strong>Estimated cost:</strong> ${cost.total.toFixed(6)} ${escapeHtml(cost.currency)}</span>`)
-    .join("") ?? "";
+  const costSummary =
+    result.costTotals
+      ?.map(
+        (cost) =>
+          `<span><strong>Estimated cost:</strong> ${cost.total.toFixed(6)} ${escapeHtml(cost.currency)}</span>`
+      )
+      .join("") ?? "";
 
   const taskRows = result.tasks
     .map((task) => {
@@ -96,6 +102,7 @@ export function renderSuiteReportHtml(result: SuiteResult): string {
   .num-pass { color: #16a34a; }
   .num-fail { color: #dc2626; }
   .num-error { color: #d97706; }
+  .num-skipped { color: #64748b; }
   .num-total { color: #1a1a2e; }
   table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
   th { background: #f1f3f5; text-align: left; padding: 0.6rem 0.75rem; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #444; border-bottom: 2px solid #e2e8f0; }
@@ -104,10 +111,12 @@ export function renderSuiteReportHtml(result: SuiteResult): string {
   .row-passed { background: #f0fdf4; }
   .row-failed { background: #fff5f5; }
   .row-error  { background: #fffbeb; }
+  .row-skipped { background: #f8fafc; }
   .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; }
   .badge-pass  { background: #dcfce7; color: #16a34a; }
   .badge-fail  { background: #fee2e2; color: #dc2626; }
   .badge-error { background: #fef3c7; color: #d97706; }
+  .badge-skipped { background: #e2e8f0; color: #475569; }
   .col-num { width: 3rem; color: #888; }
   .col-status { width: 6rem; }
   .col-duration { width: 7rem; color: #555; }
@@ -134,6 +143,7 @@ export function renderSuiteReportHtml(result: SuiteResult): string {
   <div class="summary-card"><div class="num num-pass">${result.passed}</div><div class="lbl">Passed</div></div>
   <div class="summary-card"><div class="num num-fail">${result.failed}</div><div class="lbl">Failed</div></div>
   <div class="summary-card"><div class="num num-error">${result.errored}</div><div class="lbl">Error</div></div>
+  <div class="summary-card"><div class="num num-skipped">${result.skipped}</div><div class="lbl">Skipped</div></div>
   <div class="summary-card"><div class="num num-total">${result.total}</div><div class="lbl">Total</div></div>
 </div>
 <h2>Tasks</h2>
@@ -163,7 +173,9 @@ export function renderSuiteReportMarkdown(result: SuiteResult): string {
   const passRate = result.total > 0 ? Math.round((result.passed / result.total) * 100) : 0;
   const metricLines = [
     ...(result.tokenUsage
-      ? [`- **Tokens:** ${result.tokenUsage.totalTokens.toLocaleString()} across ${result.tokenUsage.plannerCalls.toLocaleString()} planner calls`]
+      ? [
+          `- **Tokens:** ${result.tokenUsage.totalTokens.toLocaleString()} across ${result.tokenUsage.plannerCalls.toLocaleString()} planner calls`
+        ]
       : []),
     ...(result.costTotals ?? []).map(
       (cost) => `- **Estimated Cost:** ${cost.total.toFixed(6)} ${cost.currency}`
@@ -172,7 +184,13 @@ export function renderSuiteReportMarkdown(result: SuiteResult): string {
 
   const taskLines = result.tasks.map((task) => {
     const status =
-      task.status === "passed" ? "✅ PASS" : task.status === "failed" ? "❌ FAIL" : "⚠️ ERROR";
+      task.status === "passed"
+        ? "✅ PASS"
+        : task.status === "failed"
+          ? "❌ FAIL"
+          : task.status === "error"
+            ? "⚠️ ERROR"
+            : "⏭️ SKIPPED";
     const ctx = task.context.length > 0 ? task.context.join("+") : "—";
     const duration = formatDuration(task.durationMs);
     const reportRef = task.summaryHtmlPath
@@ -192,7 +210,7 @@ export function renderSuiteReportMarkdown(result: SuiteResult): string {
     `- **Finished:** ${finishedAt.toISOString()}`,
     `- **Duration:** ${formatDuration(totalMs)}`,
     `- **Concurrency:** ${result.concurrency}`,
-    `- **Result:** ${result.passed} passed / ${result.failed} failed / ${result.errored} errored (${passRate}% pass rate)`,
+    `- **Result:** ${result.passed} passed / ${result.failed} failed / ${result.errored} errored / ${result.skipped} skipped (${passRate}% pass rate)`,
     ...metricLines,
     "",
     "## Tasks",

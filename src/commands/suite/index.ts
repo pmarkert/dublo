@@ -39,6 +39,7 @@ function formatDuration(ms: number): string {
 function statusLabel(result: TaskResult): string {
 	if (result.status === "passed") return "PASS";
 	if (result.status === "failed") return "FAIL";
+	if (result.status === "skipped") return "SKIPPED";
 	return "ERROR";
 }
 
@@ -76,7 +77,12 @@ export function initialSuiteManifestContent(): string {
 		"tasks:",
 		"  - scenario: homepage-smoke",
 		"    # context: qa-user",
+		"    # id: setup",
 		"    # label: homepage smoke",
+		"    # dependsOn: [setup] # requires setup to pass",
+		"    # dependsOn:",
+		"    #   - task: cleanup",
+		"    #     status: [success, fail]",
 		"    # llm: default",
 		"    # persona: qa-strict",
 		"",
@@ -277,9 +283,10 @@ async function suiteRunCommand(manifestArg: string, options: SuiteRunCommandOpti
 	process.stdout.write(`\nSuite complete: ${suiteResult.passed}/${suiteResult.total} passed`);
 	if (suiteResult.failed > 0) process.stdout.write(`, ${suiteResult.failed} failed`);
 	if (suiteResult.errored > 0) process.stdout.write(`, ${suiteResult.errored} errored`);
+	if (suiteResult.skipped > 0) process.stdout.write(`, ${suiteResult.skipped} skipped`);
 	process.stdout.write(`\nReport: ${htmlPath}\n`);
 
-	if (suiteResult.passed < suiteResult.total) {
+	if (suiteResult.failed > 0 || suiteResult.errored > 0) {
 		process.exitCode = 1;
 	}
 }

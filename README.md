@@ -103,6 +103,22 @@ Workspace prompt:
 - `dublo config prompt show` writes `<workspace>/prompt.md` to stdout
 - if `prompt.md` exists, its contents are injected into the LLM prompt as application-specific background and testing instructions
 
+## Suites
+
+Suite tasks can wait on task IDs or labels. `dependsOn` accepts one entry or an array; every entry must match. A string dependency requires all matching tasks to pass. An object can specify one status or an array of allowed statuses. `success` and `fail` are aliases for `passed` and `failed`. Tasks with unmet dependency expectations are recorded as skipped.
+
+```yaml
+tasks:
+  - scenario: prepare-test-data
+    id: init
+  - scenario: checkout-happy-path
+    dependsOn: init
+  - scenario: inspect-failure-state
+    dependsOn:
+      - task: checkout-happy-path
+        status: [success, fail]
+```
+
 ## Shell completion
 
 Generate completion scripts with:

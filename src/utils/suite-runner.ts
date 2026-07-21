@@ -4,13 +4,37 @@ import path from "node:path";
 import process from "node:process";
 import { z } from "zod";
 
+export const TaskStatusSchema = z.enum(["passed", "failed", "error", "skipped"]);
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+const DependencyStatusSchema = z.enum([
+  "success",
+  "fail",
+  "passed",
+  "failed",
+  "error",
+  "skipped"
+]);
+
+const TaskDependencyEntrySchema = z.union([
+  z.string().trim().min(1),
+  z
+    .object({
+      task: z.string().trim().min(1),
+      status: z.union([DependencyStatusSchema, z.array(DependencyStatusSchema).min(1)]).optional()
+    })
+    .strict()
+]);
+
 export const SuiteTaskSchema = z
   .object({
     scenario: z.string().trim().min(1),
     context: z.union([z.string().trim().min(1), z.array(z.string().trim().min(1))]).optional(),
     llm: z.string().trim().min(1).optional(),
     persona: z.string().trim().min(1).optional(),
-    label: z.string().trim().min(1).optional()
+    id: z.string().trim().min(1).optional(),
+    label: z.string().trim().min(1).optional(),
+    dependsOn: z.union([TaskDependencyEntrySchema, z.array(TaskDependencyEntrySchema).min(1)]).optional()
   })
   .strict();
 
@@ -44,8 +68,14 @@ export type SuiteTask = z.infer<typeof SuiteTaskSchema>;
 export type SuiteMatrix = z.infer<typeof SuiteMatrixSchema>;
 export type SuiteManifest = z.infer<typeof SuiteManifestSchema>;
 
+export interface TaskDependency {
+  task: string;
+  statuses: TaskStatus[];
+}
+
 export interface ExpandedTask {
   index: number;
+  id: string | undefined;
   label: string;
   dirLabel: string;
   scenario: string;
@@ -53,6 +83,7 @@ export interface ExpandedTask {
   llm: string | undefined;
   persona: string | undefined;
   taskDir: string;
+  dependsOn: TaskDependency[];
 }
 
 export interface TaskResult {
@@ -60,7 +91,7 @@ export interface TaskResult {
   label: string;
   scenario: string;
   context: string[];
-  status: "passed" | "failed" | "error";
+  status: TaskStatus;
   runId: string | undefined;
   runDir: string | undefined;
   reportPath: string | undefined;
@@ -96,6 +127,7 @@ export interface SuiteResult {
   passed: number;
   failed: number;
   errored: number;
+  skipped: number;
   total: number;
   tokenUsage?: SuiteTokenUsage;
   costTotals?: SuiteCostTotal[];
@@ -128,6 +160,60 @@ function normalizeContextArray(context: string | string[] | undefined): string[]
   return context;
 }
 
+function normalizeTaskDependencies(dependencies: SuiteTask["dependsOn"]): TaskDependency[] {
+  if (dependencies === undefined) return [];
+  const entries = Array.isArray(dependencies) ? dependencies : [dependencies];
+  return entries.map((dependency) => {
+    if (typeof dependency === "string") return { task: dependency, statuses: ["passed"] };
+    const statuses = Array.isArray(dependency.status)
+      ? dependency.status
+      : [dependency.status ?? "passed"];
+    return {
+      task: dependency.task,
+      statuses: statuses.map((status) =>
+        status === "success" ? "passed" : status === "fail" ? "failed" : status
+      )
+    };
+  });
+}
+
+function matchingDependencyTasks(tasks: ExpandedTask[], dependency: TaskDependency): ExpandedTask[] {
+  return tasks.filter((task) => task.id === dependency.task || task.label === dependency.task);
+}
+
+function validateTaskDependencies(tasks: ExpandedTask[]): void {
+  for (const task of tasks) {
+    for (const dependency of task.dependsOn) {
+      const matchingTasks = matchingDependencyTasks(tasks, dependency);
+      if (matchingTasks.length === 0) {
+        throw new Error(`Task '${task.label}' depends on unknown task '${dependency.task}'.`);
+      }
+      if (matchingTasks.some((matchingTask) => matchingTask.index === task.index)) {
+        throw new Error(`Task '${task.label}' cannot depend on itself.`);
+      }
+    }
+  }
+
+  const visited = new Set<number>();
+  const visiting = new Set<number>();
+  const visit = (task: ExpandedTask): void => {
+    if (visited.has(task.index)) return;
+    if (visiting.has(task.index)) {
+      throw new Error(`Task dependency cycle detected at '${task.label}'.`);
+    }
+    visiting.add(task.index);
+    for (const dependency of task.dependsOn) {
+      for (const dependencyTask of matchingDependencyTasks(tasks, dependency)) {
+        visit(dependencyTask);
+      }
+    }
+    visiting.delete(task.index);
+    visited.add(task.index);
+  };
+
+  for (const task of tasks) visit(task);
+}
+
 export function createSuiteRunReport(result: SuiteResult): SuiteRunReport {
   const error =
     result.failed > 0 || result.errored > 0
@@ -137,7 +223,7 @@ export function createSuiteRunReport(result: SuiteResult): SuiteRunReport {
   return {
     runId: result.suiteId,
     objective: `Suite ${result.suiteId}`,
-    status: result.passed === result.total ? "passed" : "failed",
+    status: result.failed === 0 && result.errored === 0 ? "passed" : "failed",
     startedAt: result.startedAt,
     finishedAt: result.finishedAt,
     finalUrl: "",
@@ -157,7 +243,9 @@ export function expandTasks(manifest: SuiteManifest, suiteDir: string): Expanded
     context: string[],
     llm: string | undefined,
     persona: string | undefined,
-    customLabel?: string
+    id: string | undefined,
+    customLabel?: string,
+    dependsOn: TaskDependency[] = []
   ): void {
     const index = expanded.length;
     const label =
@@ -168,7 +256,7 @@ export function expandTasks(manifest: SuiteManifest, suiteDir: string): Expanded
       "tasks",
       `${String(index + 1).padStart(3, "0")}_${dirLabel}`
     );
-    expanded.push({ index, label, dirLabel, scenario, context, llm, persona, taskDir });
+    expanded.push({ index, id, label, dirLabel, scenario, context, llm, persona, taskDir, dependsOn });
   }
 
   if (manifest.matrix) {
@@ -177,7 +265,7 @@ export function expandTasks(manifest: SuiteManifest, suiteDir: string): Expanded
       contexts && contexts.length > 0 ? contexts.map(normalizeContextArray) : [[]];
     for (const scenario of scenarios) {
       for (const contextSet of contextSets) {
-        addTask(scenario, contextSet, manifest.llm, manifest.persona);
+        addTask(scenario, contextSet, manifest.llm, manifest.persona, undefined);
       }
     }
   }
@@ -188,10 +276,13 @@ export function expandTasks(manifest: SuiteManifest, suiteDir: string): Expanded
       normalizeContextArray(task.context),
       task.llm ?? manifest.llm,
       task.persona ?? manifest.persona,
-      task.label
+      task.id,
+      task.label,
+      normalizeTaskDependencies(task.dependsOn)
     );
   }
 
+  validateTaskDependencies(expanded);
   return expanded;
 }
 
@@ -256,30 +347,36 @@ function aggregateTaskMetrics(tasks: TaskResult[]): {
   costTotals: SuiteCostTotal[] | undefined;
 } {
   const tasksWithTokenUsage = tasks.filter((task) => task.tokenUsage !== undefined);
-  const tokenUsage = tasksWithTokenUsage.length === 0
-    ? undefined
-    : tasksWithTokenUsage.reduce<SuiteTokenUsage>(
-        (total, task) => ({
-          inputTokens: total.inputTokens + (task.tokenUsage?.inputTokens ?? 0),
-          outputTokens: total.outputTokens + (task.tokenUsage?.outputTokens ?? 0),
-          totalTokens: total.totalTokens + (task.tokenUsage?.totalTokens ?? 0),
-          cacheReadInputTokens: total.cacheReadInputTokens + (task.tokenUsage?.cacheReadInputTokens ?? 0),
-          cacheWriteInputTokens: total.cacheWriteInputTokens + (task.tokenUsage?.cacheWriteInputTokens ?? 0),
-          plannerCalls: total.plannerCalls + (task.tokenUsage?.plannerCalls ?? 0)
-        }),
-        {
-          inputTokens: 0,
-          outputTokens: 0,
-          totalTokens: 0,
-          cacheReadInputTokens: 0,
-          cacheWriteInputTokens: 0,
-          plannerCalls: 0
-        }
-      );
+  const tokenUsage =
+    tasksWithTokenUsage.length === 0
+      ? undefined
+      : tasksWithTokenUsage.reduce<SuiteTokenUsage>(
+          (total, task) => ({
+            inputTokens: total.inputTokens + (task.tokenUsage?.inputTokens ?? 0),
+            outputTokens: total.outputTokens + (task.tokenUsage?.outputTokens ?? 0),
+            totalTokens: total.totalTokens + (task.tokenUsage?.totalTokens ?? 0),
+            cacheReadInputTokens:
+              total.cacheReadInputTokens + (task.tokenUsage?.cacheReadInputTokens ?? 0),
+            cacheWriteInputTokens:
+              total.cacheWriteInputTokens + (task.tokenUsage?.cacheWriteInputTokens ?? 0),
+            plannerCalls: total.plannerCalls + (task.tokenUsage?.plannerCalls ?? 0)
+          }),
+          {
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheWriteInputTokens: 0,
+            plannerCalls: 0
+          }
+        );
   const costsByCurrency = new Map<string, number>();
   for (const task of tasks) {
     if (!task.costTotal) continue;
-    costsByCurrency.set(task.costTotal.currency, (costsByCurrency.get(task.costTotal.currency) ?? 0) + task.costTotal.total);
+    costsByCurrency.set(
+      task.costTotal.currency,
+      (costsByCurrency.get(task.costTotal.currency) ?? 0) + task.costTotal.total
+    );
   }
   const costTotals = Array.from(costsByCurrency, ([currency, total]) => ({
     currency,
@@ -427,23 +524,79 @@ async function runWithConcurrency(
   options: SuiteRunOptions
 ): Promise<TaskResult[]> {
   const results: TaskResult[] = new Array(tasks.length) as TaskResult[];
-  let nextIndex = 0;
+  const pending = new Set(tasks.map((task) => task.index));
+  const active = new Set<Promise<void>>();
 
-  async function worker(): Promise<void> {
-    while (nextIndex < tasks.length) {
-      const i = nextIndex++;
-      const task = tasks[i];
+  const skipTask = (task: ExpandedTask, unmetDependencies: string[]): void => {
+    const result: TaskResult = {
+      index: task.index,
+      label: task.label,
+      scenario: task.scenario,
+      context: task.context,
+      status: "skipped",
+      runId: undefined,
+      runDir: undefined,
+      reportPath: undefined,
+      summaryHtmlPath: undefined,
+      tokenUsage: undefined,
+      costTotal: undefined,
+      durationMs: 0,
+      errorMessage: `Skipped because dependency expectations were not met: ${unmetDependencies.join(", ")}.`
+    };
+    results[task.index] = result;
+    options.onTaskComplete?.(result);
+  };
+
+  while (pending.size > 0 || active.size > 0) {
+    let scheduled = false;
+    while (active.size < limit) {
+      const task = tasks.find(
+        (candidate) =>
+          pending.has(candidate.index) &&
+          candidate.dependsOn.every((dependency) => {
+            const dependencyTasks = matchingDependencyTasks(tasks, dependency);
+            return dependencyTasks.every((dependencyTask) => results[dependencyTask.index] !== undefined);
+          })
+      );
       if (!task) break;
+
+      pending.delete(task.index);
+      scheduled = true;
+      const unmetDependencies = task.dependsOn.flatMap((dependency) => {
+        return matchingDependencyTasks(tasks, dependency).flatMap((dependencyTask) => {
+          const result = results[dependencyTask.index];
+          return result && dependency.statuses.includes(result.status)
+            ? []
+            : [
+                `${dependency.task} expected ${dependency.statuses.join(" or ")} but ${dependencyTask.label} was ${result?.status ?? "unknown"}`
+              ];
+        });
+      });
+      if (unmetDependencies.length > 0) {
+        skipTask(task, unmetDependencies);
+        continue;
+      }
+
       options.onTaskStart?.(task);
-      const result = await runTask(task, options);
-      results[i] = result;
-      options.onTaskComplete?.(result);
+      const execution = runTask(task, options).then((result) => {
+        results[task.index] = result;
+        options.onTaskComplete?.(result);
+      });
+      active.add(execution);
+      void execution.then(
+        () => active.delete(execution),
+        () => active.delete(execution)
+      );
+    }
+
+    if (active.size > 0) {
+      await Promise.race(active);
+    } else if (!scheduled && pending.size > 0) {
+      throw new Error(
+        "Unable to schedule suite tasks because their dependencies could not be resolved."
+      );
     }
   }
-
-  const workerCount = Math.min(limit, tasks.length);
-  const workers = Array.from({ length: workerCount }, () => worker());
-  await Promise.all(workers);
 
   return results;
 }
@@ -468,6 +621,7 @@ export async function runSuite(
   const passed = taskResults.filter((r) => r.status === "passed").length;
   const failed = taskResults.filter((r) => r.status === "failed").length;
   const errored = taskResults.filter((r) => r.status === "error").length;
+  const skipped = taskResults.filter((r) => r.status === "skipped").length;
   const metrics = aggregateTaskMetrics(taskResults);
 
   const suiteResult: SuiteResult = {
@@ -481,6 +635,7 @@ export async function runSuite(
     passed,
     failed,
     errored,
+    skipped,
     total: taskResults.length,
     ...(metrics.tokenUsage ? { tokenUsage: metrics.tokenUsage } : {}),
     ...(metrics.costTotals ? { costTotals: metrics.costTotals } : {})

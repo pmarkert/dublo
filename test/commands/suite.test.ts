@@ -7,6 +7,7 @@ import * as yaml from "js-yaml";
 import test from "node:test";
 import {
   expandTasks,
+  runSuite,
   SuiteManifestSchema,
   type SuiteManifest
 } from "../../src/utils/suite-runner.js";
@@ -28,9 +29,9 @@ void test("new suite template documents task and matrix manifest structures", ()
   const template = initialSuiteManifestContent();
 
   assert.match(template, /# Optional suite-wide settings:/);
-  assert.match(template, /tasks:\n  - scenario: homepage-smoke/);
+  assert.match(template, /tasks:\n {2}- scenario: homepage-smoke/);
   assert.match(template, /# Or replace tasks above with a matrix/);
-  assert.match(template, /# matrix:\n#   scenarios:/);
+  assert.match(template, /# matrix:\n# {3}scenarios:/);
   assert.equal(SuiteManifestSchema.safeParse(yaml.load(template)).success, true);
 });
 
@@ -88,6 +89,7 @@ void test("suite reports include the fields required by report commands", () => 
     passed: 1,
     failed: 0,
     errored: 0,
+    skipped: 0,
     total: 1,
     tokenUsage: task.tokenUsage,
     costTotals: [task.costTotal]
@@ -113,6 +115,7 @@ void test("suite summaries render aggregated token usage and costs when availabl
     passed: 1,
     failed: 0,
     errored: 0,
+    skipped: 0,
     total: 1,
     tokenUsage: {
       inputTokens: 10,
@@ -284,6 +287,99 @@ void test("expandTasks applies custom label from task", () => {
 
   const tasks = expandTasks(manifest, suiteDir);
   assert.equal(tasks[0]?.label, "my-custom-label");
+});
+
+void test("expandTasks normalizes task dependency shorthand and status conditions", () => {
+  const tasks = expandTasks(
+    {
+      tasks: [
+        { scenario: "setup", id: "init", label: "setup" },
+        {
+          scenario: "verify",
+          dependsOn: { task: "init", status: ["success", "fail"] }
+        },
+        { scenario: "cleanup", label: "cleanup", dependsOn: ["setup", { task: "init" }] }
+      ]
+    },
+    suiteDir
+  );
+
+  assert.deepEqual(tasks[1]?.dependsOn, [
+    { task: "init", statuses: ["passed", "failed"] }
+  ]);
+  assert.deepEqual(tasks[2]?.dependsOn, [
+    { task: "setup", statuses: ["passed"] },
+    { task: "init", statuses: ["passed"] }
+  ]);
+});
+
+void test("expandTasks rejects invalid task dependency labels and cycles", () => {
+  assert.throws(
+    () => expandTasks({ tasks: [{ scenario: "verify", dependsOn: ["missing"] }] }, suiteDir),
+    /depends on unknown task 'missing'/
+  );
+  assert.throws(
+    () =>
+      expandTasks(
+        {
+          tasks: [
+            { scenario: "first", dependsOn: ["second"] },
+            { scenario: "second", dependsOn: ["first"] }
+          ]
+        },
+        suiteDir
+      ),
+    /dependency cycle/
+  );
+});
+
+void test("runSuite requires every matching dependency task to meet an allowed status", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dublo-suite-dependencies-"));
+  const runnerPath = path.join(root, "dependency-runner.mjs");
+  await writeFile(
+    runnerPath,
+    [
+      'import { mkdir, writeFile } from "node:fs/promises";',
+      'import path from "node:path";',
+      'const outputDir = process.argv[process.argv.indexOf("--output-dir") + 1];',
+      'const scenario = process.argv[process.argv.indexOf("run") + 1];',
+      "await mkdir(outputDir, { recursive: true });",
+      'const status = scenario === "passed-init" ? "passed" : "failed";',
+      'await writeFile(path.join(outputDir, "latest.json"), JSON.stringify({ status }));'
+    ].join("\n"),
+    "utf8"
+  );
+
+  const originalCliPath = process.argv[1];
+  process.argv[1] = runnerPath;
+  try {
+    const result = await runSuite(
+      {
+        concurrency: 3,
+        tasks: [
+          { scenario: "passed-init", label: "init" },
+          { scenario: "failed-init", label: "init" },
+          {
+            scenario: "runs-after-either-init-status",
+            dependsOn: { task: "init", status: ["success", "fail"] }
+          },
+          { scenario: "skipped", dependsOn: "init" }
+        ]
+      },
+      path.join(root, "suite.yaml"),
+      path.join(root, "output"),
+      { workspace: root, headless: true }
+    );
+
+    assert.deepEqual(
+      result.tasks.map((task) => task.status),
+      ["passed", "failed", "failed", "skipped"]
+    );
+    assert.equal(result.skipped, 1);
+    assert.match(result.tasks[3]?.errorMessage ?? "", /init expected passed but init was failed/);
+  } finally {
+    process.argv[1] = originalCliPath;
+  }
 });
 
 void test("expandTasks inherits suite-level llm and persona", () => {
