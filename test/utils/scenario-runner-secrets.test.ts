@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildPlannerMessages,
   classifyRecoverableActionError,
   isDocumentTextGone,
   isAlternatingScrollLoop,
+  resolveTargetControl
+} from "../../src/utils/scenario-runner.mjs";
+import {
   loadContextFromOperations,
   redactSecretValues,
-  resolveTargetControl,
   resolveFillValue
-} from "../../src/utils/scenario-runner.mjs";
+} from "../../src/utils/scenario/context-operations.mjs";
+import { executeBrowserAction } from "../../src/utils/scenario/action-executor.mjs";
+import { buildPlannerMessages } from "../../src/utils/scenario/planner-context.mjs";
 
 void test("detects when observed document text has disappeared", () => {
   assert.equal(isDocumentTextGone("Checking your account...", "checking YOUR account"), false);
@@ -70,6 +73,46 @@ void test("detects an alternating scroll loop in one container", () => {
     classifyRecoverableActionError(new Error("Alternating scroll loop detected in 's1'.")),
     "scroll_loop"
   );
+});
+
+void test("executes a click against the turn-scoped observed control", async () => {
+  let clicked = false;
+  const target = {
+    count: () => Promise.resolve(1),
+    evaluate: () => Promise.resolve(false),
+    click: () => {
+      clicked = true;
+      return Promise.resolve();
+    }
+  };
+  const page = {
+    locator: () => ({ first: () => target }),
+    waitForLoadState: () => Promise.resolve(),
+    evaluate: () => Promise.resolve("stable"),
+    waitForTimeout: async () => new Promise((resolve) => setTimeout(resolve, 1))
+  };
+
+  const result = await executeBrowserAction({
+    page,
+    action: { payload: { action: "click", target: { id: "a1" } } },
+    observation: {
+      controls: [
+        { id: "a1", label: "Continue", ariaLabel: "", text: "Continue", role: "", type: "button" }
+      ],
+      scrollContainers: []
+    },
+    turnToken: "t1",
+    contextData: {},
+    humanInputs: new Map(),
+    secretValues: new Map(),
+    settleDelayMs: 1,
+    settleTimeoutMs: 20,
+    logger: { info: () => {} },
+    throwIfInterrupted: () => {}
+  });
+
+  assert.equal(clicked, true);
+  assert.deepEqual(result.target, { label: "Continue", text: "Continue", type: "button" });
 });
 
 void test("resolves exactly one control from all target selector properties", () => {

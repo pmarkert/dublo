@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { loadContextFromOperations } from "../../src/utils/scenario-runner.mjs";
+import { loadContextFromOperations } from "../../src/utils/scenario/context-operations.mjs";
 
 void test("context files merge in order with later top-level values winning", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "dublo-context-merge-"));
