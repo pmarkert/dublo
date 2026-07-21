@@ -228,7 +228,7 @@ async function runTask(task: ExpandedTask, options: SuiteRunOptions): Promise<Ta
 
 			const durationMs = Date.now() - startedAt;
 
-			if (spawnError ?? exitCode !== 0) {
+			if (spawnError != null || exitCode !== 0) {
 				const errorLines = logContent.trim().split("\n").slice(-5).join("\n");
 				resolve({
 					index: task.index,

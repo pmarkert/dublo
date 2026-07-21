@@ -55,7 +55,9 @@ async function loadManifest(manifestPath: string): Promise<SuiteManifest> {
 
 	const result = SuiteManifestSchema.safeParse(parsed);
 	if (!result.success) {
-		const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+		const issues = result.error.issues
+			.map((i) => `  ${i.path.length > 0 ? i.path.join(".") : "<root>"}: ${i.message}`)
+			.join("\n");
 		throw new Error(`Suite manifest validation failed for '${resolved}':\n${issues}`);
 	}
 
