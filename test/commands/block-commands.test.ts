@@ -67,9 +67,11 @@ function validBlock(documentText: string | string[], includeSource = true): stri
       ...source,
       actions: [
         {
-          action: "wait_until_gone",
           reason: "Wait for the loading screen.",
-          expectGone: { documentText }
+          payload: {
+            action: "wait_until_gone",
+            expectGone: { documentText }
+          }
         }
       ]
     },

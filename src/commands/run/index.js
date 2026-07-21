@@ -5,6 +5,7 @@ import { runScenario } from "../../utils/scenario-runner.mjs";
 import { loadScenarioConfig } from "../../utils/loadScenarioConfig.js";
 import { resolvePersonaProfilePath } from "../persona/shared.js";
 import { resolveScenarioProfilePath } from "../scenario/shared.js";
+import { readBlock, resolveBlockPath } from "../block/shared.js";
 import { logger } from "../../utils/logger.js";
 import { collectOptionValues, collectOrderedContextOperations } from "../../utils/command-registration-helpers.js";
 import { openInDefaultViewer } from "../../utils/open-file.js";
@@ -81,6 +82,7 @@ export async function runCommand(options) {
     })
   );
   config.contextOperations = resolveContextOperations(config);
+  config.initBlocks = await resolveInitBlocks(options.init, config.workspace);
 
   if (config.scenario && config.adhocScenario) {
     throw new Error("Provide either a scenario reference (--scenario or positional) or --adhoc, not both.");
@@ -266,7 +268,8 @@ function normalizeLlmConfig(value = {}) {
     cacheWritePrice: firstDefined(llm.cacheWritePrice, llm["cache-write-price"]),
     currency: firstDefined(llm.currency),
     tokenUnit: firstDefined(llm.tokenUnit, llm["token-unit"]),
-    supportsConditionalToolSchemas: firstDefined(llm.supportsConditionalToolSchemas)
+    supportsConditionalToolSchemas: firstDefined(llm.supportsConditionalToolSchemas),
+    supportsStrictToolUse: firstDefined(llm.supportsStrictToolUse)
   };
 }
 
@@ -335,6 +338,19 @@ export function resolveContextOperations(config) {
   return operations;
 }
 
+export async function resolveInitBlocks(value, workspace) {
+  const names = normalizeContextRefs(Array.isArray(value) ? value : value ? [value] : []);
+  const blocks = [];
+  for (const name of names) {
+    const blockPath = resolveBlockPath(workspace, name);
+    if (!blockPath) {
+      throw new Error(`Could not resolve block '${name}' in ${workspace}.`);
+    }
+    blocks.push(await readBlock(blockPath));
+  }
+  return blocks;
+}
+
 export default function registerRunCommand(program) {
   program
     .command("run [scenario]")
@@ -349,6 +365,7 @@ export default function registerRunCommand(program) {
     .option("--headless", "Run browser in headless mode")
     .option("--debug", "Enable debug logging for this run")
     .option("--open", "Open the generated HTML report when the run finishes")
+    .option("--init <block>", "Replay a reusable initialization block before planner actions (repeatable)", collectOptionValues)
     .option("--context <value>", "Context file path or profile name in <workspace>/context (repeatable)", collectOptionValues)
     .option("--set <keyValue>", "Inline context assignment key.path=value (or key.path:value); repeatable", collectOptionValues)
     .option("--json <object>", "Inline JSON object merged into context (repeatable)", collectOptionValues)

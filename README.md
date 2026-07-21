@@ -137,6 +137,7 @@ dublo config context add|remove|clear [options]
 dublo config report add|remove|clear [options]
 dublo config prompt edit|show [options]
 dublo run [scenario] [options]
+dublo run checkout --init login --init select-tenant
 dublo llm config [profile] [options]
 dublo llm list [options]
 dublo llm show [profile] [options]

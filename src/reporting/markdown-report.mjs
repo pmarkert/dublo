@@ -36,7 +36,7 @@ export const reportGenerator = {
       "## Steps",
       ...report.steps.map((step) => {
         const planner = step.plannerAction
-          ? ` action=${step.plannerAction.action}${step.plannerAction.targetId ? ` target=${step.plannerAction.targetId}` : ""}`
+          ? ` action=${step.plannerAction.payload.action}${step.plannerAction.payload.target ? ` target=${JSON.stringify(step.plannerAction.payload.target)}` : ""}`
           : "";
         const stepUrlPart = formatSummaryStepUrl(step.url, config.baseUrl);
         const screenshotPart = step.screenshot ? ` [${step.screenshot}](${step.screenshot})` : "";

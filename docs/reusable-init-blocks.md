@@ -45,7 +45,7 @@ The LLM schema intentionally accepts only observed document text. It does not ac
 
 ## Proposed Initialization Block Model
 
-After `wait_until_gone` is available, add a workspace directory and commands:
+The workspace directory and block commands are available:
 
 ```text
 <workspace>/blocks/login.json
@@ -72,24 +72,24 @@ A block is an executable, versioned action list. It is not a saved planner trans
   "actions": [
     {
       "action": "fill",
-      "targetId": "a2",
+      "target": { "id": "a2" },
       "value": "{{context:login.email}}",
       "reason": "Enter the account email."
     },
     {
       "action": "click",
-      "targetId": "a3",
+      "target": { "id": "a3" },
       "reason": "Continue to password entry."
     },
     {
       "action": "fill",
-      "targetId": "a2",
+      "target": { "label": "Password", "tag": "input" },
       "value": "{{secret:password}}",
       "reason": "Enter the account password."
     },
     {
       "action": "click",
-      "targetId": "a4",
+      "target": { "tag": "button", "type": "submit", "text": "Sign in" },
       "reason": "Submit sign-in."
     },
     {
@@ -115,7 +115,7 @@ collect a fresh observation
 start the normal LLM scenario loop
 ```
 
-Initialization steps should remain visible in reports and be marked with `phase: "init"` and their block name. Their token cost is zero. The first planner request receives the new post-initialization observation and the scenario objective, not the old login observations or reasons.
+Initialization steps remain visible in reports and are marked with `phase: "init"` and their block name. Their token cost is zero. The first planner request receives the new post-initialization observation and the scenario objective, not the old login observations or reasons.
 
 ## Execution Rules
 
@@ -125,13 +125,15 @@ Initialization steps should remain visible in reports and be marked with `phase:
 - Record only successful steps from a successful report. Preserve action templates such as `{{secret:password}}`; never export resolved secret values.
 - Flag literal `fill` values during validation and recommend context or secret placeholders where applicable.
 - A missing target or failed readiness condition is a block failure. Do not fall back to the LLM within the first version, because that makes the result nondeterministic and obscures a stale block.
+- The planner may use `give_up` with a concrete reason when it has exhausted credible actions and cannot safely complete the scenario. This ends the run as failed; initialization blocks cannot contain `give_up`.
 - Planner actions always contain one observed `expectGone.documentText`. Imported blocks retain that string, but users may edit it into a list of alternate transient texts. The wait completes only after every listed text is absent.
+- Click and fill actions use a `target` object. It may contain any observed control field except `value`; every supplied property must match, and exactly one visible control must match overall. `{ "id": "a3" }` is the normal lightweight selector.
 
-## Target Identity Limitation
+## Target Resolution
 
-The current `a1`, `a2`, and similar identifiers are assigned during each fresh observation, rather than being persistent page-owned DOM IDs. Replay must collect a fresh observation before each action and use the recorded target ID against that observation. If the observed control ordering changes, replay can fail; this is an accepted initial constraint, provided the error identifies the block, action index, expected target, and current URL.
+The current `a1`, `a2`, and similar identifiers are assigned during each fresh observation, rather than being persistent page-owned DOM IDs. Actions select a control by matching every field in `target` against the fresh observation, and the runner requires exactly one match before dispatching to that control's current ID. `{ "id": "a3" }` is the default selector, while a manually edited block can use fields such as `{ "tag": "button", "type": "submit", "text": "Sign in" }` to survive control reordering.
 
-If this proves too brittle, add stable selector metadata during block recording as a later design iteration. Do not introduce it before evidence shows that the present IDs are insufficient.
+If a selector matches no controls or more than one control, replay fails loudly with the selector and match count. Future scoped metadata can improve selectors that remain ambiguous in a flat control list.
 
 ## Delivery Sequence
 
@@ -140,8 +142,7 @@ If this proves too brittle, add stable selector metadata during block recording 
 3. Add runner tests for successful disappearance, delayed disappearance, timeout, stability, and duplicate-wait protection.
 4. Confirm the login flow can use `wait_until_gone` reliably over repeated runs.
 5. Implement the block schema, storage, recording command, and validation.
-6. Extract shared deterministic action execution and add `--init` replay.
-7. Add reporting metadata and end-to-end replay tests.
+6. Add reporting metadata and end-to-end replay tests.
 
 ## Risks and Decisions
 

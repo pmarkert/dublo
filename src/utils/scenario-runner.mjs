@@ -207,7 +207,38 @@ export function classifyRecoverableActionError(error) {
     return "target_disappeared";
   }
 
+  if (message.includes("planner select_option target is not a native select")) {
+    return "invalid_selection";
+  }
+
+  if (message.includes("alternating scroll loop")) {
+    return "scroll_loop";
+  }
+
   return null;
+}
+
+export function isAlternatingScrollLoop(actionHistory, nextAction) {
+  if (nextAction.action !== "scroll") {
+    return false;
+  }
+
+  const recentScrolls = actionHistory
+    .filter(
+      ({ outcome, action }) =>
+        outcome === "ok" &&
+        action.payload.action === "scroll" &&
+        action.payload.containerId === nextAction.containerId
+    )
+    .slice(-4)
+    .map(({ action }) => action.payload.direction);
+
+  if (recentScrolls.length < 4) {
+    return false;
+  }
+
+  const directions = [...recentScrolls, nextAction.direction];
+  return directions.every((direction, index) => index === 0 || direction !== directions[index - 1]);
 }
 
 async function isTargetDisabled(target) {
@@ -678,7 +709,7 @@ async function collectObservation(page, observationConfig, turnToken) {
     const controlsSelector =
       typeof cfg.controlsSelector === "string" && cfg.controlsSelector.trim().length > 0
         ? cfg.controlsSelector
-        : "button, a, input, textarea, select, [role='button'], [role='link'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [contenteditable='true']";
+        : "button, a, input, textarea, select, [role='button'], [role='link'], [role='option'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [contenteditable='true']";
     const maxControls = Number.isFinite(cfg.maxControls) ? Math.max(1, Number(cfg.maxControls)) : 80;
     const headingSelector =
       typeof cfg.headingSelector === "string" && cfg.headingSelector.trim().length > 0
@@ -693,6 +724,9 @@ async function collectObservation(page, observationConfig, turnToken) {
     const documentTextMaxChars = Number.isFinite(cfg.documentTextMaxChars)
       ? Math.max(1, Number(cfg.documentTextMaxChars))
       : 2400;
+    const maxOptionsPerControl = Number.isFinite(cfg.maxOptionsPerControl)
+      ? Math.max(1, Number(cfg.maxOptionsPerControl))
+      : 30;
 
     const ignoreControlSelectors = Array.isArray(cfg.ignoreControlSelectors)
       ? cfg.ignoreControlSelectors.filter((item) => typeof item === "string" && item.trim().length > 0)
@@ -712,6 +746,14 @@ async function collectObservation(page, observationConfig, turnToken) {
         .replace(/\s+/g, " ")
         .trim();
 
+    const resolveReferencedText = (ids) =>
+      ids
+        .split(/\s+/)
+        .map((id) => globalThis.document.getElementById(id))
+        .map((element) => normalizeText(element?.innerText || element?.textContent || ""))
+        .filter(Boolean)
+        .join(" · ");
+
     const queryAllWithin = (root, selector) => {
       try {
         return Array.from(root.querySelectorAll(selector));
@@ -728,6 +770,69 @@ async function collectObservation(page, observationConfig, turnToken) {
 
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
+    };
+
+    const leafTextSegments = (el) => {
+      const segments = [];
+      const visit = (node) => {
+        const children = Array.from(node.children || []).filter((child) => isVisible(child));
+        if (children.length === 0) {
+          const text = normalizeText(node.innerText || node.textContent || "");
+          if (text) segments.push(text);
+          return;
+        }
+
+        for (const child of children) visit(child);
+      };
+      visit(el);
+      return [...new Set(segments)];
+    };
+
+    const resolveControlName = (el, textSegments) => {
+      const labelledBy = resolveReferencedText(el.getAttribute("aria-labelledby") || "");
+      if (labelledBy) return labelledBy;
+
+      const ariaLabel = normalizeText(el.getAttribute("aria-label") || "");
+      if (ariaLabel) return ariaLabel;
+
+      if ("labels" in el && el.labels?.length) {
+        const labels = Array.from(el.labels)
+          .map((label) => normalizeText(label.innerText || label.textContent || ""))
+          .filter(Boolean)
+          .join(" · ");
+        if (labels) return labels;
+      }
+
+      const id = el.getAttribute("id") || "";
+      const associatedLabel = id
+        ? normalizeText(globalThis.document.querySelector(`label[for='${globalThis.CSS.escape(id)}']`)?.innerText || "")
+        : "";
+      return associatedLabel || textSegments[0] || normalizeText(el.innerText || el.textContent || "");
+    };
+
+    const resolveContextPath = (el, scopeRoot) => {
+      const parts = [];
+      let current = el.parentElement;
+      while (current && current !== scopeRoot.parentElement) {
+        if (current === scopeRoot && current.getAttribute("role") === "dialog") {
+          const title = resolveModalTitle(current);
+          if (title) parts.unshift(title);
+          break;
+        }
+
+        const role = current.getAttribute("role") || "";
+        if (current.tagName === "FORM") {
+          parts.unshift("form");
+        } else if (current.tagName === "FIELDSET") {
+          const legend = normalizeText(current.querySelector("legend")?.innerText || "");
+          parts.unshift(legend || "fieldset");
+        } else if (role === "group" || role === "region") {
+          const name = resolveControlName(current, leafTextSegments(current));
+          parts.unshift(name || role);
+        }
+        current = current.parentElement;
+      }
+      return [...new Set(parts)];
     };
 
     const resolveModalTitle = (modalEl) => {
@@ -847,11 +952,36 @@ async function collectObservation(page, observationConfig, turnToken) {
     const visibleOutsideModalControls = activeModal
       ? allVisibleControls.filter((el) => !activeModal.contains(el))
       : [];
-    const modalBlocksBackground =
-      Boolean(activeModal) &&
-      visibleOutsideModalControls.length > 0 &&
-      !visibleOutsideModalControls.some((el) => isLayerClickable(el));
+    const bodyStyle = globalThis.document.body
+      ? globalThis.window.getComputedStyle(globalThis.document.body)
+      : null;
+    const modalBlocksBackground = Boolean(activeModal) && (
+      activeModal.getAttribute("aria-modal") === "true" ||
+      activeModal.matches("dialog[open]") ||
+      globalThis.document.body?.hasAttribute("data-scroll-locked") ||
+      bodyStyle?.pointerEvents === "none" ||
+      (visibleOutsideModalControls.length > 0 &&
+        !visibleOutsideModalControls.some((el) => isLayerClickable(el)))
+    );
     const scopeRoot = modalBlocksBackground && activeModal ? activeModal : globalThis.document;
+    const activeOverlayTriggers = queryAllWithin(
+      scopeRoot,
+      "[aria-expanded='true'][aria-controls], [aria-expanded='true'][aria-owns]"
+    );
+    const activeOverlayRoots = activeOverlayTriggers
+      .flatMap((trigger) =>
+        `${trigger.getAttribute("aria-controls") || ""} ${trigger.getAttribute("aria-owns") || ""}`
+          .split(/\s+/)
+          .filter(Boolean)
+          .map((id) => globalThis.document.getElementById(id))
+      )
+      .filter((overlay) => overlay && isVisible(overlay));
+    const interactionRoots = [...new Set([scopeRoot, ...activeOverlayRoots])];
+    const queryAllInteractionRoots = (selector) =>
+      [...new Set(interactionRoots.flatMap((root) => queryAllWithin(root, selector)))];
+    const overlayControlSelector = "[role='option'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [role='treeitem']";
+    const overlayControls = [...new Set(activeOverlayRoots.flatMap((root) => queryAllWithin(root, overlayControlSelector)))];
+    const isActiveOverlayControl = (el) => overlayControls.includes(el);
 
     const matchesAnySelector = (el, selectors) =>
       selectors.some((selector) => {
@@ -887,13 +1017,21 @@ async function collectObservation(page, observationConfig, turnToken) {
     const selectedElements = [];
     const seenElements = new Set();
 
+    for (const el of overlayControls) {
+      if (selectedElements.length >= maxControls) break;
+      if (!isVisible(el)) continue;
+      if (shouldIgnoreControl(el)) continue;
+      seenElements.add(el);
+      selectedElements.push({ el, priority: true });
+    }
+
     for (const selector of priorityControlSelectors) {
-      const nodes = queryAllWithin(scopeRoot, selector);
+      const nodes = queryAllInteractionRoots(selector);
 
       for (const el of nodes) {
         if (seenElements.has(el)) continue;
         if (!isVisible(el)) continue;
-        if (!isLayerClickable(el)) continue;
+        if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
         if (shouldIgnoreControl(el)) continue;
         seenElements.add(el);
         selectedElements.push({ el, priority: true });
@@ -901,22 +1039,44 @@ async function collectObservation(page, observationConfig, turnToken) {
     }
 
     let generalNodes = [];
-    generalNodes = queryAllWithin(scopeRoot, controlsSelector);
+    generalNodes = queryAllInteractionRoots(controlsSelector);
 
     for (const el of generalNodes) {
       if (selectedElements.length >= maxControls) break;
       if (seenElements.has(el)) continue;
       if (!isVisible(el)) continue;
-      if (!isLayerClickable(el)) continue;
+      if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
       if (shouldIgnoreControl(el)) continue;
       seenElements.add(el);
       selectedElements.push({ el, priority: false });
     }
 
-    for (const el of queryAllWithin(globalThis.document, "[data-agentic-id], [data-agentic-turn]")) {
+    for (const el of queryAllWithin(globalThis.document, "[data-agentic-id], [data-agentic-turn], [data-agentic-scroll-id]")) {
       el.removeAttribute("data-agentic-id");
       el.removeAttribute("data-agentic-turn");
+      el.removeAttribute("data-agentic-scroll-id");
     }
+
+    const scrollRoot = scopeRoot === globalThis.document ? globalThis.document.body : scopeRoot;
+    const scrollableElements = [scrollRoot, ...queryAllWithin(scopeRoot, "*")].filter((el, index, elements) => {
+      if (!el || elements.indexOf(el) !== index || !isVisible(el)) return false;
+      const style = globalThis.window.getComputedStyle(el);
+      return (
+        (style.overflowY === "auto" || style.overflowY === "scroll") &&
+        el.scrollHeight > el.clientHeight + 1
+      );
+    });
+    const scrollContainers = scrollableElements.map((el, index) => {
+      const id = `s${index + 1}`;
+      el.setAttribute("data-agentic-scroll-id", id);
+      el.setAttribute("data-agentic-turn", activeTurnToken);
+      return {
+        id,
+        contextPath: resolveContextPath(el, scopeRoot),
+        canScrollUp: el.scrollTop > 1,
+        canScrollDown: el.scrollTop + el.clientHeight < el.scrollHeight - 1
+      };
+    });
 
     let sequence = 0;
     const visibleControls = selectedElements.map(({ el, priority }) => {
@@ -925,24 +1085,21 @@ async function collectObservation(page, observationConfig, turnToken) {
       el.setAttribute("data-agentic-id", agenticId);
       el.setAttribute("data-agentic-turn", activeTurnToken);
 
-      const text = normalizeText(el.textContent || "");
+      const textSegments = leafTextSegments(el);
+      const text = textSegments.join(" · ") || normalizeText(el.innerText || el.textContent || "");
       const ariaLabel = el.getAttribute("aria-label") || "";
       const placeholder = el.getAttribute("placeholder") || "";
       const role = el.getAttribute("role") || "";
       const tag = el.tagName.toLowerCase();
       const type = el.getAttribute("type") || "";
-      const id = el.getAttribute("id") || "";
-      const label = id
-        ? (globalThis.document.querySelector(`label[for='${globalThis.CSS.escape(id)}']`)?.textContent || "")
-            .replace(/\s+/g, " ")
-            .trim()
-        : "";
+      const label = resolveControlName(el, textSegments);
+      const description = resolveReferencedText(el.getAttribute("aria-describedby") || "");
       const disabled =
         ("disabled" in el && Boolean(el.disabled)) || el.getAttribute("aria-disabled") === "true" || false;
 
       let value = "";
       let hasValue = false;
-      let checked = false;
+      let checked = el.getAttribute("aria-checked") === "true";
 
       if (tag === "input") {
         const input = /** @type {HTMLInputElement} */ (el);
@@ -968,6 +1125,18 @@ async function collectObservation(page, observationConfig, turnToken) {
         hasValue = value.length > 0;
       }
 
+      const options = tag === "select"
+        ? Array.from(/** @type {HTMLSelectElement} */ (el).options)
+            .map((option) => ({
+              label: normalizeText(option.label || option.textContent || ""),
+              value: option.value,
+              ...(option.selected ? { selected: true } : {}),
+              ...(option.disabled ? { disabled: true } : {})
+            }))
+            .filter((option) => option.label || option.value)
+            .slice(0, maxOptionsPerControl)
+        : [];
+
       return {
         id: agenticId,
         tag,
@@ -977,10 +1146,19 @@ async function collectObservation(page, observationConfig, turnToken) {
         text,
         ariaLabel,
         label,
+        ...(description ? { description } : {}),
+        contextPath: resolveContextPath(el, scopeRoot),
         placeholder,
         ...(value ? { value } : {}),
+        ...(options.length > 0 ? { options } : {}),
         hasValue,
         checked,
+        ...(el.hasAttribute("required") || el.getAttribute("aria-required") === "true" ? { required: true } : {}),
+        ...(el.getAttribute("aria-expanded") ? { expanded: el.getAttribute("aria-expanded") === "true" } : {}),
+        ...(el.getAttribute("aria-selected") ? { selected: el.getAttribute("aria-selected") === "true" } : {}),
+        ...(el.getAttribute("aria-pressed") ? { pressed: el.getAttribute("aria-pressed") === "true" } : {}),
+        ...(el.getAttribute("aria-current") ? { current: el.getAttribute("aria-current") } : {}),
+        ...(el.getAttribute("aria-invalid") === "true" ? { invalid: true } : {}),
         ...(disabled ? { disabled: true } : {}),
       };
     });
@@ -1033,6 +1211,7 @@ async function collectObservation(page, observationConfig, turnToken) {
       headings,
       alerts,
       documentText,
+      scrollContainers,
       controls: visibleControls,
     };
   }, { config: observationConfig, turnToken });
@@ -1048,6 +1227,7 @@ export function buildPlannerMessages({
   humanInputs,
   secretValues = new Map(),
   screenshotRequested,
+  strictTargetSelectors = false,
 }) {
   const redactedObservation = redactSecretValues(observation, secretValues);
   const compactControls = redactedObservation.controls.map((control) => ({
@@ -1055,17 +1235,37 @@ export function buildPlannerMessages({
     tag: control.tag,
     role: control.role,
     type: control.type,
+    priority: control.priority,
     text: clip(control.text),
     label: clip(control.label),
     ariaLabel: clip(control.ariaLabel),
     placeholder: clip(control.placeholder),
+    ...(control.description ? { description: clip(control.description) } : {}),
+    ...(control.contextPath?.length ? { contextPath: control.contextPath } : {}),
     ...(control.value ? { value: clip(control.value) } : {}),
+    ...(control.options ? { options: control.options } : {}),
     hasValue: control.hasValue,
     checked: control.checked,
-    ...(control.disabled ? { disabled: true } : {}),
+    required: Boolean(control.required),
+    ...(typeof control.expanded === "boolean" ? { expanded: control.expanded } : {}),
+    ...(typeof control.selected === "boolean" ? { selected: control.selected } : {}),
+    ...(typeof control.pressed === "boolean" ? { pressed: control.pressed } : {}),
+    ...(control.current ? { current: control.current } : {}),
+    invalid: Boolean(control.invalid),
+    disabled: Boolean(control.disabled),
   }));
 
   const history = actionHistory.slice(-10);
+  const completedWork = actionHistory
+    .filter(({ outcome, action }) => outcome === "ok" && !["scroll", "request_screenshot"].includes(action.payload.action))
+    .map(({ step, action, target }) => ({
+      step,
+      action: action.payload.action,
+      ...(target ? { target } : {}),
+      ...(action.payload.action === "fill" ? { value: action.payload.value } : {}),
+      ...(action.payload.action === "select_option" ? { value: action.payload.value } : {}),
+      reason: clip(action.reason, 240),
+    }));
   const knownHumanInputs = Object.fromEntries(humanInputs.entries());
 
   const staticContext = {
@@ -1077,9 +1277,19 @@ export function buildPlannerMessages({
       "If observation.modal.blocksBackground is true, only interact with controls listed from the blocking modal context.",
       "If observation.modal.open is true but observation.modal.blocksBackground is false, you may still use background controls when needed.",
       "Do not invent element IDs.",
-      "For click and fill actions, always provide a targetId that matches a visible control.",
-      "Never emit click or fill without targetId.",
+      "For click and fill actions, always provide a target object that matches exactly one visible control.",
+      strictTargetSelectors
+        ? "Use only the visible control ID as the target selector, for example { id: 'a3' }."
+        : "The lightweight selector { id: 'a3' } is acceptable and preferred by default. You may combine any visible control fields when needed to identify one control.",
+      "Put action and action-specific fields in payload; keep reason at the root.",
+      "Never emit click or fill without target.",
       "For fill actions, also provide a value.",
+      "Treat checked, selected, and pressed as current control state. Do not click a control that is already in the state required by the objective.",
+      "Use select_option only for an observed native select that includes an options list, using an observed option value. For an open custom combobox, click the visible role=option control instead.",
+      "When an observed scroll container has canScrollDown or canScrollUp, use scroll with its containerId and direction to reveal more content before escalating.",
+      "completedWork is a durable record of successful work from this run. Do not scroll only to re-verify completed work; use the current observation and completedWork to decide what remains.",
+      "A successful submit or save followed by visible confirmation of the saved item is sufficient persistence evidence. Do not reopen a saved item merely to inspect settings already recorded in completedWork unless the objective explicitly requires post-save verification or visible evidence contradicts it.",
+      "Before finishing, do not try to audit every part of a long form from one viewport. Combine current visible evidence with completedWork; if all success criteria are covered, finish instead of alternating scroll directions.",
       ...(secretValues.size > 0
         ? ["Secret values are unavailable. Fill registered secrets with {{secret:path}}, using a path from availableSecretPaths."]
         : []),
@@ -1092,6 +1302,7 @@ export function buildPlannerMessages({
       "Do not repeat the same wait_until_gone condition unless a UI action or URL change has occurred.",
       "Do not return finish while the UI appears to be loading or transitioning.",
       "Before finish, verify visible evidence for the success criteria in the test prompt.",
+      "Use give_up with a specific reason only after exhausting credible actions and no safe or reliable path to the objective remains.",
       "When the objective is completed, return finish.",
     ],
     humanEscalationRules: [
@@ -1110,9 +1321,11 @@ export function buildPlannerMessages({
       headings: redactedObservation.headings,
       alerts: redactedObservation.alerts,
       documentText: clip(redactedObservation.documentText, 1600),
+      scrollContainers: redactedObservation.scrollContainers || [],
       controls: compactControls,
     },
     screenshotRequested,
+    completedWork: redactSecretValues(completedWork, secretValues),
     recentActions: history,
   };
 
@@ -1246,16 +1459,12 @@ async function requestPlannerActionBedrock({ client, modelId, llmConfig, message
   };
 }
 
-async function requestPlannerAction({ planner, messages, screenshotBuffer }) {
-  const result = await planner.nextAction({
+async function requestPlannerAction({ planner, messages, screenshotBuffer, signal }) {
+  return planner.nextAction({
     messages,
     ...(screenshotBuffer ? { screenshot: screenshotBuffer } : {}),
+    ...(signal ? { signal } : {}),
   });
-
-  return {
-    ...result.action,
-    tokenUsage: result.tokenUsage,
-  };
 }
 
 async function runBedrockPreflight({ client, modelId, llmConfig }) {
@@ -1525,6 +1734,34 @@ export function isDocumentTextGone(documentText, expectedText) {
   );
 }
 
+function normalizeTargetValue(value) {
+  return typeof value === "string" ? normalizeDocumentText(value) : value;
+}
+
+export function resolveTargetControl(controls, targetSelector) {
+  const selectorEntries = Object.entries(targetSelector || {});
+  const matches = controls.filter((control) =>
+    selectorEntries.every(([key, expectedValue]) => {
+      const actualValue = key === "disabled" ? Boolean(control.disabled) : control[key];
+      return normalizeTargetValue(actualValue) === normalizeTargetValue(expectedValue);
+    })
+  );
+
+  if (matches.length === 1) {
+    return matches[0];
+  }
+
+  const selectorText = JSON.stringify(targetSelector);
+  if (matches.length === 0) {
+    throw new Error(`Planner target not found: ${selectorText}`);
+  }
+  throw new Error(`Planner target selector is ambiguous: ${selectorText} matched ${matches.length} controls.`);
+}
+
+function describeTarget(target) {
+  return target ? JSON.stringify(target) : "none";
+}
+
 function formatExpectedDocumentText(expectedText) {
   const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
   return expectedTexts.map((item) => normalizeDocumentText(item)).join("|");
@@ -1559,6 +1796,7 @@ async function waitForDocumentTextGone(page, expectedText, settleDelayMs, settle
 export async function runScenario(config, options = {}) {
   const startedAt = new Date();
   const shouldInterrupt = typeof options.shouldInterrupt === "function" ? options.shouldInterrupt : () => false;
+  let browserClosed = false;
 
   if (!Number.isFinite(config.maxSteps) || config.maxSteps < 1) {
     throw new Error("--max-steps must be a positive number");
@@ -1571,8 +1809,8 @@ export async function runScenario(config, options = {}) {
   }
 
   const throwIfInterrupted = () => {
-    if (shouldInterrupt()) {
-      throw createInterruptError();
+    if (shouldInterrupt() || browserClosed) {
+      throw createInterruptError(browserClosed ? "Browser was closed." : "Interrupted by Ctrl-C.");
     }
   };
 
@@ -1608,6 +1846,7 @@ export async function runScenario(config, options = {}) {
       observationConfigFile: config.observationConfigFile,
       screenshots,
       reports: Array.isArray(config.reports) ? config.reports : [],
+      initBlocks: Array.isArray(config.initBlocks) ? config.initBlocks.map((block) => block.name) : [],
     },
     startedAt: startedAt.toISOString(),
     finishedAt: "",
@@ -1645,6 +1884,9 @@ export async function runScenario(config, options = {}) {
           ...(config.llm.serviceTier ? { serviceTier: config.llm.serviceTier } : {}),
           ...(config.llm.supportsConditionalToolSchemas !== undefined
             ? { supportsConditionalToolSchemas: config.llm.supportsConditionalToolSchemas }
+            : {}),
+          ...(config.llm.supportsStrictToolUse !== undefined
+            ? { supportsStrictToolUse: config.llm.supportsStrictToolUse }
             : {}),
         });
 
@@ -1686,6 +1928,19 @@ export async function runScenario(config, options = {}) {
     viewport: { width: 1440, height: 900 },
   });
   const { page } = browserSession;
+  const plannerAbortController = new AbortController();
+  page.once("close", () => {
+    browserClosed = true;
+    plannerAbortController.abort();
+  });
+
+  const currentPageUrl = () => {
+    try {
+      return browserClosed ? "" : page.url();
+    } catch {
+      return "";
+    }
+  };
 
   let stepIndex = 0;
   const actionHistory = [];
@@ -1720,7 +1975,7 @@ export async function runScenario(config, options = {}) {
     return captureViewportScreenshot(options);
   };
 
-  async function captureStep(name, plannerAction, execute, stepDebugContext = undefined) {
+  async function captureStep(name, plannerAction, execute, stepDebugContext = undefined, metadata = undefined) {
     throwIfInterrupted();
     stepIndex += 1;
     const artifactBase = `${String(stepIndex).padStart(2, "0")}-${sanitizeSegment(name)}`;
@@ -1740,13 +1995,13 @@ export async function runScenario(config, options = {}) {
       stepError = errorMessage(error);
       throw error;
     } finally {
-      if (screenshots !== "none") {
+      if (screenshots !== "none" && !browserClosed) {
         await page.waitForTimeout(120);
         await captureArtifactScreenshot({ path: screenshotPath });
         stepScreenshotRelativePath = path.relative(runDir, screenshotPath);
       }
 
-      if (config.debug) {
+      if (config.debug && !browserClosed) {
         const html = await page.content();
         await writeFile(htmlPath, html, "utf8");
         stepHtmlRelativePath = path.relative(runDir, htmlPath);
@@ -1763,21 +2018,84 @@ export async function runScenario(config, options = {}) {
         observation: stepDebugContext?.observation,
         knownHumanInputs: stepDebugContext?.knownHumanInputs,
         plannerTokenUsage: stepDebugContext?.plannerTokenUsage,
+        phase: metadata?.phase,
+        initBlock: metadata?.initBlock,
         outcome: stepError ? "error" : "ok",
         error: stepError || undefined,
       });
     }
   }
 
+  async function executeDeterministicAction(action, observation, turnToken) {
+    const payload = action.payload;
+    if (payload.action === "wait_until_gone") {
+      const expectedText = payload.expectGone.documentText;
+      const waitResult = await waitForDocumentTextGone(
+        page,
+        expectedText,
+        config.settleDelayMs,
+        config.settleTimeoutMs
+      );
+      if (!waitResult.completed) {
+        throw new Error(
+          `Timed out waiting for document text to disappear: '${formatExpectedDocumentText(expectedText)}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`
+        );
+      }
+      return;
+    }
+
+    const matchedControl = resolveTargetControl(observation.controls, payload.target);
+    const target = page
+      .locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${matchedControl.id}"]`)
+      .first();
+    if ((await target.count()) === 0) {
+      throw new Error(`Block target not found: ${describeTarget(payload.target)}`);
+    }
+
+    if (payload.action === "click") {
+      if (await isTargetDisabled(target)) {
+        throw new Error(`Disabled target before click: ${describeTarget(payload.target)}`);
+      }
+      await target.click({ timeout: 1500 });
+    } else if (payload.action === "fill") {
+      await target.fill(resolveFillValue(payload.value, contextData, humanInputs, secretValues));
+    } else {
+      throw new Error(`Unsupported initialization action: ${payload.action}`);
+    }
+
+    throwIfInterrupted();
+    lastUiActionAt = Date.now();
+    pendingInteractionRequest = null;
+    await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+  }
+
   try {
     throwIfInterrupted();
 
-    await captureStep("open_start_page", { action: "navigate", reason: "scenario start" }, async () => {
+    await captureStep("open_start_page", undefined, async () => {
       throwIfInterrupted();
       logger.info(`navigating to ${config.baseUrl}`);
       await page.goto(config.baseUrl, { waitUntil: "domcontentloaded" });
       await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
     });
+
+    for (const block of config.initBlocks || []) {
+      logger.info(`replaying initialization block '${block.name}'`);
+      for (const action of block.actions) {
+        throwIfInterrupted();
+        await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+        observationTurn += 1;
+        const turnToken = `t${observationTurn}`;
+        const observation = await collectObservation(page, observationConfig, turnToken);
+        await captureStep(
+          `init_${sanitizeSegment(block.name)}_${action.payload.action}`,
+          action,
+          () => executeDeterministicAction(action, observation, turnToken),
+          config.debug ? { observation: redactSecretValues(observation, secretValues) } : undefined,
+          { phase: "init", initBlock: block.name }
+        );
+      }
+    }
 
     for (let i = 0; i < config.maxSteps; i += 1) {
       throwIfInterrupted();
@@ -1802,6 +2120,7 @@ export async function runScenario(config, options = {}) {
         actionHistory,
         humanInputs,
         screenshotRequested: Boolean(screenshotBufferForThisTurn),
+        strictTargetSelectors: config.llm.supportsStrictToolUse === true,
       });
 
       debugLogger.log(
@@ -1818,24 +2137,32 @@ export async function runScenario(config, options = {}) {
         planner,
         messages,
         screenshotBuffer: screenshotBufferForThisTurn,
+        signal: plannerAbortController.signal,
       });
 
       throwIfInterrupted();
 
-      const { tokenUsage: plannerTokenUsage, ...plannerAction } = plannerResult;
+      const { tokenUsage: plannerTokenUsage, action: plannerAction } = plannerResult;
 
       if (plannerTokenUsage) {
         addTokenUsageTotals(report.tokenUsage, plannerTokenUsage);
       }
 
+      const plannerPayload = plannerAction.payload;
+
       logger.info(
-        `planner action ${i + 1}: ${plannerAction.action}${plannerAction.targetId ? ` target=${plannerAction.targetId}` : ""}${plannerAction.reason ? ` reason=${clip(plannerAction.reason, 140)}` : ""}`
+        `planner action ${i + 1}: ${plannerPayload.action}${plannerPayload.action === "click" || plannerPayload.action === "fill" || plannerPayload.action === "select_option" ? ` target=${describeTarget(plannerPayload.target)}` : ""} reason=${clip(plannerAction.reason, 140)}`
       );
 
-      const actionName = `${plannerAction.action}_${plannerAction.targetId ?? "none"}`;
+      const actionName = `${plannerPayload.action}_${("target" in plannerPayload
+        ? plannerPayload.target.id
+        : "containerId" in plannerPayload
+          ? plannerPayload.containerId
+          : "selector")}`;
 
       let recoverableOutcome = null;
       let recoverableErrorMessage = "";
+      let actionTarget;
       const stepDebugContext = config.debug
         ? {
             observation: redactSecretValues(observation, secretValues),
@@ -1850,15 +2177,23 @@ export async function runScenario(config, options = {}) {
         plannerAction,
         async () => {
           throwIfInterrupted();
-          if (plannerAction.action === "finish") {
+          if (plannerPayload.action === "finish") {
             logger.info(`finish accepted at ${page.url()}`);
             report.status = "passed";
             report.finalUrl = page.url();
             return;
           }
 
-          if (plannerAction.action === "wait_until_gone") {
-            const expectedText = plannerAction.expectGone.documentText;
+          if (plannerPayload.action === "give_up") {
+            report.status = "failed";
+            report.finalUrl = page.url();
+            report.error = `Planner gave up: ${plannerAction.reason}`;
+            logger.warn(report.error);
+            return;
+          }
+
+          if (plannerPayload.action === "wait_until_gone") {
+            const expectedText = plannerPayload.expectGone.documentText;
             const formattedExpectedText = formatExpectedDocumentText(expectedText);
             const waitKey = `${page.url()}::${formattedExpectedText}`;
             if (previousTimedOutWait === waitKey) {
@@ -1889,20 +2224,18 @@ export async function runScenario(config, options = {}) {
 
           previousTimedOutWait = null;
 
-          if (plannerAction.action === "request_user_input") {
+          if (plannerPayload.action === "request_user_input") {
             if (!config.headed) {
               throw new Error("LLM got blocked: requested user input in headless mode.");
             }
 
             const inputKey =
-              typeof plannerAction.inputKey === "string" && plannerAction.inputKey.trim().length > 0
-                ? plannerAction.inputKey.trim()
-                : "value";
+              plannerPayload.inputKey
+                ;
 
             const promptText =
-              typeof plannerAction.inputPrompt === "string" && plannerAction.inputPrompt.trim().length > 0
-                ? plannerAction.inputPrompt.trim()
-                : `Enter value for '${inputKey}'`;
+              plannerPayload.inputPrompt
+                ;
 
             if (!humanInputs.has(inputKey)) {
               logger.info(`requesting human input for key '${inputKey}'`);
@@ -1918,7 +2251,7 @@ export async function runScenario(config, options = {}) {
             return;
           }
 
-          if (plannerAction.action === "request_user_interaction") {
+          if (plannerPayload.action === "request_user_interaction") {
             if (!config.headed) {
               throw new Error("LLM got blocked: requested user interaction in headless mode.");
             }
@@ -1933,9 +2266,7 @@ export async function runScenario(config, options = {}) {
             }
 
             const interactionPrompt =
-              typeof plannerAction.interactionPrompt === "string" && plannerAction.interactionPrompt.trim().length > 0
-                ? plannerAction.interactionPrompt.trim()
-                : "Please perform the requested interaction in the browser and press Enter when done";
+              plannerPayload.interactionPrompt;
 
             // Require the same interaction request twice (with same URL/prompt)
             // before prompting the human. This avoids transient false positives.
@@ -1971,12 +2302,10 @@ export async function runScenario(config, options = {}) {
             return;
           }
 
-          if (plannerAction.action === "request_screenshot") {
+          if (plannerPayload.action === "request_screenshot") {
             logger.info(
               `planner requested the most recent screenshot${
-                typeof plannerAction.screenshotPrompt === "string" && plannerAction.screenshotPrompt.trim().length > 0
-                  ? `: ${clip(plannerAction.screenshotPrompt, 140)}`
-                  : ""
+                plannerPayload.screenshotPrompt ? `: ${clip(plannerPayload.screenshotPrompt, 140)}` : ""
               }`
             );
 
@@ -1987,25 +2316,80 @@ export async function runScenario(config, options = {}) {
             return;
           }
 
-          if (!plannerAction.targetId) {
-            throw new Error(`Planner action ${plannerAction.action} missing targetId.`);
-          }
-
-          const target = page
-            .locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${plannerAction.targetId}"]`)
-            .first();
-          if ((await target.count()) === 0) {
-            throw new Error(`Planner target not found: ${plannerAction.targetId}`);
-          }
-
-          if (plannerAction.action === "click") {
-            const isDisabled = await isTargetDisabled(target);
-            if (isDisabled) {
-              logger.warn(`target ${plannerAction.targetId} is disabled before click; replanning immediately`);
-              throw new Error(`Disabled target before click: ${plannerAction.targetId}`);
+          if (plannerPayload.action === "scroll") {
+            if (isAlternatingScrollLoop(actionHistory, plannerPayload)) {
+              throw new Error(
+                `Alternating scroll loop detected in '${plannerPayload.containerId}'. Choose a non-scroll action or finish based on current evidence.`
+              );
+            }
+            const container = observation.scrollContainers.find(
+              (candidate) => candidate.id === plannerPayload.containerId
+            );
+            if (!container) {
+              throw new Error(`Planner scroll container '${plannerPayload.containerId}' is not in the observation.`);
+            }
+            if (plannerPayload.direction === "down" && !container.canScrollDown) {
+              throw new Error(`Planner scroll container '${container.id}' cannot scroll down.`);
+            }
+            if (plannerPayload.direction === "up" && !container.canScrollUp) {
+              throw new Error(`Planner scroll container '${container.id}' cannot scroll up.`);
             }
 
-            logger.info(`clicking target ${plannerAction.targetId}`);
+            const scrollContainer = page
+              .locator(`[data-agentic-turn="${turnToken}"][data-agentic-scroll-id="${container.id}"]`)
+              .first();
+            if ((await scrollContainer.count()) === 0) {
+              throw new Error(`Planner scroll container '${container.id}' is no longer available.`);
+            }
+
+            const didScroll = await scrollContainer.evaluate((element, direction) => {
+              const start = element.scrollTop;
+              const amount = Math.max(200, Math.floor(element.clientHeight * 0.8));
+              element.scrollBy({ top: direction === "down" ? amount : -amount, behavior: "instant" });
+              return Math.abs(element.scrollTop - start) > 1;
+            }, plannerPayload.direction);
+            if (!didScroll) {
+              throw new Error(`Planner scroll container '${container.id}' did not move.`);
+            }
+
+            logger.info(`scrolling ${plannerPayload.direction} in ${container.id}`);
+            await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+            return;
+          }
+
+          if (
+            plannerPayload.action !== "click" &&
+            plannerPayload.action !== "fill" &&
+            plannerPayload.action !== "select_option"
+          ) {
+            throw new Error(`Unsupported planner action: ${plannerPayload.action}`);
+          }
+
+          const matchedControl = resolveTargetControl(observation.controls, plannerPayload.target);
+          const matchedControlId = matchedControl.id;
+          actionTarget = {
+            label: matchedControl.label,
+            ...(matchedControl.ariaLabel ? { ariaLabel: matchedControl.ariaLabel } : {}),
+            ...(matchedControl.text ? { text: matchedControl.text } : {}),
+            ...(matchedControl.role ? { role: matchedControl.role } : {}),
+            ...(matchedControl.type ? { type: matchedControl.type } : {}),
+          };
+
+          const target = page
+            .locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${matchedControlId}"]`)
+            .first();
+          if ((await target.count()) === 0) {
+            throw new Error(`Planner target not found: ${describeTarget(plannerPayload.target)}`);
+          }
+
+          if (plannerPayload.action === "click") {
+            const isDisabled = await isTargetDisabled(target);
+            if (isDisabled) {
+              logger.warn(`target ${describeTarget(plannerPayload.target)} is disabled before click; replanning immediately`);
+              throw new Error(`Disabled target before click: ${describeTarget(plannerPayload.target)}`);
+            }
+
+            logger.info(`clicking target ${describeTarget(plannerPayload.target)}`);
             await target.click({ timeout: 1500 });
             throwIfInterrupted();
             lastUiActionAt = Date.now();
@@ -2014,9 +2398,9 @@ export async function runScenario(config, options = {}) {
             return;
           }
 
-          if (plannerAction.action === "fill") {
-            const fillValue = resolveFillValue(plannerAction.value, contextData, humanInputs, secretValues);
-            logger.info(`filling target ${plannerAction.targetId}`);
+          if (plannerPayload.action === "fill") {
+            const fillValue = resolveFillValue(plannerPayload.value, contextData, humanInputs, secretValues);
+            logger.info(`filling target ${describeTarget(plannerPayload.target)}`);
 
             await target.fill(fillValue);
             throwIfInterrupted();
@@ -2026,7 +2410,28 @@ export async function runScenario(config, options = {}) {
             return;
           }
 
-          throw new Error(`Unsupported planner action: ${plannerAction.action}`);
+          if (plannerPayload.action === "select_option") {
+            if (matchedControl.tag !== "select") {
+              throw new Error(`Planner select_option target is not a native select: ${describeTarget(plannerPayload.target)}`);
+            }
+            const option = matchedControl.options?.find((candidate) => candidate.value === plannerPayload.value);
+            if (!option) {
+              throw new Error(`Planner select_option value is not available: ${plannerPayload.value}`);
+            }
+            if (option.disabled) {
+              throw new Error(`Planner select_option value is disabled: ${plannerPayload.value}`);
+            }
+
+            logger.info(`selecting '${option.label || option.value}' in ${describeTarget(plannerPayload.target)}`);
+            await target.selectOption({ value: plannerPayload.value });
+            throwIfInterrupted();
+            lastUiActionAt = Date.now();
+            pendingInteractionRequest = null;
+            await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+            return;
+          }
+
+          throw new Error(`Unsupported planner action: ${plannerPayload.action}`);
         },
         stepDebugContext
       );
@@ -2046,6 +2451,7 @@ export async function runScenario(config, options = {}) {
         step: stepIndex,
         url: page.url(),
         action: plannerAction,
+        ...(actionTarget ? { target: actionTarget } : {}),
         outcome: recoverableOutcome || "ok",
         runnerFeedback:
           recoverableOutcome === "disabled_target"
@@ -2056,11 +2462,15 @@ export async function runScenario(config, options = {}) {
               ? "The requested document text did not disappear within the configured settle timeout. Inspect the current observation and choose a different action."
               : recoverableOutcome === "duplicate_wait"
                 ? "The same wait condition already timed out without a state change. Choose a different action."
+                  : recoverableOutcome === "invalid_selection"
+                    ? "select_option is only valid for native select controls with an observed options list. For a custom combobox, click a visible role=option control."
+                    : recoverableOutcome === "scroll_loop"
+                      ? "Repeated alternating scrolling does not add evidence. Use completedWork and the current observation to take a non-scroll action or finish."
             : undefined,
         error: recoverableErrorMessage || undefined,
       });
 
-      if (report.status === "passed") {
+      if (report.status !== "running") {
         break;
       }
     }
@@ -2074,22 +2484,24 @@ export async function runScenario(config, options = {}) {
       logger.error(report.error);
     }
   } catch (error) {
-    if (isInterruptError(error)) {
+    if (isInterruptError(error) || browserClosed) {
       report.status = "interrupted";
-      report.finalUrl = page.url();
-      report.error = "Interrupted by Ctrl-C.";
+      report.finalUrl = currentPageUrl();
+      report.error = browserClosed ? "Browser was closed." : error.message;
     } else {
       report.status = "failed";
-      report.finalUrl = page.url();
+      report.finalUrl = currentPageUrl();
       report.error = error instanceof Error ? error.message : String(error);
       logger.error(report.error);
-      const failureScreenshot = path.join(screenshotsDir, "failure.png");
-      await captureViewportScreenshot({ path: failureScreenshot });
+      if (!browserClosed) {
+        const failureScreenshot = path.join(screenshotsDir, "failure.png");
+        await captureViewportScreenshot({ path: failureScreenshot });
 
-      if (config.debug) {
-        const failureHtmlPath = path.join(screenshotsDir, "failure.html");
-        const html = await page.content();
-        await writeFile(failureHtmlPath, html, "utf8");
+        if (config.debug) {
+          const failureHtmlPath = path.join(screenshotsDir, "failure.html");
+          const html = await page.content();
+          await writeFile(failureHtmlPath, html, "utf8");
+        }
       }
     }
   } finally {
@@ -2160,8 +2572,8 @@ export async function runScenario(config, options = {}) {
   return report;
 }
 
-function createInterruptError() {
-  const error = new Error("Interrupted by Ctrl-C.");
+function createInterruptError(message) {
+  const error = new Error(message);
   error.name = "InterruptError";
   return error;
 }

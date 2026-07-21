@@ -1,5 +1,6 @@
 import process from "node:process";
 import { inferSingleLlmProfile, listLlmProfileNames, readJsonObject, resolveLlmProfilePath, resolveWorkspacePath } from "./shared.js";
+import { createBedrockPlanner, createOpenAICompatiblePlanner } from "../../node/index.js";
 
 export async function validateLlmCommand(profile, options = {}) {
   const workspacePath = resolveWorkspacePath(options.workspace);
@@ -22,6 +23,9 @@ export async function validateLlmCommand(profile, options = {}) {
     try {
       const parsed = await readJsonObject(profilePath, "llm profile");
       validateParsedProfile(parsed, profilePath);
+      if (options.preflight !== false) {
+        await preflightProfile(parsed, options);
+      }
       process.stdout.write(`OK   ${entry} (${profilePath})\n`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -33,6 +37,36 @@ export async function validateLlmCommand(profile, options = {}) {
   if (hasErrors) {
     throw new Error("One or more llm profiles are invalid.");
   }
+}
+
+export async function preflightProfile(profile, options = {}) {
+  const createBedrock = options.createBedrockPlanner || createBedrockPlanner;
+  const createOpenAICompatible =
+    options.createOpenAICompatiblePlanner || createOpenAICompatiblePlanner;
+  const planner =
+    profile.provider === "bedrock"
+      ? createBedrock({
+          modelId: profile.modelId,
+          region: profile.region,
+          ...(profile.inferenceConfig ? { inferenceConfig: profile.inferenceConfig } : {}),
+          ...(profile.additionalModelRequestFields
+            ? { additionalModelRequestFields: profile.additionalModelRequestFields }
+            : {}),
+          ...(profile.serviceTier ? { serviceTier: profile.serviceTier } : {}),
+          ...(profile.supportsConditionalToolSchemas !== undefined
+            ? { supportsConditionalToolSchemas: profile.supportsConditionalToolSchemas }
+            : {}),
+          ...(profile.supportsStrictToolUse !== undefined
+            ? { supportsStrictToolUse: profile.supportsStrictToolUse }
+            : {})
+        })
+      : createOpenAICompatible({
+          baseUrl: profile.baseUrl,
+          modelId: profile.modelId,
+          ...(profile.apiKey ? { apiKey: profile.apiKey } : {})
+        });
+
+  await planner.preflight();
 }
 
 function validateParsedProfile(profile, profilePath) {
@@ -101,6 +135,12 @@ function validateParsedProfile(profile, profilePath) {
   if (profile.supportsConditionalToolSchemas !== undefined && typeof profile.supportsConditionalToolSchemas !== "boolean") {
     throw new Error(
       `LLM profile '${profilePath}' field 'supportsConditionalToolSchemas' must be a boolean when present.`
+    );
+  }
+
+  if (profile.supportsStrictToolUse !== undefined && typeof profile.supportsStrictToolUse !== "boolean") {
+    throw new Error(
+      `LLM profile '${profilePath}' field 'supportsStrictToolUse' must be a boolean when present.`
     );
   }
 }

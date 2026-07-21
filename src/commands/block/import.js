@@ -23,7 +23,7 @@ export async function importBlockCommand(name, runId, options = {}) {
   const imported = report.steps
     .filter((step) => step.index > 1 && step.outcome === "ok" && step.plannerAction)
     .map((step) => ({ index: step.index, action: PlannerActionSchema.parse(step.plannerAction) }))
-    .filter((step) => REPLAYABLE_ACTIONS.has(step.action.action))
+    .filter((step) => REPLAYABLE_ACTIONS.has(step.action.payload.action))
     .map((step) => ({ index: step.index, action: createBlockAction(step.action) }));
 
   if (imported.length === 0) {

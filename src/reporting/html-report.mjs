@@ -8,6 +8,7 @@ function renderObservationHtml(observation) {
   const modal = observation.modal || {};
   const headings = Array.isArray(observation.headings) ? observation.headings : [];
   const alerts = Array.isArray(observation.alerts) ? observation.alerts : [];
+  const scrollContainers = Array.isArray(observation.scrollContainers) ? observation.scrollContainers : [];
   const controls = Array.isArray(observation.controls) ? observation.controls : [];
 
   const renderChipList = (items, emptyLabel) =>
@@ -23,6 +24,8 @@ function renderObservationHtml(observation) {
             control.text ? `<div><span class="field-label">Text</span><strong>${escapeHtml(control.text)}</strong></div>` : "",
             control.label ? `<div><span class="field-label">Label</span><strong>${escapeHtml(control.label)}</strong></div>` : "",
             control.ariaLabel ? `<div><span class="field-label">ARIA</span><strong>${escapeHtml(control.ariaLabel)}</strong></div>` : "",
+            control.description ? `<div><span class="field-label">Description</span><strong>${escapeHtml(control.description)}</strong></div>` : "",
+            control.contextPath?.length ? `<div><span class="field-label">Context</span><strong>${escapeHtml(control.contextPath.join(" > "))}</strong></div>` : "",
             control.placeholder ? `<div><span class="field-label">Placeholder</span><strong>${escapeHtml(control.placeholder)}</strong></div>` : "",
             control.value ? `<div><span class="field-label">Value</span><strong>${escapeHtml(control.value)}</strong></div>` : "",
           ]
@@ -32,6 +35,12 @@ function renderObservationHtml(observation) {
             control.priority ? "priority" : "",
             control.checked ? "checked" : "",
             control.hasValue ? "has value" : "",
+            control.required ? "required" : "",
+            typeof control.expanded === "boolean" ? (control.expanded ? "expanded" : "collapsed") : "",
+            control.selected ? "selected" : "",
+            control.pressed ? "pressed" : "",
+            control.current ? `current: ${control.current}` : "",
+            control.invalid ? "invalid" : "",
             control.disabled ? "disabled" : "",
           ]
             .filter(Boolean)
@@ -88,6 +97,11 @@ function renderObservationHtml(observation) {
       </div>
 
       <div class="observation-section">
+        <span class="field-label">Scroll Containers</span>
+        ${renderChipList(scrollContainers.map((container) => `${container.id}: ${container.canScrollUp ? "up" : ""}${container.canScrollUp && container.canScrollDown ? ", " : ""}${container.canScrollDown ? "down" : ""}`), "No scrollable content in the active scope.")}
+      </div>
+
+      <div class="observation-section">
         <span class="field-label">Controls (${controls.length})</span>
         ${controlCards}
       </div>
@@ -119,7 +133,7 @@ export const reportGenerator = {
     const stepsHtml = report.steps
       .map((step) => {
         const planner = step.plannerAction
-          ? `${escapeHtml(step.plannerAction.action)}${step.plannerAction.targetId ? ` target=${escapeHtml(step.plannerAction.targetId)}` : ""}`
+          ? `${escapeHtml(step.plannerAction.payload.action)}${step.plannerAction.payload.target ? ` target=${escapeHtml(JSON.stringify(step.plannerAction.payload.target))}` : ""}`
           : escapeHtml(step.name);
         const reason = step.plannerAction?.reason ? escapeHtml(step.plannerAction.reason) : "";
         const stepUrl = getSummaryStepUrlParts(step.url, config.baseUrl);

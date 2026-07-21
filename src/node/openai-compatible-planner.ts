@@ -95,6 +95,83 @@ function getChatCompletionUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
 }
 
+function buildPlannerActionSchema(): Record<string, unknown> {
+  const target = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      id: { type: "string" },
+      tag: { type: "string" },
+      role: { type: "string" },
+      type: { type: "string" },
+      priority: { type: "boolean" },
+      text: { type: "string" },
+      ariaLabel: { type: "string" },
+      label: { type: "string" },
+      placeholder: { type: "string" },
+      hasValue: { type: "boolean" },
+      checked: { type: "boolean" },
+      disabled: { type: "boolean" }
+    }
+  };
+  const variant = (
+    action: string,
+    properties: Record<string, unknown> = {},
+    required: string[] = []
+  ) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["action", ...required],
+    properties: { action: { const: action }, ...properties }
+  });
+
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["reason", "payload"],
+    properties: {
+      reason: { type: "string" },
+      payload: {
+        anyOf: [
+          variant("click", { target }, ["target"]),
+          variant("fill", { target, value: { type: "string" } }, ["target", "value"]),
+          variant("select_option", { target, value: { type: "string" } }, ["target", "value"]),
+          variant(
+            "scroll",
+            { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
+            ["containerId", "direction"]
+          ),
+          variant(
+            "wait_until_gone",
+            {
+              expectGone: {
+                type: "object",
+                additionalProperties: false,
+                required: ["documentText"],
+                properties: { documentText: { type: "string" } }
+              }
+            },
+            ["expectGone"]
+          ),
+          variant(
+            "request_user_input",
+            { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
+            ["inputKey", "inputPrompt"]
+          ),
+          variant("request_user_interaction", { interactionPrompt: { type: "string" } }, [
+            "interactionPrompt"
+          ]),
+          variant("request_screenshot", { screenshotPrompt: { type: "string" } }, [
+            "screenshotPrompt"
+          ]),
+          variant("give_up"),
+          variant("finish")
+        ]
+      }
+    }
+  };
+}
+
 export function createOpenAICompatiblePlanner(
   config: OpenAICompatiblePlannerConfig,
   options: CreateOpenAICompatiblePlannerOptions = {}
@@ -151,27 +228,7 @@ export function createOpenAICompatiblePlanner(
               function: {
                 name: "planner_action",
                 description: "Return the next UI automation action as structured JSON input.",
-                parameters: {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["action", "reason"],
-                  properties: {
-                    action: { type: "string" },
-                    reason: { type: "string" },
-                    targetId: { type: "string" },
-                    value: { type: "string" },
-                    expectGone: {
-                      type: "object",
-                      additionalProperties: false,
-                      required: ["documentText"],
-                      properties: { documentText: { type: "string" } }
-                    },
-                    inputKey: { type: "string" },
-                    inputPrompt: { type: "string" },
-                    interactionPrompt: { type: "string" },
-                    screenshotPrompt: { type: "string" }
-                  }
-                }
+                parameters: buildPlannerActionSchema()
               }
             }
           ],

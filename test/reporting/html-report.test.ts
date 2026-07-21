@@ -20,9 +20,8 @@ void test("renders action, URL, duration, and reason in each step header", () =>
           index: 1,
           name: "fill_a2",
           plannerAction: {
-            action: "fill",
             reason: "Enter the email address to sign in.",
-            targetId: "a2"
+            payload: { action: "fill", target: { id: "a2" } }
           },
           url: "https://example.com/login"
         }
@@ -30,7 +29,10 @@ void test("renders action, URL, duration, and reason in each step header", () =>
     }
   });
 
-  assert.match(html, /<span class="step-action">fill target=a2<\/span>/);
+  assert.match(
+    html,
+    /<span class="step-action">fill target=\{&quot;id&quot;:&quot;a2&quot;\}<\/span>/
+  );
   assert.match(
     html,
     /<span class="step-url"><a href="https:\/\/example\.com\/login">\/login<\/a><\/span>/

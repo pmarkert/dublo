@@ -81,6 +81,7 @@ export async function configureLlmCommand(options = {}) {
     });
     const hasModelPricingData = modelHasPricingData(region, modelId);
     const supportsConditionalToolSchemas = getModelSupportsConditionalToolSchemas(region, modelId);
+    const supportsStrictToolUse = getModelSupportsStrictToolUse(region, modelId);
 
     const runPreflight = await askBoolean(rl, "Test the connection now", true);
     if (runPreflight) {
@@ -107,6 +108,7 @@ export async function configureLlmCommand(options = {}) {
       modelId,
       serviceTier,
       supportsConditionalToolSchemas,
+      supportsStrictToolUse,
       ...modelRequestDefaults,
       ...modelPricingDefaults,
       ...pricingOverrides
@@ -359,6 +361,11 @@ function getModelSupportsConditionalToolSchemas(region, modelId) {
   return true;
 }
 
+function getModelSupportsStrictToolUse(region, modelId) {
+  const matched = findRecommendedModel(region, modelId);
+  return matched?.supportsStrictToolUse === true;
+}
+
 function normalizeServiceTier(value, availableTiers = []) {
   const normalized = String(value || "").toLowerCase().trim();
   if (!normalized) {
@@ -608,6 +615,8 @@ function loadRecommendedBedrockModels(filePath) {
         typeof entry.supportsConditionalToolSchemas === "boolean"
           ? entry.supportsConditionalToolSchemas
           : undefined,
+      supportsStrictToolUse:
+        typeof entry.supportsStrictToolUse === "boolean" ? entry.supportsStrictToolUse : undefined,
       pricingFields: entry.pricingFields && typeof entry.pricingFields === "object"
         ? entry.pricingFields
         : undefined,

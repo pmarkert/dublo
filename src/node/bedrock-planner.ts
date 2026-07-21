@@ -10,6 +10,7 @@ export interface BedrockPlannerConfig {
   region: string;
   serviceTier?: "default" | "priority" | "flex" | "reserved";
   supportsConditionalToolSchemas?: boolean;
+  supportsStrictToolUse?: boolean;
 }
 
 export interface BedrockClient {
@@ -30,6 +31,57 @@ const EMPTY_TOKEN_USAGE: TokenUsage = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function assertBedrockConverseResponse(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) {
+    throw new Error("Bedrock Converse API returned a non-object response.");
+  }
+
+  const metadata = isRecord(value.$metadata) ? value.$metadata : undefined;
+  const statusCode =
+    typeof metadata?.httpStatusCode === "number" && Number.isFinite(metadata.httpStatusCode)
+      ? metadata.httpStatusCode
+      : undefined;
+  const errorCode = typeof value.errorCode === "string" ? value.errorCode : undefined;
+  const detail = typeof value.message === "string" ? value.message : undefined;
+  const requestId = typeof metadata?.requestId === "string" ? metadata.requestId : undefined;
+  if (errorCode || (typeof statusCode === "number" && statusCode >= 400)) {
+    throw new Error(
+      `Bedrock Converse API returned ${errorCode ?? `HTTP ${statusCode}`}${
+        detail ? `: ${detail}` : ""
+      }${requestId ? ` (request ID ${requestId})` : ""}.`
+    );
+  }
+
+  if (!isRecord(value.output)) {
+    throw new Error(
+      `Bedrock Converse API response did not contain output${
+        requestId ? ` (request ID ${requestId})` : ""
+      }.`
+    );
+  }
+
+  return value;
+}
+
+function parsePlannerAction(rawAction: unknown) {
+  try {
+    return PlannerActionSchema.parse(rawAction);
+  } catch (error) {
+    const action =
+      isRecord(rawAction) &&
+      isRecord(rawAction.payload) &&
+      typeof rawAction.payload.action === "string"
+        ? rawAction.payload.action
+        : "unknown";
+    const fields = isRecord(rawAction) ? Object.keys(rawAction).sort().join(", ") : "non-object";
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Bedrock planner returned an invalid '${action}' action with fields [${fields}]: ${detail}`,
+      { cause: error }
+    );
+  }
 }
 
 function numberOrZero(value: unknown): number {
@@ -71,37 +123,126 @@ function serviceTier(config: BedrockPlannerConfig): "priority" | "flex" | "reser
     : undefined;
 }
 
-function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> {
-  const schema: Record<string, unknown> = {
+function buildTargetSchema(strict: boolean): Record<string, unknown> {
+  if (strict) {
+    return {
+      type: "object",
+      additionalProperties: false,
+      required: ["id"],
+      properties: { id: { type: "string" } }
+    };
+  }
+
+  return {
     type: "object",
     additionalProperties: false,
-    required: ["action", "reason"],
     properties: {
-      action: { type: "string" },
-      reason: { type: "string" },
-      targetId: { type: "string" },
-      value: { type: "string" },
-      expectGone: {
-        type: "object",
-        additionalProperties: false,
-        required: ["documentText"],
-        properties: { documentText: { type: "string" } }
-      },
-      inputKey: { type: "string" },
-      inputPrompt: { type: "string" },
-      interactionPrompt: { type: "string" },
-      screenshotPrompt: { type: "string" }
+      id: { type: "string" },
+      tag: { type: "string" },
+      role: { type: "string" },
+      type: { type: "string" },
+      priority: { type: "boolean" },
+      text: { type: "string" },
+      ariaLabel: { type: "string" },
+      label: { type: "string" },
+      placeholder: { type: "string" },
+      hasValue: { type: "boolean" },
+      checked: { type: "boolean" },
+      disabled: { type: "boolean" }
     }
   };
-  if (config.supportsConditionalToolSchemas !== false) {
-    schema.allOf = [
-      { if: { properties: { action: { const: "click" } } }, then: { required: ["targetId"] } },
-      {
-        if: { properties: { action: { const: "fill" } } },
-        then: { required: ["targetId", "value"] }
+}
+
+function buildActionPayloadVariant(
+  action: string,
+  properties: Record<string, unknown> = {},
+  required: string[] = []
+): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["action", ...required],
+    properties: {
+      action: { const: action },
+      ...properties
+    }
+  };
+}
+
+function buildActionSchema(strict: boolean): Record<string, unknown> {
+  const target = buildTargetSchema(strict);
+  const expectGone = {
+    type: "object",
+    additionalProperties: false,
+    required: ["documentText"],
+    properties: { documentText: { type: "string" } }
+  };
+
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["reason", "payload"],
+    properties: {
+      reason: { type: "string" },
+      payload: {
+        anyOf: [
+          buildActionPayloadVariant("click", { target }, ["target"]),
+          buildActionPayloadVariant("fill", { target, value: { type: "string" } }, [
+            "target",
+            "value"
+          ]),
+          buildActionPayloadVariant("select_option", { target, value: { type: "string" } }, [
+            "target",
+            "value"
+          ]),
+          buildActionPayloadVariant(
+            "scroll",
+            { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
+            ["containerId", "direction"]
+          ),
+          buildActionPayloadVariant("wait_until_gone", { expectGone }, ["expectGone"]),
+          buildActionPayloadVariant(
+            "request_user_input",
+            { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
+            ["inputKey", "inputPrompt"]
+          ),
+          buildActionPayloadVariant(
+            "request_user_interaction",
+            { interactionPrompt: { type: "string" } },
+            ["interactionPrompt"]
+          ),
+          buildActionPayloadVariant(
+            "request_screenshot",
+            { screenshotPrompt: { type: "string" } },
+            ["screenshotPrompt"]
+          ),
+          buildActionPayloadVariant("give_up"),
+          buildActionPayloadVariant("finish")
+        ]
       }
-    ];
+    }
+  };
+}
+
+function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> {
+  if (config.supportsStrictToolUse) {
+    return {
+      toolConfig: {
+        tools: [
+          {
+            toolSpec: {
+              name: "planner_action",
+              description: "Return the next UI automation action as structured JSON input.",
+              strict: true,
+              inputSchema: { json: buildActionSchema(true) }
+            }
+          }
+        ],
+        toolChoice: { tool: { name: "planner_action" } }
+      }
+    };
   }
+
   return {
     toolConfig: {
       tools: [
@@ -109,7 +250,7 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
           toolSpec: {
             name: "planner_action",
             description: "Return the next UI automation action as structured JSON input.",
-            inputSchema: { json: schema }
+            inputSchema: { json: buildActionSchema(false) }
           }
         }
       ],
@@ -163,15 +304,24 @@ export function createBedrockPlanner(
   return {
     async preflight() {
       try {
-        await sendWithServiceTierFallback(client, config, {
+        const result = await sendWithServiceTierFallback(client, config, {
           messages: [
-            { role: "user", content: [{ text: 'Return exactly this JSON: {"ok":true}' }] }
+            {
+              role: "user",
+              content: [
+                {
+                  text: "Call the planner_action tool with reason 'Preflight.' and payload action 'finish'."
+                }
+              ]
+            }
           ],
           inferenceConfig: buildInferenceConfig(config, 20),
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
-            : {})
+            : {}),
+          ...buildToolConfig(config)
         });
+        assertBedrockConverseResponse(result);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(
@@ -190,16 +340,17 @@ export function createBedrockPlanner(
         content.push({ image: { format: "png", source: { bytes: request.screenshot } } });
       }
 
-      const result = await sendWithServiceTierFallback(client, config, {
-        system: [{ text: request.messages.systemText }],
-        messages: [{ role: "user", content }],
-        inferenceConfig: buildInferenceConfig(config, 700),
-        ...(config.additionalModelRequestFields
-          ? { additionalModelRequestFields: config.additionalModelRequestFields }
-          : {}),
-        ...buildToolConfig(config)
-      });
-      if (!isRecord(result)) throw new Error("Bedrock planner response was not an object.");
+      const result = assertBedrockConverseResponse(
+        await sendWithServiceTierFallback(client, config, {
+          system: [{ text: request.messages.systemText }],
+          messages: [{ role: "user", content }],
+          inferenceConfig: buildInferenceConfig(config, 700),
+          ...(config.additionalModelRequestFields
+            ? { additionalModelRequestFields: config.additionalModelRequestFields }
+            : {}),
+          ...buildToolConfig(config)
+        })
+      );
       const output = isRecord(result.output) ? result.output : undefined;
       const message = output && isRecord(output.message) ? output.message : undefined;
       const contentItems = Array.isArray(message?.content) ? message.content : [];
@@ -216,12 +367,12 @@ export function createBedrockPlanner(
           .trim();
         if (!text) throw new Error("Bedrock planner API returned no planner action.");
         return {
-          action: PlannerActionSchema.parse(extractJsonObject(text)),
+          action: parsePlannerAction(extractJsonObject(text)),
           tokenUsage: normalizeTokenUsage(result.usage)
         };
       }
       return {
-        action: PlannerActionSchema.parse(rawAction),
+        action: parsePlannerAction(rawAction),
         tokenUsage: normalizeTokenUsage(result.usage)
       };
     }

@@ -1,4 +1,5 @@
 import { configureLlmCommand } from "./configure.js";
+import { editLlmCommand } from "./edit.js";
 import { listLlmCommand } from "./list.js";
 import { showLlmCommand } from "./show.js";
 import { validateLlmCommand } from "./validate.js";
@@ -43,10 +44,20 @@ export default function registerLlmCommands(program) {
     });
 
   llmProgram
-    .command("validate [profile]")
-    .description("Validate one or all LLM profiles")
+    .command("edit [profile]")
+    .description("Write profile JSON from stdin or open an interactive editor")
     .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
     .option("--name <profile>", "LLM profile name override")
+    .action(async (profile, options) => {
+      await editLlmCommand(profile, options);
+    });
+
+  llmProgram
+    .command("validate [profile]")
+    .description("Validate one or all LLM profiles and test provider connectivity")
+    .option("--workspace <path>", "Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)")
+    .option("--name <profile>", "LLM profile name override")
+    .option("--no-preflight", "Skip the provider request and validate profile files only")
     .action(async (profile, options) => {
       await validateLlmCommand(profile, options);
     });

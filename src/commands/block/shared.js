@@ -12,27 +12,42 @@ const BlockWaitUntilGoneExpectationSchema = z
     ])
   })
   .strict();
+const BlockTargetSelectorSchema = z
+  .object({
+    id: z.string().trim().min(1).optional(),
+    tag: z.string().trim().min(1).optional(),
+    role: z.string().optional(),
+    type: z.string().optional(),
+    priority: z.boolean().optional(),
+    text: z.string().optional(),
+    ariaLabel: z.string().optional(),
+    label: z.string().optional(),
+    placeholder: z.string().optional(),
+    hasValue: z.boolean().optional(),
+    checked: z.boolean().optional(),
+    disabled: z.boolean().optional()
+  })
+  .strict()
+  .refine((target) => Object.keys(target).length > 0, {
+    message: "target must contain at least one control property."
+  });
+
+const BlockActionPayloadSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("click"), target: BlockTargetSelectorSchema }).strict(),
+  z
+    .object({ action: z.literal("fill"), target: BlockTargetSelectorSchema, value: z.string() })
+    .strict(),
+  z
+    .object({ action: z.literal("wait_until_gone"), expectGone: BlockWaitUntilGoneExpectationSchema })
+    .strict()
+]);
 
 export const BlockActionSchema = z
   .object({
-    action: z.enum(["click", "fill", "wait_until_gone"]),
     reason: z.string().trim().min(1),
-    targetId: z.string().trim().min(1).optional(),
-    value: z.string().optional(),
-    expectGone: BlockWaitUntilGoneExpectationSchema.optional()
+    payload: BlockActionPayloadSchema
   })
-  .strict()
-  .superRefine((action, context) => {
-    if ((action.action === "click" || action.action === "fill") && !action.targetId) {
-      context.addIssue({ code: "custom", message: "click and fill actions require targetId." });
-    }
-    if (action.action === "fill" && action.value === undefined) {
-      context.addIssue({ code: "custom", message: "fill actions require value." });
-    }
-    if (action.action === "wait_until_gone" && !action.expectGone) {
-      context.addIssue({ code: "custom", message: "wait_until_gone requires expectGone." });
-    }
-  });
+  .strict();
 
 export const BlockSchema = z
   .object({

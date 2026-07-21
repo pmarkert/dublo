@@ -25,31 +25,36 @@ void test("imports successful replayable steps after startup from the latest run
       runId,
       status: "passed",
       steps: [
-        { index: 1, outcome: "ok", plannerAction: { action: "finish", reason: "Startup." } },
+        {
+          index: 1,
+          outcome: "ok",
+          plannerAction: { reason: "Startup.", payload: { action: "finish" } }
+        },
         {
           index: 2,
           outcome: "ok",
           plannerAction: {
-            action: "fill",
             reason: "Email.",
-            targetId: "a2",
-            value: "{{context:login.email}}"
+            payload: { action: "fill", target: { id: "a2" }, value: "{{context:login.email}}" }
           }
         },
         {
           index: 3,
           outcome: "ok",
           plannerAction: {
-            action: "wait_until_gone",
             reason: "Loading.",
-            expectGone: { documentText: "Loading" }
+            payload: { action: "wait_until_gone", expectGone: { documentText: "Loading" } }
           }
         },
-        { index: 4, outcome: "ok", plannerAction: { action: "finish", reason: "Done." } },
+        {
+          index: 4,
+          outcome: "ok",
+          plannerAction: { reason: "Done.", payload: { action: "finish" } }
+        },
         {
           index: 5,
           outcome: "error",
-          plannerAction: { action: "click", reason: "Ignore.", targetId: "a3" }
+          plannerAction: { reason: "Ignore.", payload: { action: "click", target: { id: "a3" } } }
         }
       ]
     })}\n`
@@ -69,11 +74,17 @@ void test("imports successful replayable steps after startup from the latest run
     name: "login",
     source: { runId, steps: [2, 3] },
     actions: [
-      { action: "fill", reason: "Email.", targetId: "a2", value: "{{context:login.email}}" },
       {
-        action: "wait_until_gone",
+        reason: "Email.",
+        payload: {
+          action: "fill",
+          target: { id: "a2" },
+          value: "{{context:login.email}}"
+        }
+      },
+      {
         reason: "Loading.",
-        expectGone: { documentText: "Loading" }
+        payload: { action: "wait_until_gone", expectGone: { documentText: "Loading" } }
       }
     ]
   });
@@ -82,24 +93,42 @@ void test("imports successful replayable steps after startup from the latest run
 void test("allows a block wait to name alternative transient document texts", () => {
   assert.deepEqual(
     BlockActionSchema.parse({
-      action: "wait_until_gone",
       reason: "Wait for the login splash screens.",
-      expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+      payload: {
+        action: "wait_until_gone",
+        expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+      }
     }),
     {
-      action: "wait_until_gone",
       reason: "Wait for the login splash screens.",
-      expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+      payload: {
+        action: "wait_until_gone",
+        expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+      }
     }
+  );
+});
+
+void test("rejects flat block actions", () => {
+  assert.throws(
+    () =>
+      BlockActionSchema.parse({
+        action: "click",
+        reason: "Continue.",
+        target: { id: "a3" }
+      }),
+    /payload/
   );
 });
 
 void test("requires planner waits to name one observed document text", () => {
   assert.throws(() =>
     PlannerActionSchema.parse({
-      action: "wait_until_gone",
       reason: "Loading.",
-      expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+      payload: {
+        action: "wait_until_gone",
+        expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+      }
     })
   );
 });

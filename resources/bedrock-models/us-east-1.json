@@ -65,6 +65,7 @@
     "label": "Anthropic Claude 4.5 Haiku",
     "modelId": "anthropic.claude-haiku-4-5-20251001-v1:0",
     "supportsConditionalToolSchemas": false,
+    "supportsStrictToolUse": true,
     "inferenceProfiles": ["global", "us"],
     "inferenceConfig": { "temperature": 0 },
     "pricing": {
@@ -77,6 +78,7 @@
     "label": "Anthropic Claude Sonnet 5",
     "modelId": "anthropic.claude-sonnet-5",
     "supportsConditionalToolSchemas": false,
+    "supportsStrictToolUse": true,
     "inferenceProfiles": ["global", "us"],
     "pricing": {
       "tokenUnit": 1000000,

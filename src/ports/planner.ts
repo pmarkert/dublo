@@ -1,62 +1,72 @@
 import { z } from "zod";
 
-const PlannerActionNameSchema = z.enum([
-  "click",
-  "fill",
-  "wait_until_gone",
-  "request_user_input",
-  "request_user_interaction",
-  "request_screenshot",
-  "finish"
-]);
 const WaitUntilGoneExpectationSchema = z
   .object({
     documentText: z.string().trim().min(1)
   })
   .strict();
+const TargetSelectorSchema = z
+  .object({
+    id: z.string().trim().min(1).optional(),
+    tag: z.string().trim().min(1).optional(),
+    role: z.string().optional(),
+    type: z.string().optional(),
+    priority: z.boolean().optional(),
+    text: z.string().optional(),
+    ariaLabel: z.string().optional(),
+    label: z.string().optional(),
+    placeholder: z.string().optional(),
+    hasValue: z.boolean().optional(),
+    checked: z.boolean().optional(),
+    disabled: z.boolean().optional()
+  })
+  .strict()
+  .refine((target) => Object.keys(target).length > 0, {
+    message: "target must contain at least one control property."
+  });
+
+export const PlannerActionPayloadSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("click"), target: TargetSelectorSchema }).strict(),
+  z.object({ action: z.literal("fill"), target: TargetSelectorSchema, value: z.string() }).strict(),
+  z
+    .object({ action: z.literal("select_option"), target: TargetSelectorSchema, value: z.string() })
+    .strict(),
+  z
+    .object({
+      action: z.literal("scroll"),
+      containerId: z.string().trim().min(1),
+      direction: z.enum(["up", "down"])
+    })
+    .strict(),
+  z
+    .object({ action: z.literal("wait_until_gone"), expectGone: WaitUntilGoneExpectationSchema })
+    .strict(),
+  z
+    .object({
+      action: z.literal("request_user_input"),
+      inputKey: z.string().trim().min(1),
+      inputPrompt: z.string().trim().min(1)
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("request_user_interaction"),
+      interactionPrompt: z.string().trim().min(1)
+    })
+    .strict(),
+  z
+    .object({ action: z.literal("request_screenshot"), screenshotPrompt: z.string().trim().min(1) })
+    .strict(),
+  z.object({ action: z.literal("give_up") }).strict(),
+  z.object({ action: z.literal("finish") }).strict()
+]);
 
 export const PlannerActionSchema = z
   .object({
-    action: PlannerActionNameSchema,
     reason: z.string().trim().min(1),
-    targetId: z.string().trim().min(1).optional(),
-    value: z.string().optional(),
-    expectGone: WaitUntilGoneExpectationSchema.optional(),
-    inputKey: z.string().trim().min(1).optional(),
-    inputPrompt: z.string().trim().min(1).optional(),
-    interactionPrompt: z.string().trim().min(1).optional(),
-    screenshotPrompt: z.string().trim().min(1).optional()
+    payload: PlannerActionPayloadSchema
   })
-  .strict()
-  .superRefine((action, context) => {
-    if ((action.action === "click" || action.action === "fill") && !action.targetId) {
-      context.addIssue({ code: "custom", message: "click and fill actions require targetId." });
-    }
-    if (action.action === "fill" && action.value === undefined) {
-      context.addIssue({ code: "custom", message: "fill actions require value." });
-    }
-    if (action.action === "wait_until_gone" && !action.expectGone) {
-      context.addIssue({ code: "custom", message: "wait_until_gone requires expectGone." });
-    }
-    if (action.action === "request_user_input" && (!action.inputKey || !action.inputPrompt)) {
-      context.addIssue({
-        code: "custom",
-        message: "request_user_input requires inputKey and inputPrompt."
-      });
-    }
-    if (action.action === "request_user_interaction" && !action.interactionPrompt) {
-      context.addIssue({
-        code: "custom",
-        message: "request_user_interaction requires interactionPrompt."
-      });
-    }
-    if (action.action === "request_screenshot" && !action.screenshotPrompt) {
-      context.addIssue({
-        code: "custom",
-        message: "request_screenshot requires screenshotPrompt."
-      });
-    }
-  });
+  .strict();
 
 export interface PlannerMessages {
   systemText: string;
