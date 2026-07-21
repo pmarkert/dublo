@@ -177,7 +177,7 @@ Options:
 
 `dublo init` creates a new workspace and refuses to overwrite existing defaults without `--force`.
 
-`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `persona`, `max-steps`, `settle-delay-ms`, `settle-timeout-ms`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`. The settle settings control the runner's UI stability debounce before LLM observations; defaults are `500ms` stable time and a `3000ms` maximum polling window.
+`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `persona`, `max-steps`, `settle-delay-ms`, `settle-timeout-ms`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`. The settle settings control the runner's UI stability debounce before LLM observations; defaults are `500ms` stable time and a `20000ms` maximum polling window.
 
 `dublo report list` shows saved reports. `dublo report show`, `open`, and `render` default to the report named by `latest.json` when no run ID is provided.
 

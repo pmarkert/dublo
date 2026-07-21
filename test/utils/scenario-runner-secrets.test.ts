@@ -73,6 +73,10 @@ void test("detects an alternating scroll loop in one container", () => {
     classifyRecoverableActionError(new Error("Alternating scroll loop detected in 's1'.")),
     "scroll_loop"
   );
+  assert.equal(
+    classifyRecoverableActionError(new Error("Planner scroll container 's1' cannot scroll down.")),
+    "scroll_boundary"
+  );
 });
 
 void test("executes a click against the turn-scoped observed control", async () => {

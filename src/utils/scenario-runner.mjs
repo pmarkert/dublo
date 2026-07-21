@@ -402,7 +402,7 @@ export async function runScenario(config, options = {}) {
       );
       if (!waitResult.completed) {
         throw new Error(
-          `Timed out waiting for document text to disappear: '${formatExpectedDocumentText(expectedText)}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`
+          `Timed out after ${waitResult.elapsedMs}ms waiting for document text to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formatExpectedDocumentText(expectedText)}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`
         );
       }
       return;
@@ -574,7 +574,7 @@ export async function runScenario(config, options = {}) {
             if (!waitResult.completed) {
               previousTimedOutWait = waitKey;
               recoverableOutcome = "wait_timeout";
-              recoverableErrorMessage = `Timed out waiting for document text to disappear: '${formattedExpectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
+              recoverableErrorMessage = `Timed out after ${waitResult.elapsedMs}ms waiting for document text to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formattedExpectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
               logger.warn(recoverableErrorMessage);
               return;
             }
@@ -740,6 +740,8 @@ export async function runScenario(config, options = {}) {
                     ? "select_option is only valid for native select controls with an observed options list. For a custom combobox, click a visible role=option control."
                     : recoverableOutcome === "scroll_loop"
                       ? "Repeated alternating scrolling does not add evidence. Use completedWork and the current observation to take a non-scroll action or finish."
+                      : recoverableOutcome === "scroll_boundary"
+                        ? "The scroll container is at its boundary. Use the current observation to take a non-scroll action or finish."
             : undefined,
         error: recoverableErrorMessage || undefined,
       });

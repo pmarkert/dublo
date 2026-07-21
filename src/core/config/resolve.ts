@@ -13,7 +13,7 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
   context: [],
   maxSteps: 40,
   settleDelayMs: 500,
-  settleTimeoutMs: 3000,
+  settleTimeoutMs: 20000,
   headless: false,
   screenshots: "none",
   reports: ["markdown", "html"],

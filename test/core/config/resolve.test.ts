@@ -41,7 +41,7 @@ test("resolves environment before workspace and built-in defaults", () => {
   assert.equal(result.values.outputDir, "./reports");
   assert.equal(result.sources.debug, "built-in");
   assert.equal(result.values.settleDelayMs, 500);
-  assert.equal(result.values.settleTimeoutMs, 3000);
+  assert.equal(result.values.settleTimeoutMs, 20000);
   assert.equal(result.sources.settleDelayMs, "built-in");
 });
 

@@ -58,6 +58,9 @@ export function classifyRecoverableActionError(error) {
   if (message.includes("planner target not found")) return "target_disappeared";
   if (message.includes("planner select_option target is not a native select")) return "invalid_selection";
   if (message.includes("alternating scroll loop")) return "scroll_loop";
+  if (message.includes("cannot scroll down") || message.includes("cannot scroll up") || message.includes("did not move")) {
+    return "scroll_boundary";
+  }
   return null;
 }
 
@@ -141,13 +144,15 @@ export async function waitForDocumentTextGone(page, expectedText, settleDelayMs,
     latestDocumentText = await page.evaluate(() => String(globalThis.document.body?.innerText || "").replace(/\s+/g, " ").trim());
     if (isDocumentTextGone(latestDocumentText, expectedText)) {
       absentSince ??= Date.now();
-      if (Date.now() - absentSince >= settleDelayMs) return { completed: true, latestDocumentText };
+      if (Date.now() - absentSince >= settleDelayMs) {
+        return { completed: true, latestDocumentText, elapsedMs: Date.now() - startedAt };
+      }
     } else {
       absentSince = null;
     }
     await page.waitForTimeout(pollMs);
   }
-  return { completed: false, latestDocumentText };
+  return { completed: false, latestDocumentText, elapsedMs: Date.now() - startedAt };
 }
 
 async function isTargetDisabled(target) {
