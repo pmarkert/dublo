@@ -208,6 +208,37 @@ void test("strict planner messages require ID-only target selectors", () => {
   assert.doesNotMatch(messages.staticContextText, /You may combine any visible control fields/);
 });
 
+void test("default planner messages use ID-only selectors until matching feedback requires more detail", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Create a routine.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: {
+      url: "https://example.test",
+      title: "Routines",
+      modal: {},
+      headings: [],
+      alerts: [],
+      documentText: "Routines",
+      controls: []
+    },
+    actionHistory: [],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  assert.match(
+    messages.staticContextText,
+    /Use only the visible control ID as the target selector by default/
+  );
+  assert.match(
+    messages.staticContextText,
+    /only after target-resolution feedback says the ID-only selector did not match/
+  );
+  assert.doesNotMatch(messages.staticContextText, /You may combine any visible control fields/);
+});
+
 void test("planner messages include observed native select options", () => {
   const messages = buildPlannerMessages({
     testPrompt: "Configure a schedule.",

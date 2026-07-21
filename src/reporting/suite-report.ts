@@ -45,6 +45,12 @@ export function renderSuiteReportHtml(result: SuiteResult): string {
   const finishedAt = new Date(result.finishedAt);
   const totalMs = finishedAt.getTime() - startedAt.getTime();
   const passRate = result.total > 0 ? Math.round((result.passed / result.total) * 100) : 0;
+  const tokenSummary = result.tokenUsage
+    ? `<span><strong>Tokens:</strong> ${result.tokenUsage.totalTokens.toLocaleString()} across ${result.tokenUsage.plannerCalls.toLocaleString()} planner calls</span>`
+    : "";
+  const costSummary = result.costTotals
+    ?.map((cost) => `<span><strong>Estimated cost:</strong> ${cost.total.toFixed(6)} ${escapeHtml(cost.currency)}</span>`)
+    .join("") ?? "";
 
   const taskRows = result.tasks
     .map((task) => {
@@ -121,6 +127,8 @@ export function renderSuiteReportHtml(result: SuiteResult): string {
   <span><strong>Duration:</strong> ${escapeHtml(formatDuration(totalMs))}</span>
   <span><strong>Concurrency:</strong> ${result.concurrency}</span>
   <span><strong>Pass rate:</strong> ${passRate}%</span>
+  ${tokenSummary}
+  ${costSummary}
 </div>
 <div class="summary-bar">
   <div class="summary-card"><div class="num num-pass">${result.passed}</div><div class="lbl">Passed</div></div>
@@ -153,6 +161,14 @@ export function renderSuiteReportMarkdown(result: SuiteResult): string {
   const finishedAt = new Date(result.finishedAt);
   const totalMs = finishedAt.getTime() - startedAt.getTime();
   const passRate = result.total > 0 ? Math.round((result.passed / result.total) * 100) : 0;
+  const metricLines = [
+    ...(result.tokenUsage
+      ? [`- **Tokens:** ${result.tokenUsage.totalTokens.toLocaleString()} across ${result.tokenUsage.plannerCalls.toLocaleString()} planner calls`]
+      : []),
+    ...(result.costTotals ?? []).map(
+      (cost) => `- **Estimated Cost:** ${cost.total.toFixed(6)} ${cost.currency}`
+    )
+  ];
 
   const taskLines = result.tasks.map((task) => {
     const status =
@@ -177,6 +193,7 @@ export function renderSuiteReportMarkdown(result: SuiteResult): string {
     `- **Duration:** ${formatDuration(totalMs)}`,
     `- **Concurrency:** ${result.concurrency}`,
     `- **Result:** ${result.passed} passed / ${result.failed} failed / ${result.errored} errored (${passRate}% pass rate)`,
+    ...metricLines,
     "",
     "## Tasks",
     "",

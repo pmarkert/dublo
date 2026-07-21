@@ -65,8 +65,24 @@ export interface TaskResult {
   runDir: string | undefined;
   reportPath: string | undefined;
   summaryHtmlPath: string | undefined;
+  tokenUsage: SuiteTokenUsage | undefined;
+  costTotal: SuiteCostTotal | undefined;
   durationMs: number;
   errorMessage: string | undefined;
+}
+
+export interface SuiteTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
+  plannerCalls: number;
+}
+
+export interface SuiteCostTotal {
+  currency: string;
+  total: number;
 }
 
 export interface SuiteResult {
@@ -81,6 +97,22 @@ export interface SuiteResult {
   failed: number;
   errored: number;
   total: number;
+  tokenUsage?: SuiteTokenUsage;
+  costTotals?: SuiteCostTotal[];
+}
+
+export interface SuiteRunReport {
+  runId: string;
+  objective: string;
+  status: "passed" | "failed";
+  startedAt: string;
+  finishedAt: string;
+  finalUrl: string;
+  error?: string;
+  steps: TaskResult[];
+  tokenUsage?: SuiteTokenUsage;
+  costTotals?: SuiteCostTotal[];
+  suite: SuiteResult;
 }
 
 function sanitizeDirName(value: string): string {
@@ -94,6 +126,27 @@ function normalizeContextArray(context: string | string[] | undefined): string[]
   if (context === undefined) return [];
   if (typeof context === "string") return [context];
   return context;
+}
+
+export function createSuiteRunReport(result: SuiteResult): SuiteRunReport {
+  const error =
+    result.failed > 0 || result.errored > 0
+      ? `${result.failed} failed, ${result.errored} errored task${result.total === 1 ? "" : "s"}.`
+      : undefined;
+
+  return {
+    runId: result.suiteId,
+    objective: `Suite ${result.suiteId}`,
+    status: result.passed === result.total ? "passed" : "failed",
+    startedAt: result.startedAt,
+    finishedAt: result.finishedAt,
+    finalUrl: "",
+    ...(error ? { error } : {}),
+    steps: result.tasks,
+    ...(result.tokenUsage ? { tokenUsage: result.tokenUsage } : {}),
+    ...(result.costTotals ? { costTotals: result.costTotals } : {}),
+    suite: result
+  };
 }
 
 export function expandTasks(manifest: SuiteManifest, suiteDir: string): ExpandedTask[] {
@@ -148,6 +201,92 @@ interface LatestJson {
   reportPath?: string;
   summaryHtmlPath?: string;
   status?: string;
+  costEstimate?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function numericValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function parseTokenUsage(value: unknown): SuiteTokenUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  const totalTokens = numericValue(value.totalTokens);
+  if (totalTokens === undefined) return undefined;
+  return {
+    inputTokens: numericValue(value.inputTokens) ?? 0,
+    outputTokens: numericValue(value.outputTokens) ?? 0,
+    totalTokens,
+    cacheReadInputTokens: numericValue(value.cacheReadInputTokens) ?? 0,
+    cacheWriteInputTokens: numericValue(value.cacheWriteInputTokens) ?? 0,
+    plannerCalls: numericValue(value.plannerCalls) ?? 0
+  };
+}
+
+function parseCostTotal(value: unknown): SuiteCostTotal | undefined {
+  if (!isRecord(value) || typeof value.currency !== "string" || !isRecord(value.costs)) {
+    return undefined;
+  }
+  const total = numericValue(value.costs.total);
+  return total === undefined ? undefined : { currency: value.currency, total };
+}
+
+async function readTaskMetrics(reportPath: string | undefined): Promise<{
+  tokenUsage: SuiteTokenUsage | undefined;
+  costTotal: SuiteCostTotal | undefined;
+}> {
+  if (!reportPath) return { tokenUsage: undefined, costTotal: undefined };
+  try {
+    const report = JSON.parse(await readFile(reportPath, "utf8")) as unknown;
+    if (!isRecord(report)) return { tokenUsage: undefined, costTotal: undefined };
+    return {
+      tokenUsage: parseTokenUsage(report.tokenUsage),
+      costTotal: parseCostTotal(report.costEstimate)
+    };
+  } catch {
+    return { tokenUsage: undefined, costTotal: undefined };
+  }
+}
+
+function aggregateTaskMetrics(tasks: TaskResult[]): {
+  tokenUsage: SuiteTokenUsage | undefined;
+  costTotals: SuiteCostTotal[] | undefined;
+} {
+  const tasksWithTokenUsage = tasks.filter((task) => task.tokenUsage !== undefined);
+  const tokenUsage = tasksWithTokenUsage.length === 0
+    ? undefined
+    : tasksWithTokenUsage.reduce<SuiteTokenUsage>(
+        (total, task) => ({
+          inputTokens: total.inputTokens + (task.tokenUsage?.inputTokens ?? 0),
+          outputTokens: total.outputTokens + (task.tokenUsage?.outputTokens ?? 0),
+          totalTokens: total.totalTokens + (task.tokenUsage?.totalTokens ?? 0),
+          cacheReadInputTokens: total.cacheReadInputTokens + (task.tokenUsage?.cacheReadInputTokens ?? 0),
+          cacheWriteInputTokens: total.cacheWriteInputTokens + (task.tokenUsage?.cacheWriteInputTokens ?? 0),
+          plannerCalls: total.plannerCalls + (task.tokenUsage?.plannerCalls ?? 0)
+        }),
+        {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheWriteInputTokens: 0,
+          plannerCalls: 0
+        }
+      );
+  const costsByCurrency = new Map<string, number>();
+  for (const task of tasks) {
+    if (!task.costTotal) continue;
+    costsByCurrency.set(task.costTotal.currency, (costsByCurrency.get(task.costTotal.currency) ?? 0) + task.costTotal.total);
+  }
+  const costTotals = Array.from(costsByCurrency, ([currency, total]) => ({
+    currency,
+    total: Number(total.toFixed(10))
+  }));
+
+  return { tokenUsage, costTotals: costTotals.length > 0 ? costTotals : undefined };
 }
 
 async function readLatestJson(taskDir: string): Promise<LatestJson> {
@@ -239,6 +378,8 @@ async function runTask(task: ExpandedTask, options: SuiteRunOptions): Promise<Ta
           runDir: undefined,
           reportPath: undefined,
           summaryHtmlPath: undefined,
+          tokenUsage: undefined,
+          costTotal: undefined,
           durationMs,
           errorMessage:
             spawnError?.message ??
@@ -251,6 +392,7 @@ async function runTask(task: ExpandedTask, options: SuiteRunOptions): Promise<Ta
       const reportStatus = latest.status ?? "unknown";
       const taskStatus: TaskResult["status"] =
         reportStatus === "passed" ? "passed" : reportStatus === "failed" ? "failed" : "error";
+      const metrics = await readTaskMetrics(latest.reportPath);
 
       resolve({
         index: task.index,
@@ -262,6 +404,8 @@ async function runTask(task: ExpandedTask, options: SuiteRunOptions): Promise<Ta
         runDir: latest.artifactsDir,
         reportPath: latest.reportPath,
         summaryHtmlPath: latest.summaryHtmlPath,
+        tokenUsage: metrics.tokenUsage,
+        costTotal: metrics.costTotal ?? parseCostTotal(latest.costEstimate),
         durationMs,
         errorMessage: undefined
       });
@@ -324,6 +468,7 @@ export async function runSuite(
   const passed = taskResults.filter((r) => r.status === "passed").length;
   const failed = taskResults.filter((r) => r.status === "failed").length;
   const errored = taskResults.filter((r) => r.status === "error").length;
+  const metrics = aggregateTaskMetrics(taskResults);
 
   const suiteResult: SuiteResult = {
     suiteId,
@@ -336,7 +481,9 @@ export async function runSuite(
     passed,
     failed,
     errored,
-    total: taskResults.length
+    total: taskResults.length,
+    ...(metrics.tokenUsage ? { tokenUsage: metrics.tokenUsage } : {}),
+    ...(metrics.costTotals ? { costTotals: metrics.costTotals } : {})
   };
 
   await writeFile(

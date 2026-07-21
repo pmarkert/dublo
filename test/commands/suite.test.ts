@@ -11,9 +11,15 @@ import {
   type SuiteManifest
 } from "../../src/utils/suite-runner.js";
 import {
+  formatSuiteId,
   initialSuiteManifestContent,
   resolveSuiteArtifactPath
 } from "../../src/commands/suite/index.js";
+import { createSuiteRunReport, type TaskResult } from "../../src/utils/suite-runner.js";
+import {
+  renderSuiteReportHtml,
+  renderSuiteReportMarkdown
+} from "../../src/reporting/suite-report.js";
 
 const cliPath = path.resolve(import.meta.dirname, "../../src/cli.ts");
 const suiteDir = "/tmp/test-suite";
@@ -30,12 +36,137 @@ void test("new suite template documents task and matrix manifest structures", ()
 
 void test("suite artifact resolution accepts an explicit suite directory", async () => {
   const suiteDirectory = await mkdtemp(path.join(os.tmpdir(), "dublo-suite-artifact-"));
-  const summaryPath = path.join(suiteDirectory, "suite-summary.html");
+  const summaryPath = path.join(suiteDirectory, "summary.html");
   await writeFile(path.join(suiteDirectory, "suite.json"), "{}\n", "utf8");
   await writeFile(summaryPath, "<html></html>\n", "utf8");
 
   assert.equal(resolveSuiteArtifactPath(suiteDirectory), summaryPath);
-  assert.equal(resolveSuiteArtifactPath(suiteDirectory, { json: true }), path.join(suiteDirectory, "suite.json"));
+  assert.equal(
+    resolveSuiteArtifactPath(suiteDirectory, { json: true }),
+    path.join(suiteDirectory, "suite.json")
+  );
+});
+
+void test("suite run IDs use the regular-run timestamp prefix and manifest name", () => {
+  assert.equal(
+    formatSuiteId("/tmp/suites/checkout.yaml", new Date("2026-07-21T16:12:02.293Z")),
+    "2026-07-21T16-12-02-293Z_suite_checkout"
+  );
+});
+
+void test("suite reports include the fields required by report commands", () => {
+  const task: TaskResult = {
+    index: 0,
+    label: "checkout",
+    scenario: "checkout",
+    context: [],
+    status: "passed",
+    runId: "run-1",
+    runDir: "/tmp/reports/run-1",
+    reportPath: "/tmp/reports/run-1/report.json",
+    summaryHtmlPath: "/tmp/reports/run-1/summary.html",
+    tokenUsage: {
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cacheReadInputTokens: 2,
+      cacheWriteInputTokens: 1,
+      plannerCalls: 3
+    },
+    costTotal: { currency: "USD", total: 0.0125 },
+    durationMs: 100,
+    errorMessage: undefined
+  };
+  const suiteReport = createSuiteRunReport({
+    suiteId: "2026-07-21T16-12-02-293Z_suite_checkout",
+    suiteDir: "/tmp/reports/2026-07-21T16-12-02-293Z_suite_checkout",
+    manifestPath: "/tmp/suites/checkout.yaml",
+    startedAt: "2026-07-21T16:12:02.293Z",
+    finishedAt: "2026-07-21T16:12:09.293Z",
+    concurrency: 2,
+    tasks: [task],
+    passed: 1,
+    failed: 0,
+    errored: 0,
+    total: 1,
+    tokenUsage: task.tokenUsage,
+    costTotals: [task.costTotal]
+  });
+
+  assert.equal(suiteReport.runId, "2026-07-21T16-12-02-293Z_suite_checkout");
+  assert.equal(suiteReport.status, "passed");
+  assert.equal(suiteReport.objective, "Suite 2026-07-21T16-12-02-293Z_suite_checkout");
+  assert.deepEqual(suiteReport.steps, [task]);
+  assert.equal(suiteReport.tokenUsage?.totalTokens, 15);
+  assert.deepEqual(suiteReport.costTotals, [{ currency: "USD", total: 0.0125 }]);
+});
+
+void test("suite summaries render aggregated token usage and costs when available", () => {
+  const result = {
+    suiteId: "2026-07-21T16-12-02-293Z_suite_checkout",
+    suiteDir: "/tmp/reports/2026-07-21T16-12-02-293Z_suite_checkout",
+    manifestPath: "/tmp/suites/checkout.yaml",
+    startedAt: "2026-07-21T16:12:02.293Z",
+    finishedAt: "2026-07-21T16:12:09.293Z",
+    concurrency: 1,
+    tasks: [],
+    passed: 1,
+    failed: 0,
+    errored: 0,
+    total: 1,
+    tokenUsage: {
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+      cacheReadInputTokens: 2,
+      cacheWriteInputTokens: 1,
+      plannerCalls: 3
+    },
+    costTotals: [{ currency: "USD", total: 0.0125 }]
+  };
+
+  assert.match(renderSuiteReportHtml(result), /Tokens:<\/strong> 15 across 3 planner calls/);
+  assert.match(renderSuiteReportHtml(result), /Estimated cost:<\/strong> 0\.012500 USD/);
+  assert.match(renderSuiteReportMarkdown(result), /\*\*Tokens:\*\* 15 across 3 planner calls/);
+  assert.match(renderSuiteReportMarkdown(result), /\*\*Estimated Cost:\*\* 0\.012500 USD/);
+});
+
+void test("report show resolves a suite from the standard latest manifest", async () => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "dublo-suite-report-command-"));
+  const outputDir = path.join(workspace, "reports");
+  const runId = "2026-07-21T16-12-02-293Z_suite_checkout";
+  const runDir = path.join(outputDir, runId);
+  const reportPath = path.join(runDir, "report.json");
+  await mkdir(runDir, { recursive: true });
+  await writeFile(path.join(workspace, "defaults.json"), '{"outputDir":"./reports"}\n', "utf8");
+  await writeFile(
+    reportPath,
+    JSON.stringify({
+      runId,
+      objective: `Suite ${runId}`,
+      status: "passed",
+      startedAt: "2026-07-21T16:12:02.293Z",
+      finishedAt: "2026-07-21T16:12:09.293Z",
+      finalUrl: "",
+      steps: []
+    }) + "\n",
+    "utf8"
+  );
+  await writeFile(
+    path.join(outputDir, "latest.json"),
+    JSON.stringify({ runId, reportPath }) + "\n",
+    "utf8"
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", cliPath, "report", "show", "--workspace", workspace],
+    { cwd: process.cwd(), encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`Run ID: ${runId}`));
+  assert.match(result.stdout, /Status: passed/);
 });
 
 // ---------------------------------------------------------------------------
@@ -309,7 +440,11 @@ void test("suite list, show, edit, and validate manage workspace manifests", asy
     mkdir(suitesDirectory, { recursive: true }),
     mkdir(scenariosDirectory, { recursive: true })
   ]);
-  await writeFile(path.join(scenariosDirectory, "homepage-smoke.md"), "Verify the home page loads.", "utf8");
+  await writeFile(
+    path.join(scenariosDirectory, "homepage-smoke.md"),
+    "Verify the home page loads.",
+    "utf8"
+  );
   await writeFile(
     path.join(suitesDirectory, "smoke.yaml"),
     "tasks:\n  - scenario: homepage-smoke\n",

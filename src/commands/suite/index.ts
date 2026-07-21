@@ -11,6 +11,7 @@ import { loadScenarioConfig } from "../../utils/loadScenarioConfig.js";
 import { openInDefaultViewer } from "../../utils/open-file.js";
 import {
 	SuiteManifestSchema,
+	createSuiteRunReport,
 	expandTasks,
 	runSuite,
 	type ExpandedTask,
@@ -22,8 +23,9 @@ import {
 	renderSuiteReportMarkdown,
 } from "../../reporting/suite-report.js";
 
-function formatSuiteId(): string {
-	return `suite-${new Date().toISOString().replace(/[.:]/g, "-")}`;
+export function formatSuiteId(manifestPath: string, startedAt = new Date()): string {
+	const runDateTime = startedAt.toISOString().replace(/[.:]/g, "-");
+	return `${runDateTime}_suite_${suiteName(path.basename(manifestPath))}`;
 }
 
 function formatDuration(ms: number): string {
@@ -201,7 +203,7 @@ async function suiteRunCommand(manifestArg: string, options: SuiteRunCommandOpti
 	// Build effective manifest with resolved overrides
 	const effectiveManifest: SuiteManifest = { ...manifest, concurrency, headless };
 
-	const suiteId = formatSuiteId();
+	const suiteId = formatSuiteId(manifestPath);
 	const suiteDir = path.join(outputBase, suiteId);
 
 	const tasks = expandTasks(effectiveManifest, suiteDir);
@@ -243,11 +245,34 @@ async function suiteRunCommand(manifestArg: string, options: SuiteRunCommandOpti
 		},
 	});
 
-	// Write HTML and markdown reports
-	const htmlPath = path.join(suiteDir, "suite-summary.html");
-	const mdPath = path.join(suiteDir, "suite-summary.md");
+	const htmlPath = path.join(suiteDir, "summary.html");
+	const mdPath = path.join(suiteDir, "summary.md");
 	await writeFile(htmlPath, renderSuiteReportHtml(suiteResult) + "\n", "utf8");
 	await writeFile(mdPath, renderSuiteReportMarkdown(suiteResult) + "\n", "utf8");
+
+	const suiteReport = createSuiteRunReport(suiteResult);
+	const reportPath = path.join(suiteDir, "report.json");
+	await writeFile(reportPath, JSON.stringify(suiteReport, null, 2) + "\n", "utf8");
+	await writeFile(
+		path.join(outputBase, "latest.json"),
+		JSON.stringify(
+			{
+				runId: suiteResult.suiteId,
+				status: suiteReport.status,
+				finalUrl: suiteReport.finalUrl,
+				startedAt: suiteResult.startedAt,
+				finishedAt: suiteResult.finishedAt,
+				artifactsDir: suiteDir,
+				reportPath,
+				summaryPath: mdPath,
+				summaryHtmlPath: htmlPath,
+				reportType: "suite",
+			},
+			null,
+			2
+		) + "\n",
+		"utf8"
+	);
 
 	process.stdout.write(`\nSuite complete: ${suiteResult.passed}/${suiteResult.total} passed`);
 	if (suiteResult.failed > 0) process.stdout.write(`, ${suiteResult.failed} failed`);
@@ -301,7 +326,7 @@ export function resolveSuiteArtifactPath(
 	} else {
 		try {
 			suiteDir = readdirSync(outputDir, { withFileTypes: true })
-				.filter((entry) => entry.isDirectory() && entry.name.startsWith("suite-"))
+				.filter((entry) => entry.isDirectory() && entry.name.includes("_suite_"))
 				.map((entry) => entry.name)
 				.filter((entry) => existsSync(path.join(outputDir, entry, "suite.json")))
 				.sort((left, right) => right.localeCompare(left))[0] ?? "";
@@ -317,8 +342,8 @@ export function resolveSuiteArtifactPath(
 	const artifactName = options.json
 		? "suite.json"
 		: options.markdown
-			? "suite-summary.md"
-			: "suite-summary.html";
+			? "summary.md"
+			: "summary.html";
 	const artifactPath = path.join(suiteDir, artifactName);
 	if (!existsSync(artifactPath)) {
 		throw new Error(`Suite report artifact '${artifactName}' does not exist in ${suiteDir}.`);

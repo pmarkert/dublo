@@ -67,7 +67,7 @@ export function buildPlannerMessages({
       "For click and fill actions, always provide a target object that matches exactly one visible control.",
       strictTargetSelectors
         ? "Use only the visible control ID as the target selector, for example { id: 'a3' }."
-        : "The lightweight selector { id: 'a3' } is acceptable and preferred by default. You may combine any visible control fields when needed to identify one control.",
+        : "Use only the visible control ID as the target selector by default, for example { id: 'a3' }. Add other visible control fields only after target-resolution feedback says the ID-only selector did not match.",
       "Put action and action-specific fields in payload; keep reason at the root.",
       "Never emit click or fill without target.",
       "For fill actions, also provide a value.",
