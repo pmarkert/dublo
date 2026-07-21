@@ -370,6 +370,7 @@ export default function registerRunCommand(program) {
     .option("--set <keyValue>", "Inline context assignment key.path=value (or key.path:value); repeatable", collectOptionValues)
     .option("--json <object>", "Inline JSON object merged into context (repeatable)", collectOptionValues)
     .option("--secret <pathEnv>", "Secret path or path=ENV_VAR for {{secret:path}} fills (repeatable)", collectOptionValues)
+    .option("--output-dir <path>", "Override output directory for this run")
     .action(async (scenarioArg, options) => {
       const orderedContextOperations = collectOrderedContextOperations(process.argv);
       await runCommand({

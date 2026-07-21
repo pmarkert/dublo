@@ -12,6 +12,7 @@ import registerScenarioCommands from "./commands/scenario/index.js";
 import registerContextCommands from "./commands/context/index.js";
 import registerBlockCommands from "./commands/block/index.js";
 import { registerReportCommands } from "./cli/report-commands.js";
+import registerSuiteCommands from "./commands/suite/index.js";
 
 const program = new Command();
 program.name("dublo").description("Agentic LLM web testing with Playwright").version("0.1.0", "--version");
@@ -24,6 +25,7 @@ registerScenarioCommands(program);
 registerContextCommands(program);
 registerBlockCommands(program);
 registerReportCommands(program);
+registerSuiteCommands(program);
 
 const completion = tab(program, { completionCommandName: "completion" });
 completion.commands.delete("completion");
