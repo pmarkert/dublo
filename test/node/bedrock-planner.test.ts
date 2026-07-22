@@ -4,7 +4,7 @@ import { createBedrockPlanner } from "../../src/node/bedrock-planner.js";
 
 const messages = {
   systemText: "system",
-  staticContextText: "static",
+  staticContextText: "",
   dynamicContextText: "dynamic"
 };
 
@@ -66,6 +66,8 @@ void test("Bedrock planner validates tool-use actions through an injected client
   );
   assert.doesNotMatch(requestJson, /"ariaLabel"/);
   assert.match(requestJson, /"give_up"/);
+  assert.match(requestJson, /"text":"dynamic"/);
+  assert.doesNotMatch(requestJson, /"text":""/);
   assert.doesNotMatch(requestJson, /"strict":true/);
 });
 

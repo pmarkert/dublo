@@ -42,6 +42,15 @@ export async function collectObservation(page, observationConfig, turnToken) {
         .replace(/\s+/g, " ")
         .trim();
 
+    const hashControlIdentity = (value) => {
+      let hash = 2166136261;
+      for (const character of value) {
+        hash ^= character.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
+      }
+      return (hash >>> 0).toString(36);
+    };
+
     const resolveReferencedText = (ids) =>
       ids
         .split(/\s+/)
@@ -106,11 +115,28 @@ export async function collectObservation(page, observationConfig, turnToken) {
       return associatedLabel || textSegments[0] || normalizeText(el.innerText || el.textContent || "");
     };
 
+    const resolveLandmarkLabel = (el) => {
+      const labelledBy = resolveReferencedText(el.getAttribute("aria-labelledby") || "");
+      if (labelledBy) return labelledBy;
+
+      const ariaLabel = normalizeText(el.getAttribute("aria-label") || "");
+      if (ariaLabel) return ariaLabel;
+
+      const nativeLandmarks = {
+        ASIDE: "complementary",
+        FOOTER: "contentinfo",
+        HEADER: "banner",
+        MAIN: "main",
+        NAV: "navigation"
+      };
+      return el.getAttribute("role") || nativeLandmarks[el.tagName] || "";
+    };
+
     const resolveContextPath = (el, scopeRoot) => {
       const parts = [];
       let current = el.parentElement;
       while (current && current !== scopeRoot.parentElement) {
-        if (current === scopeRoot && current.getAttribute("role") === "dialog") {
+        if (current === scopeRoot && ["dialog", "alertdialog"].includes(current.getAttribute("role") || "")) {
           const title = resolveModalTitle(current);
           if (title) parts.unshift(title);
           break;
@@ -122,6 +148,9 @@ export async function collectObservation(page, observationConfig, turnToken) {
         } else if (current.tagName === "FIELDSET") {
           const legend = normalizeText(current.querySelector("legend")?.innerText || "");
           parts.unshift(legend || "fieldset");
+        } else if (["NAV", "HEADER", "MAIN", "FOOTER", "SECTION"].includes(current.tagName)) {
+          const name = resolveLandmarkLabel(current);
+          if (name) parts.unshift(name);
         } else if (role === "group" || role === "region") {
           const name = resolveControlName(current, leafTextSegments(current));
           parts.unshift(name || role);
@@ -156,6 +185,9 @@ export async function collectObservation(page, observationConfig, turnToken) {
 
     const findActiveModal = () => {
       const selectors = [
+        "[role='alertdialog'][aria-modal='true']",
+        "[role='alertdialog'][data-state='open']",
+        "[role='alertdialog']",
         "[role='dialog'][aria-modal='true']",
         "dialog[open]",
         "[role='dialog'][data-state='open']",
@@ -184,7 +216,8 @@ export async function collectObservation(page, observationConfig, turnToken) {
         const zIndex = Number.parseFloat(style.zIndex || "0");
         const rect = el.getBoundingClientRect();
         const area = Math.max(0, rect.width * rect.height);
-        const score = (Number.isFinite(zIndex) ? zIndex : 0) * 1_000_000 + area;
+        const alertDialogPriority = el.getAttribute("role") === "alertdialog" ? 1_000_000_000_000 : 0;
+        const score = alertDialogPriority + (Number.isFinite(zIndex) ? zIndex : 0) * 1_000_000 + area;
         if (score > bestScore) {
           best = el;
           bestScore = score;
@@ -369,19 +402,20 @@ export async function collectObservation(page, observationConfig, turnToken) {
       el.setAttribute("data-agentic-turn", activeTurnToken);
       return {
         id,
+        ...(resolveLandmarkLabel(el) ? { label: resolveLandmarkLabel(el) } : {}),
         contextPath: resolveContextPath(el, scopeRoot),
         canScrollUp: el.scrollTop > 1,
         canScrollDown: el.scrollTop + el.clientHeight < el.scrollHeight - 1
       };
     });
 
-    let sequence = 0;
+    const reservedControlIds = new Set(
+      selectedElements
+        .map(({ el }) => el.getAttribute("data-agentic-key"))
+        .filter(Boolean)
+    );
+    const assignedControlIds = new Set();
     const visibleControls = selectedElements.map(({ el, priority }) => {
-      sequence += 1;
-      const agenticId = `a${sequence}`;
-      el.setAttribute("data-agentic-id", agenticId);
-      el.setAttribute("data-agentic-turn", activeTurnToken);
-
       const textSegments = leafTextSegments(el);
       const text = textSegments.join(" · ") || normalizeText(el.innerText || el.textContent || "");
       const ariaLabel = el.getAttribute("aria-label") || "";
@@ -390,9 +424,41 @@ export async function collectObservation(page, observationConfig, turnToken) {
       const tag = el.tagName.toLowerCase();
       const type = el.getAttribute("type") || "";
       const label = resolveControlName(el, textSegments);
+      const contextPath = resolveContextPath(el, scopeRoot);
       const description = resolveReferencedText(el.getAttribute("aria-describedby") || "");
       const disabled =
         ("disabled" in el && Boolean(el.disabled)) || el.getAttribute("aria-disabled") === "true" || false;
+
+      let agenticId = el.getAttribute("data-agentic-key") || "";
+      if (!agenticId || assignedControlIds.has(agenticId)) {
+        const identity = [
+          tag,
+          role,
+          type,
+          el.getAttribute("data-testid") || el.getAttribute("data-test") || el.getAttribute("data-qa") || el.getAttribute("data-cy") || "",
+          el.getAttribute("id") || "",
+          el.getAttribute("name") || "",
+          el.getAttribute("href") || "",
+          el.getAttribute("aria-controls") || "",
+          contextPath.join(" > "),
+          label || ariaLabel || text,
+          placeholder
+        ]
+          .map((part) => normalizeText(part).toLocaleLowerCase())
+          .join("|");
+        const baseId = `ctl_${hashControlIdentity(identity)}`;
+        agenticId = baseId;
+        let suffix = 2;
+        while (reservedControlIds.has(agenticId) || assignedControlIds.has(agenticId)) {
+          agenticId = `${baseId}_${suffix}`;
+          suffix += 1;
+        }
+        el.setAttribute("data-agentic-key", agenticId);
+        reservedControlIds.add(agenticId);
+      }
+      assignedControlIds.add(agenticId);
+      el.setAttribute("data-agentic-id", agenticId);
+      el.setAttribute("data-agentic-turn", activeTurnToken);
 
       let value = "";
       let hasValue = false;
@@ -444,7 +510,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
         ariaLabel,
         label,
         ...(description ? { description } : {}),
-        contextPath: resolveContextPath(el, scopeRoot),
+        contextPath,
         placeholder,
         ...(value ? { value } : {}),
         ...(options.length > 0 ? { options } : {}),

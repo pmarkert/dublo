@@ -38,7 +38,9 @@ export function resolveTargetControl(controls, targetSelector) {
   if (matches.length === 1) return matches[0];
 
   const selectorText = JSON.stringify(targetSelector);
-  if (matches.length === 0) throw new Error(`Planner target not found: ${selectorText}`);
+  if (matches.length === 0) {
+    throw new Error(`Planner target is not in the current observation: ${selectorText}`);
+  }
   throw new Error(`Planner target selector is ambiguous: ${selectorText} matched ${matches.length} controls.`);
 }
 
@@ -56,7 +58,8 @@ export function classifyRecoverableActionError(error) {
     return "disabled_target";
   }
   if (message.includes("selected option before click")) return "already_selected";
-  if (message.includes("planner target not found")) return "target_disappeared";
+  if (message.includes("planner target is not in the current observation")) return "invalid_target";
+  if (message.includes("planner target disappeared from the dom")) return "target_disappeared";
   if (message.includes("planner select_option target is not a native select")) return "invalid_selection";
   if (message.includes("alternating scroll loop")) return "scroll_loop";
   if (message.includes("cannot scroll down") || message.includes("cannot scroll up") || message.includes("did not move")) {
@@ -215,7 +218,9 @@ export async function executeBrowserAction({
 
   const matchedControl = resolveTargetControl(observation.controls, payload.target);
   const target = page.locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${matchedControl.id}"]`).first();
-  if ((await target.count()) === 0) throw new Error(`Planner target not found: ${describeTarget(payload.target)}`);
+  if ((await target.count()) === 0) {
+    throw new Error(`Planner target disappeared from the DOM: ${describeTarget(payload.target)}`);
+  }
 
   if (payload.action === "click") {
     if (matchedControl.role === "option" && matchedControl.selected) {

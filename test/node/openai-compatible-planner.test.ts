@@ -4,7 +4,7 @@ import { createOpenAICompatiblePlanner } from "../../src/node/openai-compatible-
 
 const messages = {
   systemText: "system",
-  staticContextText: "static",
+  staticContextText: "",
   dynamicContextText: "dynamic"
 };
 
@@ -62,6 +62,8 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
   const requestBody = requests[0]?.body;
   assert.equal(typeof requestBody, "string");
   assert.match(requestBody, /data:image\/png;base64/);
+  assert.match(requestBody, /"text":"dynamic"/);
+  assert.doesNotMatch(requestBody, /"text":""/);
   assert.match(requestBody, /expectGone/);
   assert.match(requestBody, /documentText/);
   assert.match(

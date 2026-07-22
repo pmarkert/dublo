@@ -1,7 +1,10 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { generateReportArtifacts, rerenderReportArtifacts } from "../reporting/report-artifacts.mjs";
+import {
+  generateReportArtifacts,
+  rerenderReportArtifacts
+} from "../reporting/report-artifacts.mjs";
 import { createBedrockPlanner } from "../node/bedrock-planner.js";
 import { createOpenAICompatiblePlanner } from "../node/openai-compatible-planner.js";
 import { createPlaywrightBrowserFactory } from "../node/playwright-browser.js";
@@ -10,7 +13,11 @@ import { loadContextFromOperations, redactSecretValues } from "./scenario/contex
 import { buildPlannerMessages } from "./scenario/planner-context.mjs";
 import { loadObservationConfig, normalizeScreenshotMode } from "./scenario/observation-config.mjs";
 import { collectObservation } from "./scenario/observation.mjs";
-import { addTokenUsageTotals, calculateCostEstimate, getConfiguredModelPricing } from "./scenario/pricing.mjs";
+import {
+  addTokenUsageTotals,
+  calculateCostEstimate,
+  getConfiguredModelPricing
+} from "./scenario/pricing.mjs";
 import {
   classifyRecoverableActionError,
   executeBrowserAction,
@@ -19,10 +26,15 @@ import {
   isDocumentTextGone,
   resolveTargetControl,
   waitForDocumentTextGone,
-  waitForUiSettle,
+  waitForUiSettle
 } from "./scenario/action-executor.mjs";
 
-export { classifyRecoverableActionError, isAlternatingScrollLoop, isDocumentTextGone, resolveTargetControl };
+export {
+  classifyRecoverableActionError,
+  isAlternatingScrollLoop,
+  isDocumentTextGone,
+  resolveTargetControl
+};
 
 function sanitizeSegment(value) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -80,7 +92,7 @@ function createRunnerLogger(headed) {
   return {
     info: (message) => emit("info", message),
     warn: (message) => emit("warn", message),
-    error: (message) => emit("error", message),
+    error: (message) => emit("error", message)
   };
 }
 
@@ -95,12 +107,15 @@ function createDebugLogger(enabled) {
   };
 
   return {
-    log: emit,
+    log: emit
   };
 }
 
 function stripAnsi(value) {
-  return String(value || "").replace(/[\u001B\u009B][[\]()#;?]*(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-ORZcf-nqry=><~])/g, "");
+  return String(value || "").replace(
+    /[\u001B\u009B][[\]()#;?]*(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-ORZcf-nqry=><~])/g,
+    ""
+  );
 }
 
 function errorMessage(error) {
@@ -149,7 +164,7 @@ async function requestPlannerAction({ planner, messages, screenshotBuffer, signa
   return planner.nextAction({
     messages,
     ...(screenshotBuffer ? { screenshot: screenshotBuffer } : {}),
-    ...(signal ? { signal } : {}),
+    ...(signal ? { signal } : {})
   });
 }
 
@@ -159,7 +174,8 @@ function describeTarget(target) {
 
 export async function runScenario(config, options = {}) {
   const startedAt = new Date();
-  const shouldInterrupt = typeof options.shouldInterrupt === "function" ? options.shouldInterrupt : () => false;
+  const shouldInterrupt =
+    typeof options.shouldInterrupt === "function" ? options.shouldInterrupt : () => false;
   let browserClosed = false;
 
   if (!Number.isFinite(config.maxSteps) || config.maxSteps < 1) {
@@ -169,7 +185,9 @@ export async function runScenario(config, options = {}) {
     throw new Error("--settle-delay-ms must be a positive integer");
   }
   if (!Number.isInteger(config.settleTimeoutMs) || config.settleTimeoutMs < config.settleDelayMs) {
-    throw new Error("--settle-timeout-ms must be a positive integer greater than or equal to --settle-delay-ms");
+    throw new Error(
+      "--settle-timeout-ms must be a positive integer greater than or equal to --settle-delay-ms"
+    );
   }
 
   const throwIfInterrupted = () => {
@@ -210,7 +228,9 @@ export async function runScenario(config, options = {}) {
       observationConfigFile: config.observationConfigFile,
       screenshots,
       reports: Array.isArray(config.reports) ? config.reports : [],
-      initBlocks: Array.isArray(config.initBlocks) ? config.initBlocks.map((block) => block.name) : [],
+      initBlocks: Array.isArray(config.initBlocks)
+        ? config.initBlocks.map((block) => block.name)
+        : []
     },
     startedAt: startedAt.toISOString(),
     finishedAt: "",
@@ -223,12 +243,12 @@ export async function runScenario(config, options = {}) {
       totalTokens: 0,
       cacheReadInputTokens: 0,
       cacheWriteInputTokens: 0,
-      plannerCalls: 0,
+      plannerCalls: 0
     },
     pricing: null,
     costEstimate: null,
     steps: [],
-    artifactsDir: runDir,
+    artifactsDir: runDir
   };
 
   const planner =
@@ -236,7 +256,7 @@ export async function runScenario(config, options = {}) {
       ? createOpenAICompatiblePlanner({
           baseUrl: config.llm.baseUrl,
           modelId: config.llm.modelId,
-          ...(config.llm.apiKey ? { apiKey: config.llm.apiKey } : {}),
+          ...(config.llm.apiKey ? { apiKey: config.llm.apiKey } : {})
         })
       : createBedrockPlanner({
           modelId: config.llm.modelId,
@@ -251,22 +271,25 @@ export async function runScenario(config, options = {}) {
             : {}),
           ...(config.llm.supportsStrictToolUse !== undefined
             ? { supportsStrictToolUse: config.llm.supportsStrictToolUse }
-            : {}),
+            : {})
         });
 
   const logger = createRunnerLogger(config.headed);
   const debugLogger = createDebugLogger(config.debug);
   const interactionProvider = createTerminalInteractionProvider();
   const formatObservationSummary = (observation) => {
-    const visibleButtons = observation.controls.filter((control) => control.tag === "button").length;
+    const visibleButtons = observation.controls.filter(
+      (control) => control.tag === "button"
+    ).length;
     const visibleInputs = observation.controls.filter((control) => control.tag === "input").length;
     const visibleAlerts = observation.alerts.length;
     return `${observation.title || "untitled"} | ${observation.url} | controls=${observation.controls.length} buttons=${visibleButtons} inputs=${visibleInputs} alerts=${visibleAlerts}`;
   };
 
-  const providerLabel = config.llm.provider === "openai-compatible"
-    ? `openai-compatible:${config.llm.modelId}`
-    : `bedrock:${config.llm.modelId}`;
+  const providerLabel =
+    config.llm.provider === "openai-compatible"
+      ? `openai-compatible:${config.llm.modelId}`
+      : `bedrock:${config.llm.modelId}`;
 
   logger.info(`starting run ${runId} using ${providerLabel}`);
 
@@ -289,7 +312,7 @@ export async function runScenario(config, options = {}) {
 
   const browserSession = await createPlaywrightBrowserFactory().launch({
     headed: config.headed,
-    viewport: { width: 1440, height: 900 },
+    viewport: { width: 1440, height: 900 }
   });
   const { page } = browserSession;
   const plannerAbortController = new AbortController();
@@ -314,6 +337,7 @@ export async function runScenario(config, options = {}) {
   let pendingInteractionRequest = null;
   let pendingScreenshotBuffer = null;
   let previousTimedOutWait = null;
+  let hasLoggedSystemPrompt = false;
 
   const captureViewportScreenshot = async (options = {}) => {
     throwIfInterrupted();
@@ -321,7 +345,7 @@ export async function runScenario(config, options = {}) {
       fullPage: false,
       animations: "disabled",
       caret: "hide",
-      ...options,
+      ...options
     });
   };
 
@@ -332,14 +356,44 @@ export async function runScenario(config, options = {}) {
         fullPage: true,
         animations: "disabled",
         caret: "hide",
-        ...options,
+        ...options
       });
     }
 
     return captureViewportScreenshot(options);
   };
 
-  async function captureStep(name, plannerAction, execute, stepDebugContext = undefined, metadata = undefined) {
+  const captureAriaSnapshot = async () => {
+    if (!config.debug || browserClosed) {
+      return "";
+    }
+
+    try {
+      const root = page.locator("body");
+      if (typeof root.ariaSnapshot !== "function") {
+        debugLogger.log("aria_snapshot_unavailable");
+        return "";
+      }
+
+      const ariaSnapshot = await root.ariaSnapshot();
+      const redactedSnapshot = redactSecretValues(ariaSnapshot, secretValues);
+      debugLogger.log("aria_snapshot_begin");
+      debugLogger.log(redactedSnapshot);
+      debugLogger.log("aria_snapshot_end");
+      return redactedSnapshot;
+    } catch (error) {
+      debugLogger.log(`aria_snapshot_error=${errorMessage(error)}`);
+      return "";
+    }
+  };
+
+  async function captureStep(
+    name,
+    plannerAction,
+    execute,
+    stepDebugContext = undefined,
+    metadata = undefined
+  ) {
     throwIfInterrupted();
     stepIndex += 1;
     const artifactBase = `${String(stepIndex).padStart(2, "0")}-${sanitizeSegment(name)}`;
@@ -380,12 +434,14 @@ export async function runScenario(config, options = {}) {
         html: stepHtmlRelativePath,
         plannerAction,
         observation: stepDebugContext?.observation,
+        ariaSnapshot: stepDebugContext?.ariaSnapshot,
         knownHumanInputs: stepDebugContext?.knownHumanInputs,
+        agentPrompt: stepDebugContext?.agentPrompt,
         plannerTokenUsage: stepDebugContext?.plannerTokenUsage,
         phase: metadata?.phase,
         initBlock: metadata?.initBlock,
         outcome: stepError ? "error" : "ok",
-        error: stepError || undefined,
+        error: stepError || undefined
       });
     }
   }
@@ -423,7 +479,7 @@ export async function runScenario(config, options = {}) {
       settleDelayMs: config.settleDelayMs,
       settleTimeoutMs: config.settleTimeoutMs,
       logger,
-      throwIfInterrupted,
+      throwIfInterrupted
     });
 
     lastUiActionAt = Date.now();
@@ -448,11 +504,17 @@ export async function runScenario(config, options = {}) {
         observationTurn += 1;
         const turnToken = `t${observationTurn}`;
         const observation = await collectObservation(page, observationConfig, turnToken);
+        const ariaSnapshot = await captureAriaSnapshot();
         await captureStep(
           `init_${sanitizeSegment(block.name)}_${action.payload.action}`,
           action,
           () => executeDeterministicAction(action, observation, turnToken),
-          config.debug ? { observation: redactSecretValues(observation, secretValues) } : undefined,
+          config.debug
+            ? {
+                observation: redactSecretValues(observation, secretValues),
+                ...(ariaSnapshot ? { ariaSnapshot } : {})
+              }
+            : undefined,
           { phase: "init", initBlock: block.name }
         );
       }
@@ -464,6 +526,7 @@ export async function runScenario(config, options = {}) {
       observationTurn += 1;
       const turnToken = `t${observationTurn}`;
       const observation = await collectObservation(page, observationConfig, turnToken);
+      const ariaSnapshot = await captureAriaSnapshot();
       throwIfInterrupted();
       logger.info(`observation ${i + 1}: ${formatObservationSummary(observation)}`);
 
@@ -480,15 +543,21 @@ export async function runScenario(config, options = {}) {
         observation,
         actionHistory,
         humanInputs,
-        screenshotRequested: Boolean(screenshotBufferForThisTurn),
+        screenshotRequested: Boolean(screenshotBufferForThisTurn)
       });
 
+      if (config.debug && !report.agentSystemPrompt) {
+        report.agentSystemPrompt = messages.systemText;
+      }
       debugLogger.log(
         `planner_input_step=${i + 1} provider=${config.llm.provider} hasScreenshot=${Boolean(screenshotBufferForThisTurn)}`
       );
-      debugLogger.log("planner_system_begin");
-      debugLogger.log(messages.systemText);
-      debugLogger.log("planner_system_end");
+      if (!hasLoggedSystemPrompt) {
+        debugLogger.log("planner_system_begin");
+        debugLogger.log(messages.systemText);
+        debugLogger.log("planner_system_end");
+        hasLoggedSystemPrompt = true;
+      }
       debugLogger.log("planner_user_begin");
       debugLogger.log(messages.debugUserText);
       debugLogger.log("planner_user_end");
@@ -497,7 +566,7 @@ export async function runScenario(config, options = {}) {
         planner,
         messages,
         screenshotBuffer: screenshotBufferForThisTurn,
-        signal: plannerAbortController.signal,
+        signal: plannerAbortController.signal
       });
 
       throwIfInterrupted();
@@ -514,11 +583,13 @@ export async function runScenario(config, options = {}) {
         `planner action ${i + 1}: ${plannerPayload.action}${plannerPayload.action === "click" || plannerPayload.action === "fill" || plannerPayload.action === "select_option" ? ` target=${describeTarget(plannerPayload.target)}` : ""} reason=${clip(plannerAction.reason, 140)}`
       );
 
-      const actionName = `${plannerPayload.action}_${("target" in plannerPayload
-        ? plannerPayload.target.id
-        : "containerId" in plannerPayload
-          ? plannerPayload.containerId
-          : "selector")}`;
+      const actionName = `${plannerPayload.action}_${
+        "target" in plannerPayload
+          ? plannerPayload.target.id
+          : "containerId" in plannerPayload
+            ? plannerPayload.containerId
+            : "selector"
+      }`;
 
       let recoverableOutcome = null;
       let recoverableErrorMessage = "";
@@ -526,189 +597,194 @@ export async function runScenario(config, options = {}) {
       const stepDebugContext = config.debug
         ? {
             observation: redactSecretValues(observation, secretValues),
+            ...(ariaSnapshot ? { ariaSnapshot } : {}),
             knownHumanInputs: knownHumanInputsSnapshot,
-            plannerTokenUsage,
+            agentPrompt: {
+              userText: messages.debugUserText
+            },
+            plannerTokenUsage
           }
         : undefined;
 
       try {
-      await captureStep(
-        actionName,
-        plannerAction,
-        async () => {
-          throwIfInterrupted();
-          if (plannerPayload.action === "finish") {
-            logger.info(`finish accepted at ${page.url()}`);
-            report.status = "passed";
-            report.finalUrl = page.url();
-            return;
-          }
-
-          if (plannerPayload.action === "give_up") {
-            report.status = "failed";
-            report.finalUrl = page.url();
-            report.error = `Planner gave up: ${plannerAction.reason}`;
-            logger.warn(report.error);
-            return;
-          }
-
-          if (plannerPayload.action === "wait_until_gone") {
-            const expectedText = plannerPayload.expectGone.documentText;
-            const formattedExpectedText = formatExpectedDocumentText(expectedText);
-            const waitKey = `${page.url()}::${formattedExpectedText}`;
-            if (previousTimedOutWait === waitKey) {
-              recoverableOutcome = "duplicate_wait";
-              recoverableErrorMessage = `The same wait_until_gone condition already timed out without a URL change: '${formattedExpectedText}'.`;
-              logger.warn(recoverableErrorMessage);
+        await captureStep(
+          actionName,
+          plannerAction,
+          async () => {
+            throwIfInterrupted();
+            if (plannerPayload.action === "finish") {
+              logger.info(`finish accepted at ${page.url()}`);
+              report.status = "passed";
+              report.finalUrl = page.url();
               return;
             }
 
-            logger.info(`waiting for document text to disappear: ${clip(formattedExpectedText)}`);
-            const waitResult = await waitForDocumentTextGone(
-              page,
-              expectedText,
-              config.settleDelayMs,
-              config.settleTimeoutMs
-            );
-            if (!waitResult.completed) {
-              previousTimedOutWait = waitKey;
-              recoverableOutcome = "wait_timeout";
-              recoverableErrorMessage = `Timed out after ${waitResult.elapsedMs}ms waiting for document text to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formattedExpectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
-              logger.warn(recoverableErrorMessage);
+            if (plannerPayload.action === "give_up") {
+              report.status = "failed";
+              report.finalUrl = page.url();
+              report.error = `Planner gave up: ${plannerAction.reason}`;
+              logger.warn(report.error);
+              return;
+            }
+
+            if (plannerPayload.action === "wait_until_gone") {
+              const expectedText = plannerPayload.expectGone.documentText;
+              const formattedExpectedText = formatExpectedDocumentText(expectedText);
+              const waitKey = `${page.url()}::${formattedExpectedText}`;
+              if (previousTimedOutWait === waitKey) {
+                recoverableOutcome = "duplicate_wait";
+                recoverableErrorMessage = `The same wait_until_gone condition already timed out without a URL change: '${formattedExpectedText}'.`;
+                logger.warn(recoverableErrorMessage);
+                return;
+              }
+
+              logger.info(`waiting for document text to disappear: ${clip(formattedExpectedText)}`);
+              const waitResult = await waitForDocumentTextGone(
+                page,
+                expectedText,
+                config.settleDelayMs,
+                config.settleTimeoutMs
+              );
+              if (!waitResult.completed) {
+                previousTimedOutWait = waitKey;
+                recoverableOutcome = "wait_timeout";
+                recoverableErrorMessage = `Timed out after ${waitResult.elapsedMs}ms waiting for document text to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formattedExpectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
+                logger.warn(recoverableErrorMessage);
+                return;
+              }
+
+              previousTimedOutWait = null;
               return;
             }
 
             previousTimedOutWait = null;
-            return;
-          }
 
-          previousTimedOutWait = null;
-
-          if (plannerPayload.action === "request_user_input") {
-            if (!config.headed) {
-              throw new Error("LLM got blocked: requested user input in headless mode.");
-            }
-
-            const inputKey =
-              plannerPayload.inputKey
-                ;
-
-            const promptText =
-              plannerPayload.inputPrompt
-                ;
-
-            if (!humanInputs.has(inputKey)) {
-              logger.info(`requesting human input for key '${inputKey}'`);
-              const enteredValue = await interactionProvider.requestInput(`${promptText}: `);
-              throwIfInterrupted();
-              if (!enteredValue) {
-                throw new Error(`No value entered for '${inputKey}'.`);
+            if (plannerPayload.action === "request_user_input") {
+              if (!config.headed) {
+                throw new Error("LLM got blocked: requested user input in headless mode.");
               }
-              humanInputs.set(inputKey, enteredValue);
-              logger.info(`received human input for key '${inputKey}'`);
-            }
 
-            return;
-          }
+              const inputKey = plannerPayload.inputKey;
 
-          if (plannerPayload.action === "request_user_interaction") {
-            if (!config.headed) {
-              throw new Error("LLM got blocked: requested user interaction in headless mode.");
-            }
+              const promptText = plannerPayload.inputPrompt;
 
-            // If we just acted on the UI, give the app a chance to transition
-            // before escalating to the user.
-            const sinceLastUiActionMs = Date.now() - lastUiActionAt;
-            if (lastUiActionAt > 0 && sinceLastUiActionMs < 3500) {
-              logger.info("deferring user interaction prompt until UI settles after recent action");
-              await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+              if (!humanInputs.has(inputKey)) {
+                logger.info(`requesting human input for key '${inputKey}'`);
+                const enteredValue = await interactionProvider.requestInput(`${promptText}: `);
+                throwIfInterrupted();
+                if (!enteredValue) {
+                  throw new Error(`No value entered for '${inputKey}'.`);
+                }
+                humanInputs.set(inputKey, enteredValue);
+                logger.info(`received human input for key '${inputKey}'`);
+              }
+
               return;
             }
 
-            const interactionPrompt =
-              plannerPayload.interactionPrompt;
+            if (plannerPayload.action === "request_user_interaction") {
+              if (!config.headed) {
+                throw new Error("LLM got blocked: requested user interaction in headless mode.");
+              }
 
-            // Require the same interaction request twice (with same URL/prompt)
-            // before prompting the human. This avoids transient false positives.
-            const interactionKey = `${page.url()}::${interactionPrompt}`;
-            if (!pendingInteractionRequest || pendingInteractionRequest.key !== interactionKey) {
-              pendingInteractionRequest = { key: interactionKey, count: 1 };
-              logger.info(
-                `seen first interaction request for '${interactionPrompt}' on ${page.url()}; waiting to confirm`
+              // If we just acted on the UI, give the app a chance to transition
+              // before escalating to the user.
+              const sinceLastUiActionMs = Date.now() - lastUiActionAt;
+              if (lastUiActionAt > 0 && sinceLastUiActionMs < 3500) {
+                logger.info(
+                  "deferring user interaction prompt until UI settles after recent action"
+                );
+                await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+                return;
+              }
+
+              const interactionPrompt = plannerPayload.interactionPrompt;
+
+              // Require the same interaction request twice (with same URL/prompt)
+              // before prompting the human. This avoids transient false positives.
+              const interactionKey = `${page.url()}::${interactionPrompt}`;
+              if (!pendingInteractionRequest || pendingInteractionRequest.key !== interactionKey) {
+                pendingInteractionRequest = { key: interactionKey, count: 1 };
+                logger.info(
+                  `seen first interaction request for '${interactionPrompt}' on ${page.url()}; waiting to confirm`
+                );
+                await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+                return;
+              }
+
+              pendingInteractionRequest.count += 1;
+              if (pendingInteractionRequest.count < 2) {
+                logger.info(
+                  `re-seen interaction request for '${interactionPrompt}'; waiting one more cycle before prompting`
+                );
+                await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+                return;
+              }
+
+              logger.info(`prompting for human interaction: ${interactionPrompt}`);
+              const interactionNote = await interactionProvider.requestInput(
+                `${interactionPrompt}. Optional note: `
               );
-              await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+              throwIfInterrupted();
+              if (interactionNote) {
+                const key = `interaction_note_${stepIndex}`;
+                humanInputs.set(key, interactionNote);
+              }
+
+              pendingInteractionRequest = null;
+
               return;
             }
 
-            pendingInteractionRequest.count += 1;
-            if (pendingInteractionRequest.count < 2) {
+            if (plannerPayload.action === "request_screenshot") {
               logger.info(
-                `re-seen interaction request for '${interactionPrompt}'; waiting one more cycle before prompting`
+                `planner requested the most recent screenshot${
+                  plannerPayload.screenshotPrompt
+                    ? `: ${clip(plannerPayload.screenshotPrompt, 140)}`
+                    : ""
+                }`
               );
-              await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+
+              // Capture immediately from the current viewport so transient popups
+              // (menus, sheets) are preserved for the next planner turn.
+              pendingScreenshotBuffer = await captureViewportScreenshot();
+
               return;
             }
 
-            logger.info(`prompting for human interaction: ${interactionPrompt}`);
-            const interactionNote = await interactionProvider.requestInput(`${interactionPrompt}. Optional note: `);
-            throwIfInterrupted();
-            if (interactionNote) {
-              const key = `interaction_note_${stepIndex}`;
-              humanInputs.set(key, interactionNote);
+            if (
+              plannerPayload.action !== "scroll" &&
+              plannerPayload.action !== "click" &&
+              plannerPayload.action !== "fill" &&
+              plannerPayload.action !== "select_option"
+            ) {
+              throw new Error(`Unsupported planner action: ${plannerPayload.action}`);
             }
 
-            pendingInteractionRequest = null;
-
+            const result = await executeBrowserAction({
+              page,
+              action: plannerAction,
+              observation,
+              turnToken,
+              actionHistory,
+              contextData,
+              humanInputs,
+              secretValues,
+              settleDelayMs: config.settleDelayMs,
+              settleTimeoutMs: config.settleTimeoutMs,
+              logger,
+              throwIfInterrupted
+            });
+            actionTarget = result.target;
+            if (plannerPayload.action !== "scroll") {
+              lastUiActionAt = Date.now();
+              pendingInteractionRequest = null;
+            }
             return;
-          }
-
-          if (plannerPayload.action === "request_screenshot") {
-            logger.info(
-              `planner requested the most recent screenshot${
-                plannerPayload.screenshotPrompt ? `: ${clip(plannerPayload.screenshotPrompt, 140)}` : ""
-              }`
-            );
-
-            // Capture immediately from the current viewport so transient popups
-            // (menus, sheets) are preserved for the next planner turn.
-            pendingScreenshotBuffer = await captureViewportScreenshot();
-
-            return;
-          }
-
-          if (
-            plannerPayload.action !== "scroll" &&
-            plannerPayload.action !== "click" &&
-            plannerPayload.action !== "fill" &&
-            plannerPayload.action !== "select_option"
-          ) {
-            throw new Error(`Unsupported planner action: ${plannerPayload.action}`);
-          }
-
-          const result = await executeBrowserAction({
-            page,
-            action: plannerAction,
-            observation,
-            turnToken,
-            actionHistory,
-            contextData,
-            humanInputs,
-            secretValues,
-            settleDelayMs: config.settleDelayMs,
-            settleTimeoutMs: config.settleTimeoutMs,
-            logger,
-            throwIfInterrupted,
-          });
-          actionTarget = result.target;
-          if (plannerPayload.action !== "scroll") {
-            lastUiActionAt = Date.now();
-            pendingInteractionRequest = null;
-          }
-          return;
-        },
-        stepDebugContext
-      );
-    } catch (error) {
+          },
+          stepDebugContext
+        );
+      } catch (error) {
         const recoverableKind = classifyRecoverableActionError(error);
         if (!recoverableKind) {
           throw error;
@@ -731,20 +807,22 @@ export async function runScenario(config, options = {}) {
             ? "Click was blocked because the target is disabled. Resolve any prerequisite validation or required fields before trying again."
             : recoverableOutcome === "already_selected"
               ? "The selected option already has the required state. Do not click it again; use the current observation to continue."
-            : recoverableOutcome === "target_disappeared"
-              ? "The target disappeared before the action could run, so the UI is transitioning. Inspect the fresh observation instead of repeating the action."
-            : recoverableOutcome === "wait_timeout"
-              ? "The requested document text did not disappear within the configured settle timeout. Inspect the current observation and choose a different action."
-              : recoverableOutcome === "duplicate_wait"
-                ? "The same wait condition already timed out without a state change. Choose a different action."
-                  : recoverableOutcome === "invalid_selection"
-                    ? "select_option is only valid for native select controls with an observed options list. For a custom combobox, click a visible role=option control."
-                    : recoverableOutcome === "scroll_loop"
-                      ? "Repeated alternating scrolling does not add evidence. Use completedWork and the current observation to take a non-scroll action or finish."
-                      : recoverableOutcome === "scroll_boundary"
-                        ? "The scroll container is at its boundary. Use the current observation to take a non-scroll action or finish."
-            : undefined,
-        error: recoverableErrorMessage || undefined,
+              : recoverableOutcome === "invalid_target"
+                ? "The action targeted a control that is not in the current list of available controls. Choose an ID from Currently Actionable Controls in the fresh observation; historical IDs are not valid targets."
+              : recoverableOutcome === "target_disappeared"
+                ? "The target disappeared before the action could run, so the UI is transitioning. Inspect the fresh observation instead of repeating the action."
+                : recoverableOutcome === "wait_timeout"
+                  ? "The requested document text did not disappear within the configured settle timeout. Inspect the current observation and choose a different action."
+                  : recoverableOutcome === "duplicate_wait"
+                    ? "The same wait condition already timed out without a state change. Choose a different action."
+                    : recoverableOutcome === "invalid_selection"
+                      ? "select_option is only valid for native select controls with an observed options list. For a custom combobox, click a visible role=option control."
+                      : recoverableOutcome === "scroll_loop"
+                        ? "Repeated alternating scrolling does not add evidence. Use completedWork and the current observation to take a non-scroll action or finish."
+                        : recoverableOutcome === "scroll_boundary"
+                          ? "The scroll container is at its boundary. Use the current observation to take a non-scroll action or finish."
+                          : undefined,
+        error: recoverableErrorMessage || undefined
       });
 
       if (report.status !== "running") {
@@ -790,7 +868,7 @@ export async function runScenario(config, options = {}) {
         provider: config.llm.provider,
         modelId: config.llm.modelId,
         ...(config.llm.region ? { region: config.llm.region } : {}),
-        ...configuredPricing,
+        ...configuredPricing
       };
       report.costEstimate = calculateCostEstimate(report.tokenUsage, configuredPricing);
     }
@@ -822,17 +900,18 @@ export async function runScenario(config, options = {}) {
       provider: config.llm.provider,
       modelId: config.llm.modelId,
       ...(config.llm.region ? { region: config.llm.region } : {}),
-      costEstimate: report.costEstimate,
+      costEstimate: report.costEstimate
     };
     await writeFile(latestManifestPath, `${JSON.stringify(latestManifest, null, 2)}\n`, "utf8");
 
     await browserSession.close();
 
-    const statusPrefix = report.status === "passed"
-      ? "PASS"
-      : report.status === "interrupted"
-        ? "INTERRUPTED"
-        : "FAIL";
+    const statusPrefix =
+      report.status === "passed"
+        ? "PASS"
+        : report.status === "interrupted"
+          ? "INTERRUPTED"
+          : "FAIL";
 
     if (report.status === "failed" && report.error) {
       process.stderr.write(`Failure reason: ${report.error}\n`);

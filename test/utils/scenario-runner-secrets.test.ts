@@ -27,9 +27,13 @@ void test("waits until all configured document texts have disappeared", () => {
   assert.equal(isDocumentTextGone("Welcome back", ["Loading your account", "Still loading"]), true);
 });
 
-void test("treats targets that disappear during a transition as recoverable", () => {
+void test("distinguishes invalid planner targets from targets that disappear during a transition", () => {
   assert.equal(
-    classifyRecoverableActionError(new Error("Planner target not found: a4")),
+    classifyRecoverableActionError(new Error("Planner target is not in the current observation: a4")),
+    "invalid_target"
+  );
+  assert.equal(
+    classifyRecoverableActionError(new Error("Planner target disappeared from the DOM: a4")),
     "target_disappeared"
   );
 });
@@ -174,7 +178,7 @@ void test("resolves exactly one control from all target selector properties", ()
   );
   assert.throws(
     () => resolveTargetControl(controls, { label: "Email" }),
-    /Planner target not found/
+    /Planner target is not in the current observation/
   );
 });
 
@@ -211,9 +215,10 @@ void test("environment-backed secrets stay out of planner context and resolve on
     screenshotRequested: false
   });
 
-  assert.match(messages.staticContextText, /checkout\.password/);
-  assert.match(messages.staticContextText, /give_up/);
-  assert.doesNotMatch(messages.staticContextText, /correct-horse-battery-staple/);
+  assert.match(messages.systemText, /checkout\.password/);
+  assert.match(messages.systemText, /give_up/);
+  assert.doesNotMatch(messages.systemText, /correct-horse-battery-staple/);
+  assert.equal(messages.staticContextText, "");
   assert.match(messages.dynamicContextText, /\*{7}/);
   assert.doesNotMatch(messages.dynamicContextText, /correct-horse-battery-staple/);
 });
@@ -239,11 +244,12 @@ void test("planner messages require ID-only target selectors", () => {
     screenshotRequested: false
   });
 
-  assert.match(messages.staticContextText, /set target to exactly/);
-  assert.match(messages.staticContextText, /action and action-specific fields in payload/);
-  assert.match(messages.staticContextText, /use scroll with its containerId and direction/);
-  assert.match(messages.dynamicContextText, /"scrollContainers"/);
-  assert.doesNotMatch(messages.staticContextText, /You may combine any visible control fields/);
+  assert.match(messages.systemText, /set target to exactly/);
+  assert.match(messages.systemText, /action and action-specific fields in payload/);
+  assert.match(messages.systemText, /use scroll with its containerId and direction/);
+  assert.match(messages.dynamicContextText, /## Scroll Containers/);
+  assert.match(messages.dynamicContextText, /`s1`: can scroll up: false; can scroll down: true/);
+  assert.doesNotMatch(messages.systemText, /You may combine any visible control fields/);
 });
 
 void test("planner messages do not permit target-selector fallbacks", () => {
@@ -266,8 +272,46 @@ void test("planner messages do not permit target-selector fallbacks", () => {
     screenshotRequested: false
   });
 
-  assert.match(messages.staticContextText, /Do not include other target fields/);
-  assert.doesNotMatch(messages.staticContextText, /You may combine any visible control fields/);
+  assert.match(messages.systemText, /set target to exactly/);
+  assert.doesNotMatch(messages.systemText, /You may combine any visible control fields/);
+});
+
+void test("planner messages include landmark context for observed controls", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Open the routines page.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: {
+      url: "https://example.test",
+      title: "Home",
+      modal: {},
+      headings: [],
+      alerts: [],
+      documentText: "Home",
+      controls: [
+        {
+          id: "a1",
+          tag: "a",
+          role: "",
+          type: "",
+          priority: true,
+          text: "Routines",
+          label: "Routines",
+          ariaLabel: "",
+          placeholder: "",
+          contextPath: ["Primary navigation"],
+          hasValue: false,
+          checked: false
+        }
+      ]
+    },
+    actionHistory: [],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  assert.match(messages.dynamicContextText, /label: `Routines`; text: `Routines`; context: `Primary navigation`/);
 });
 
 void test("planner messages include observed native select options", () => {
@@ -309,11 +353,10 @@ void test("planner messages include observed native select options", () => {
     screenshotRequested: false
   });
 
-  assert.match(messages.staticContextText, /select_option/);
-  assert.match(messages.staticContextText, /custom combobox/);
-  assert.match(messages.staticContextText, /successful submit or save/);
-  assert.match(messages.dynamicContextText, /"label": "Weekdays"/);
-  assert.match(messages.dynamicContextText, /"value": "weekdays"/);
+  assert.match(messages.systemText, /select_option/);
+  assert.match(messages.systemText, /custom combobox/);
+  assert.match(messages.systemText, /successful submit or save/);
+  assert.match(messages.dynamicContextText, /options: `Daily`, `Weekdays`/);
 });
 
 void test("planner messages retain completed work beyond recent action history", () => {
@@ -346,9 +389,58 @@ void test("planner messages retain completed work beyond recent action history",
     screenshotRequested: false
   });
 
-  assert.match(messages.dynamicContextText, /"completedWork"/);
-  assert.match(messages.dynamicContextText, /Complete field 1/);
-  assert.match(messages.dynamicContextText, /"Field 1"/);
+  assert.match(messages.dynamicContextText, /# Successful Actions: Historical Evidence Only/);
+  assert.match(messages.dynamicContextText, /fill `Field 1` with `value 1`/);
+});
+
+void test("planner messages conditionally render runner feedback ahead of history", () => {
+  const baseArguments = {
+    testPrompt: "Complete the form.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: {
+      url: "https://example.test",
+      title: "Form",
+      modal: {},
+      headings: [],
+      alerts: [],
+      documentText: "Form",
+      controls: []
+    },
+    humanInputs: new Map(),
+    screenshotRequested: false
+  };
+
+  const withoutFeedback = buildPlannerMessages({ ...baseArguments, actionHistory: [] });
+  assert.doesNotMatch(withoutFeedback.dynamicContextText, /# Recent Runner Feedback: Must Address/);
+
+  const withFeedback = buildPlannerMessages({
+    ...baseArguments,
+    actionHistory: [
+      {
+        step: 1,
+        outcome: "invalid_target",
+        runnerFeedback: "The action targeted a control that is not in the current list of available controls.",
+        error: 'Planner target is not in the current observation: {"id":"ctl_missing"}',
+        action: {
+          reason: "Choose Daily.",
+          payload: { action: "click", target: { id: "ctl_missing" } }
+        }
+      }
+    ]
+  });
+
+  assert.match(withFeedback.dynamicContextText, /# Recent Runner Feedback: Must Address/);
+  assert.match(withFeedback.dynamicContextText, /not in the current list of available controls/);
+  assert.match(
+    withFeedback.dynamicContextText,
+    /Error: `Planner target is not in the current observation: \{"id":"ctl_missing"\}`/
+  );
+  assert.ok(
+    withFeedback.dynamicContextText.indexOf("# Recent Runner Feedback: Must Address") <
+      withFeedback.dynamicContextText.indexOf("# Recent Actions")
+  );
 });
 
 void test("secret redaction masks only exact string matches", () => {

@@ -311,9 +311,10 @@ export function createBedrockPlanner(
     },
 
     async nextAction(request: PlannerRequest): Promise<PlannerResponse> {
-      const content: Array<Record<string, unknown>> = [
-        { text: request.messages.staticContextText }
-      ];
+      const content: Array<Record<string, unknown>> = [];
+      if (request.messages.staticContextText) {
+        content.push({ text: request.messages.staticContextText });
+      }
       content.push({ text: request.messages.dynamicContextText });
       if (request.screenshot) {
         content.push({ image: { format: "png", source: { bytes: request.screenshot } } });

@@ -187,10 +187,11 @@ export function createOpenAICompatiblePlanner(
     },
 
     async nextAction(request: PlannerRequest): Promise<PlannerResponse> {
-      const userContent: Array<Record<string, unknown>> = [
-        { type: "text", text: request.messages.staticContextText },
-        { type: "text", text: request.messages.dynamicContextText }
-      ];
+      const userContent: Array<Record<string, unknown>> = [];
+      if (request.messages.staticContextText) {
+        userContent.push({ type: "text", text: request.messages.staticContextText });
+      }
+      userContent.push({ type: "text", text: request.messages.dynamicContextText });
       if (request.screenshot) {
         userContent.push({
           type: "image_url",

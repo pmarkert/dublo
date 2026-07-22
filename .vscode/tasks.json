@@ -8,6 +8,14 @@
 			"problemMatcher": [],
 			"label": "npm: build",
 			"detail": "rm -rf dist && tsc -p tsconfig.json && chmod +x dist/cli.js",
+			"presentation": {
+				"echo": true,
+				"reveal": "silent",
+				"focus": false,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			}
 		}
 	]
 }
