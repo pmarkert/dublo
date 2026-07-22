@@ -62,6 +62,7 @@ export function classifyRecoverableActionError(error) {
   if (message.includes("planner target disappeared from the dom")) return "target_disappeared";
   if (message.includes("planner select_option target is not a native select")) return "invalid_selection";
   if (message.includes("alternating scroll loop")) return "scroll_loop";
+  if (message.includes("repeated click loop")) return "click_loop";
   if (message.includes("cannot scroll down") || message.includes("cannot scroll up") || message.includes("did not move")) {
     return "scroll_boundary";
   }
@@ -84,6 +85,18 @@ export function isAlternatingScrollLoop(actionHistory, nextAction) {
 
   return [...recentScrolls, nextAction.direction].every(
     (direction, index, directions) => index === 0 || direction !== directions[index - 1]
+  );
+}
+
+export function isRepeatedClickLoop(actionHistory, nextAction) {
+  if (nextAction.action !== "click" || !nextAction.target?.id) return false;
+
+  const recentClicks = actionHistory
+    .filter(({ outcome, action }) => outcome === "ok" && action.payload.action === "click")
+    .slice(-3);
+  return (
+    recentClicks.length === 3 &&
+    recentClicks.every(({ action }) => action.payload.target?.id === nextAction.target.id)
   );
 }
 
@@ -185,6 +198,12 @@ export async function executeBrowserAction({
   throwIfInterrupted,
 }) {
   const payload = action.payload;
+
+  if (isRepeatedClickLoop(actionHistory, payload)) {
+    throw new Error(
+      `Repeated click loop detected for target '${payload.target.id}'. Choose a different control or scroll to reveal the required control.`
+    );
+  }
 
   if (payload.action === "scroll") {
     if (isAlternatingScrollLoop(actionHistory, payload)) {

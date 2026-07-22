@@ -28,6 +28,9 @@ export async function collectObservation(page, observationConfig, turnToken) {
       const maxOptionsPerControl = Number.isFinite(cfg.maxOptionsPerControl)
         ? Math.max(1, Number(cfg.maxOptionsPerControl))
         : 30;
+      const maxScrollPreviews = Number.isFinite(cfg.maxScrollPreviews)
+        ? Math.max(0, Number(cfg.maxScrollPreviews))
+        : 20;
 
       const ignoreControlSelectors = Array.isArray(cfg.ignoreControlSelectors)
         ? cfg.ignoreControlSelectors.filter(
@@ -457,10 +460,38 @@ export async function collectObservation(page, observationConfig, turnToken) {
         };
       });
 
+      const revealDirection = (el, scrollContainer) => {
+        const containerRect = getVisibleClientRect(scrollContainer);
+        if (!containerRect) return "";
+
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom <= containerRect.top + 1 && scrollContainer.scrollTop > 1) return "up";
+        if (
+          rect.top >= containerRect.bottom - 1 &&
+          scrollContainer.scrollTop + scrollContainer.clientHeight < scrollContainer.scrollHeight - 1
+        ) {
+          return "down";
+        }
+        return "";
+      };
+
       const reservedControlIds = new Set(
         selectedElements.map(({ el }) => el.getAttribute("data-agentic-key")).filter(Boolean)
       );
       const assignedControlIds = new Set();
+      const documentOrder = (el) => {
+        let index = 0;
+        let current = el;
+        while ((current = current.previousElementSibling)) index += 1;
+        for (let parent = el.parentElement; parent; parent = parent.parentElement) {
+          let sibling = parent.previousElementSibling;
+          while (sibling) {
+            index += 1 + sibling.querySelectorAll("*").length;
+            sibling = sibling.previousElementSibling;
+          }
+        }
+        return index;
+      };
       const visibleControls = selectedElements.map(({ el, priority }) => {
         const textSegments = leafTextSegments(el);
         const text =
@@ -560,6 +591,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
 
         return {
           id: agenticId,
+          order: documentOrder(el),
           tag,
           role,
           type,
@@ -593,10 +625,61 @@ export async function collectObservation(page, observationConfig, turnToken) {
         };
       });
 
+      const scrollPreviews = [];
+      const addScrollPreview = (preview) => {
+        if (scrollPreviews.length < maxScrollPreviews) scrollPreviews.push(preview);
+      };
+      for (const el of queryAllInteractionRoots(controlsSelector)) {
+        if (seenElements.has(el) || !isVisible(el) || shouldIgnoreControl(el)) continue;
+        const scrollContainer = el.closest("[data-agentic-scroll-id]");
+        const scrollContainerId = scrollContainer ? scrollContainerIds.get(scrollContainer) : undefined;
+        const direction = scrollContainer ? revealDirection(el, scrollContainer) : "";
+        if (!scrollContainerId || !direction) continue;
+
+        const textSegments = leafTextSegments(el);
+        const text =
+          textSegments.join(" · ") || normalizeText(el.innerText || el.textContent || "");
+        const label = resolveControlName(el, textSegments);
+        addScrollPreview({
+          kind: "control",
+          order: documentOrder(el),
+          revealDirection: direction,
+          scrollContainerId,
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute("role") || "",
+          type: el.getAttribute("type") || "",
+          text,
+          label,
+          ...(el.getAttribute("aria-describedby")
+            ? { description: resolveReferencedText(el.getAttribute("aria-describedby")) }
+            : {})
+        });
+      }
+
       const headings = queryAllWithin(scopeRoot, headingSelector)
         .map((el) => normalizeText(el.textContent || ""))
         .filter(Boolean)
         .slice(0, maxHeadings);
+      const headingNodes = [];
+      for (const el of queryAllWithin(scopeRoot, headingSelector)) {
+        if (!isVisible(el) || el.closest(controlsSelector)) continue;
+          const scrollContainer = el.closest("[data-agentic-scroll-id]");
+        const scrollContainerId = scrollContainer ? scrollContainerIds.get(scrollContainer) : undefined;
+        const direction = scrollContainer ? revealDirection(el, scrollContainer) : "";
+        const heading = {
+          text: normalizeText(el.textContent || ""),
+          level: Number.parseInt(el.tagName.slice(1), 10) || 0,
+          order: documentOrder(el),
+          contextPath: resolveContextPath(el, scopeRoot),
+          ...(scrollContainerId ? { scrollContainerId } : {})
+        };
+        if (!heading.text) continue;
+        if (scrollContainerId && direction) {
+          addScrollPreview({ kind: "heading", revealDirection: direction, ...heading });
+        } else if (headingNodes.length < maxHeadings) {
+          headingNodes.push(heading);
+        }
+      }
 
       const alerts = queryAllWithin(scopeRoot, alertSelector)
         .map((el) => normalizeText(el.textContent || ""))
@@ -641,6 +724,8 @@ export async function collectObservation(page, observationConfig, turnToken) {
           title: activeModal ? resolveModalTitle(activeModal) : ""
         },
         headings,
+        headingNodes,
+        scrollPreviews,
         alerts,
         documentText,
         scrollContainers,

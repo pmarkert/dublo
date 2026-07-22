@@ -27,6 +27,18 @@ type Observation = {
     canScrollUp: boolean;
     canScrollDown: boolean;
   }>;
+  headingNodes: Array<{
+    text: string;
+    level: number;
+    contextPath: string[];
+    scrollContainerId?: string;
+  }>;
+  scrollPreviews: Array<{
+    kind: string;
+    label?: string;
+    scrollContainerId: string;
+    revealDirection: string;
+  }>;
 };
 
 void test("observes blocking modal controls, active overlay options, and scroll containers", async () => {
@@ -103,6 +115,19 @@ void test("observes blocking modal controls, active overlay options, and scroll 
     assert.equal(
       observation.controls.find((control) => control.label === "Close dialog")?.scrollContainerId,
       undefined
+    );
+    assert.deepEqual(
+      observation.scrollPreviews.map(({ kind, label, scrollContainerId, revealDirection }) => [
+        kind,
+        label,
+        scrollContainerId,
+        revealDirection
+      ]),
+      [["control", "Offscreen action", "s1", "down"]]
+    );
+    assert.deepEqual(
+      observation.headingNodes.map((heading) => [heading.text, heading.level, heading.contextPath]),
+      [["Schedule", 2, ["Schedule"]]]
     );
   } finally {
     await browser.close();

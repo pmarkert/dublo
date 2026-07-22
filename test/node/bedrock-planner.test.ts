@@ -69,6 +69,49 @@ void test("Bedrock planner validates tool-use actions through an injected client
   assert.match(requestJson, /"text":"dynamic"/);
   assert.doesNotMatch(requestJson, /"text":""/);
   assert.doesNotMatch(requestJson, /"strict":true/);
+  assert.doesNotMatch(requestJson, /"inferenceConfig"/);
+});
+
+void test("Bedrock planner forwards configured inference settings without a token default", async () => {
+  const requests: unknown[] = [];
+  const planner = createBedrockPlanner(
+    {
+      modelId: "test-model",
+      region: "us-east-1",
+      inferenceConfig: { temperature: 0, maxTokens: 1400 }
+    },
+    {
+      client: {
+        send(command) {
+          requests.push(command.input);
+          return Promise.resolve({
+            output: {
+              message: {
+                content: [
+                  {
+                    toolUse: {
+                      name: "planner_action",
+                      input: {
+                        reason: "Success criteria are visible.",
+                        payload: { action: "finish" }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          });
+        }
+      }
+    }
+  );
+
+  await planner.nextAction({ messages });
+
+  assert.deepEqual((requests[0] as { inferenceConfig?: unknown }).inferenceConfig, {
+    temperature: 0,
+    maxTokens: 1400
+  });
 });
 
 void test("Bedrock planner enables strict tool validation when the model supports it", async () => {

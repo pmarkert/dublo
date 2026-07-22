@@ -238,13 +238,6 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
   };
 }
 
-function buildInferenceConfig(
-  config: BedrockPlannerConfig,
-  maxTokens: number
-): Record<string, unknown> {
-  return { maxTokens, ...(config.inferenceConfig ?? {}) };
-}
-
 function buildRequest(
   config: BedrockPlannerConfig,
   input: Record<string, unknown>,
@@ -294,7 +287,7 @@ export function createBedrockPlanner(
               ]
             }
           ],
-          inferenceConfig: buildInferenceConfig(config, 20),
+          ...(config.inferenceConfig ? { inferenceConfig: config.inferenceConfig } : {}),
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
             : {}),
@@ -324,7 +317,7 @@ export function createBedrockPlanner(
         await sendWithServiceTierFallback(client, config, {
           system: [{ text: request.messages.systemText }],
           messages: [{ role: "user", content }],
-          inferenceConfig: buildInferenceConfig(config, 700),
+          ...(config.inferenceConfig ? { inferenceConfig: config.inferenceConfig } : {}),
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
             : {}),

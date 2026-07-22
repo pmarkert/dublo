@@ -4,6 +4,7 @@ import {
   classifyRecoverableActionError,
   isDocumentTextGone,
   isAlternatingScrollLoop,
+  isRepeatedClickLoop,
   resolveTargetControl
 } from "../../src/utils/scenario-runner.mjs";
 import {
@@ -89,6 +90,32 @@ void test("detects an alternating scroll loop in one container", () => {
   assert.equal(
     classifyRecoverableActionError(new Error("Planner scroll container 's1' cannot scroll down.")),
     "scroll_boundary"
+  );
+});
+
+void test("detects repeated clicks on the same target", () => {
+  const actionHistory = Array.from({ length: 3 }, () => ({
+    outcome: "ok",
+    action: { payload: { action: "click", target: { id: "description" } } }
+  }));
+
+  assert.equal(
+    isRepeatedClickLoop(actionHistory, { action: "click", target: { id: "description" } }),
+    true
+  );
+  assert.equal(
+    isRepeatedClickLoop(actionHistory, { action: "click", target: { id: "name" } }),
+    false
+  );
+  assert.equal(
+    isRepeatedClickLoop(actionHistory, { action: "fill", target: { id: "description" } }),
+    false
+  );
+  assert.equal(
+    classifyRecoverableActionError(
+      new Error("Repeated click loop detected for target 'description'.")
+    ),
+    "click_loop"
   );
 });
 
@@ -196,6 +223,10 @@ void test("environment-backed secrets stay out of planner context and resolve on
     resolveFillValue("{{secret:checkout.password}}", contextData, new Map(), secretValues),
     "correct-horse-battery-staple"
   );
+  assert.equal(
+    resolveFillValue("{{context:email}}", { email: "user@example.test" }, new Map()),
+    "user@example.test"
+  );
 
   const messages = buildPlannerMessages({
     testPrompt: "Sign in.",
@@ -221,7 +252,6 @@ void test("environment-backed secrets stay out of planner context and resolve on
   assert.match(messages.systemText, /give_up/);
   assert.doesNotMatch(messages.systemText, /correct-horse-battery-staple/);
   assert.equal(messages.staticContextText, "");
-  assert.match(messages.dynamicContextText, /\*{7}/);
   assert.doesNotMatch(messages.dynamicContextText, /correct-horse-battery-staple/);
 });
 
@@ -318,10 +348,7 @@ void test("planner messages require ID-only target selectors", () => {
   assert.match(messages.systemText, /set target to exactly/);
   assert.match(messages.systemText, /action and action-specific fields in payload/);
   assert.match(messages.systemText, /use scroll with its ID as containerId/);
-  assert.match(
-    messages.systemText,
-    /Never invent an ID or substitute another actionable control for a control mentioned only in Visible Page Text/
-  );
+  assert.match(messages.systemText, /Never invent an ID or substitute another actionable control/);
   assert.match(messages.dynamicContextText, /## Currently Actionable Controls/);
   assert.match(
     messages.dynamicContextText,
@@ -354,6 +381,8 @@ void test("planner messages do not permit target-selector fallbacks", () => {
 
   assert.match(messages.systemText, /set target to exactly/);
   assert.doesNotMatch(messages.systemText, /You may combine any visible control fields/);
+  assert.doesNotMatch(messages.systemText, /observation\.modal\.blocksBackground/);
+  assert.doesNotMatch(messages.systemText, /background controls/);
 });
 
 void test("planner messages place a scroll container at its first owned control", () => {
@@ -443,7 +472,7 @@ void test("planner messages place a scroll container at its first owned control"
   assert.ok(text.indexOf("Scroll `s1`") < text.indexOf("`Application footer`"));
 });
 
-void test("planner messages distinguish offscreen document text from actionable controls", () => {
+void test("planner messages exclude document text from the actionable hierarchy", () => {
   const messages = buildPlannerMessages({
     testPrompt: "Set the frequency to Daily.",
     personaText: "persona",
@@ -463,6 +492,26 @@ void test("planner messages distinguish offscreen document text from actionable 
           contextPath: ["Create routine"],
           canScrollUp: false,
           canScrollDown: true
+        }
+      ],
+      scrollPreviews: [
+        {
+          kind: "heading",
+          order: 2,
+          revealDirection: "down",
+          scrollContainerId: "s1",
+          text: "Schedule",
+          level: 2
+        },
+        {
+          kind: "control",
+          order: 3,
+          revealDirection: "down",
+          scrollContainerId: "s1",
+          label: "Frequency",
+          text: "Frequency",
+          role: "",
+          type: "button"
         }
       ],
       controls: [
@@ -489,13 +538,23 @@ void test("planner messages distinguish offscreen document text from actionable 
     screenshotRequested: false
   });
 
-  assert.match(messages.dynamicContextText, /Visible Page Text\nSchedule Frequency Daily Weekly/);
+  assert.doesNotMatch(messages.dynamicContextText, /Visible Page Text/);
+  assert.doesNotMatch(messages.dynamicContextText, /Schedule Frequency Daily Weekly/);
   assert.match(
     messages.dynamicContextText,
     /Scroll `s1` \(`Create routine form`\): can scroll up: false; can scroll down: true/
   );
-  assert.doesNotMatch(messages.dynamicContextText, /label: `Frequency`/);
+  assert.match(
+    messages.dynamicContextText,
+    /Scroll down in `s1` to reveal:\n      - Preview: Heading `Schedule` \[level 2\]\n      - Preview: Control: label: `Frequency`; text: `Frequency`; type: `button`/
+  );
+  assert.match(
+    messages.systemText,
+    /the next action must scroll the named container in the preview direction/
+  );
   assert.doesNotMatch(messages.dynamicContextText, /label: `Daily`/);
+  assert.doesNotMatch(messages.dynamicContextText, /- `Frequency`:/);
+  assert.doesNotMatch(messages.dynamicContextText, /\n      - Control:/);
 });
 
 void test("planner messages nest observed controls under their semantic context", () => {
@@ -540,6 +599,58 @@ void test("planner messages nest observed controls under their semantic context"
   assert.doesNotMatch(messages.dynamicContextText, /context: `Primary navigation`/);
 });
 
+void test("planner messages render dialogs and headings in the semantic hierarchy", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Create a routine.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: {
+      url: "https://example.test",
+      title: "Routines",
+      modal: { open: true, role: "dialog", ariaModal: "true", title: "Create routine" },
+      headings: ["Create routine", "Schedule"],
+      headingNodes: [
+        { text: "Create routine", level: 2, order: 1, contextPath: ["Create routine"] },
+        { text: "Schedule", level: 3, order: 2, contextPath: ["Create routine"] }
+      ],
+      alerts: ["Required fields are missing"],
+      documentText: "Create routine Schedule",
+      controls: [
+        {
+          id: "name",
+          tag: "input",
+          role: "",
+          type: "text",
+          priority: false,
+          text: "",
+          label: "Name",
+          ariaLabel: "",
+          placeholder: "Routine name",
+          contextPath: ["Create routine"],
+          order: 3,
+          hasValue: false,
+          checked: false
+        }
+      ]
+    },
+    actionHistory: [],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  const text = messages.dynamicContextText;
+  assert.match(
+    text,
+    /- Dialog `Create routine`; modal: true\n  - Heading `Schedule` \[level 3\]\n  - `name`:/
+  );
+  assert.match(text, /- Alert: `Required fields are missing`/);
+  assert.doesNotMatch(text, /- Modal:/);
+  assert.doesNotMatch(text, /- Headings:/);
+  assert.doesNotMatch(text, /- Alerts:/);
+  assert.doesNotMatch(text, /Heading `Create routine`/);
+});
+
 void test("planner messages include observed native select options", () => {
   const messages = buildPlannerMessages({
     testPrompt: "Configure a schedule.",
@@ -581,7 +692,7 @@ void test("planner messages include observed native select options", () => {
 
   assert.match(messages.systemText, /select_option/);
   assert.match(messages.systemText, /custom combobox/);
-  assert.match(messages.systemText, /successful submit or save/);
+  assert.match(messages.systemText, /newly visible item matching data created in this run/);
   assert.match(messages.dynamicContextText, /options: `Daily`, `Weekdays`/);
 });
 
@@ -617,8 +728,13 @@ void test("planner messages retain completed work beyond recent action history",
 
   assert.match(
     messages.systemText,
-    /do not restart a completed workflow merely because its entry control is visible/
+    /Your first task on every turn is to determine whether completedWork and current visible evidence/
   );
+  assert.match(
+    messages.systemText,
+    /If every success criterion is achieved, return finish immediately/
+  );
+  assert.match(messages.systemText, /Do not restart, recreate, or repeat a workflow/);
   assert.match(messages.dynamicContextText, /# Completed Work: Objective Evidence/);
   assert.match(
     messages.dynamicContextText,

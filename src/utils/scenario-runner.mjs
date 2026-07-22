@@ -23,6 +23,7 @@ import {
   executeBrowserAction,
   formatExpectedDocumentText,
   isAlternatingScrollLoop,
+  isRepeatedClickLoop,
   isDocumentTextGone,
   resolveTargetControl,
   waitForDocumentTextGone,
@@ -32,6 +33,7 @@ import {
 export {
   classifyRecoverableActionError,
   isAlternatingScrollLoop,
+  isRepeatedClickLoop,
   isDocumentTextGone,
   resolveTargetControl
 };
@@ -819,6 +821,8 @@ export async function runScenario(config, options = {}) {
                       ? "select_option is only valid for native select controls with an observed options list. For a custom combobox, click a visible role=option control."
                       : recoverableOutcome === "scroll_loop"
                         ? "Repeated alternating scrolling does not add evidence. Use completedWork and the current observation to take a non-scroll action or finish."
+                        : recoverableOutcome === "click_loop"
+                          ? "The same control was clicked repeatedly without producing new evidence. Choose a different control or scroll the relevant container toward an absent previewed control."
                         : recoverableOutcome === "scroll_boundary"
                           ? "The scroll container is at its boundary. Use the current observation to take a non-scroll action or finish."
                           : undefined,
