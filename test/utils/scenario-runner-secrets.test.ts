@@ -29,7 +29,9 @@ void test("waits until all configured document texts have disappeared", () => {
 
 void test("distinguishes invalid planner targets from targets that disappear during a transition", () => {
   assert.equal(
-    classifyRecoverableActionError(new Error("Planner target is not in the current observation: a4")),
+    classifyRecoverableActionError(
+      new Error("Planner target is not in the current observation: a4")
+    ),
     "invalid_target"
   );
   assert.equal(
@@ -236,8 +238,77 @@ void test("planner messages require ID-only target selectors", () => {
       headings: [],
       alerts: [],
       documentText: "Routines",
-      scrollContainers: [{ id: "s1", canScrollUp: false, canScrollDown: true }],
-      controls: []
+      scrollContainers: [
+        {
+          id: "s1",
+          label: "Routine form",
+          contextPath: ["Create routine"],
+          canScrollUp: false,
+          canScrollDown: true
+        }
+      ],
+      controls: [
+        {
+          id: "name",
+          tag: "input",
+          role: "",
+          type: "text",
+          priority: false,
+          text: "",
+          label: "Name",
+          ariaLabel: "",
+          placeholder: "Routine name",
+          contextPath: ["Create routine", "Routine form", "form"],
+          scrollContainerId: "s1",
+          hasValue: false,
+          checked: false
+        },
+        {
+          id: "description",
+          tag: "textarea",
+          role: "",
+          type: "",
+          priority: false,
+          text: "",
+          label: "Description",
+          ariaLabel: "",
+          placeholder: "Routine description",
+          contextPath: ["Create routine", "Routine form", "form"],
+          scrollContainerId: "s1",
+          hasValue: false,
+          checked: false
+        },
+        {
+          id: "duration",
+          tag: "button",
+          role: "",
+          type: "button",
+          priority: false,
+          text: "Duration Not selected",
+          label: "Add duration section",
+          ariaLabel: "",
+          placeholder: "",
+          contextPath: ["Create routine", "Routine form", "form", "Duration"],
+          scrollContainerId: "s1",
+          hasValue: false,
+          checked: false,
+          expanded: false
+        },
+        {
+          id: "close",
+          tag: "button",
+          role: "",
+          type: "button",
+          priority: false,
+          text: "Close",
+          label: "Close dialog",
+          ariaLabel: "",
+          placeholder: "",
+          contextPath: ["Create routine"],
+          hasValue: false,
+          checked: false
+        }
+      ]
     },
     actionHistory: [],
     humanInputs: new Map(),
@@ -246,9 +317,18 @@ void test("planner messages require ID-only target selectors", () => {
 
   assert.match(messages.systemText, /set target to exactly/);
   assert.match(messages.systemText, /action and action-specific fields in payload/);
-  assert.match(messages.systemText, /use scroll with its containerId and direction/);
-  assert.match(messages.dynamicContextText, /## Scroll Containers/);
-  assert.match(messages.dynamicContextText, /`s1`: can scroll up: false; can scroll down: true/);
+  assert.match(messages.systemText, /use scroll with its ID as containerId/);
+  assert.match(
+    messages.systemText,
+    /Never invent an ID or substitute another actionable control for a control mentioned only in Visible Page Text/
+  );
+  assert.match(messages.dynamicContextText, /## Currently Actionable Controls/);
+  assert.match(
+    messages.dynamicContextText,
+    /- `Create routine`\n  - Scroll `s1` \(`Routine form`\): can scroll up: false; can scroll down: true\n    - `form`\n      - `name`: label: `Name`; type: `text`; placeholder: `Routine name`\n      - `description`: label: `Description`; placeholder: `Routine description`\n      - `Duration`\n        - `duration`: label: `Add duration section`; text: `Duration Not selected`; type: `button`; collapsed\n  - `close`: label: `Close dialog`; text: `Close`; type: `button`/
+  );
+  assert.doesNotMatch(messages.dynamicContextText, /- `Routine form`\n/);
+  assert.doesNotMatch(messages.dynamicContextText, /## Scroll Containers/);
   assert.doesNotMatch(messages.systemText, /You may combine any visible control fields/);
 });
 
@@ -276,7 +356,149 @@ void test("planner messages do not permit target-selector fallbacks", () => {
   assert.doesNotMatch(messages.systemText, /You may combine any visible control fields/);
 });
 
-void test("planner messages include landmark context for observed controls", () => {
+void test("planner messages place a scroll container at its first owned control", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Open Routines.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: {
+      url: "https://example.test",
+      title: "Home",
+      modal: {},
+      headings: [],
+      alerts: [],
+      documentText: "Home",
+      scrollContainers: [
+        { id: "s1", label: "main", contextPath: [], canScrollUp: false, canScrollDown: true }
+      ],
+      controls: [
+        {
+          id: "header",
+          tag: "button",
+          role: "",
+          type: "button",
+          priority: true,
+          text: "Search",
+          label: "Search",
+          ariaLabel: "",
+          placeholder: "",
+          contextPath: ["Desktop header"],
+          hasValue: false,
+          checked: false
+        },
+        {
+          id: "routine",
+          tag: "a",
+          role: "",
+          type: "",
+          priority: true,
+          text: "Routines",
+          label: "Routines",
+          ariaLabel: "",
+          placeholder: "",
+          contextPath: ["Primary navigation"],
+          hasValue: false,
+          checked: false
+        },
+        {
+          id: "task",
+          tag: "button",
+          role: "",
+          type: "button",
+          priority: false,
+          text: "Add task",
+          label: "Add task",
+          ariaLabel: "",
+          placeholder: "",
+          contextPath: ["main"],
+          scrollContainerId: "s1",
+          hasValue: false,
+          checked: false
+        },
+        {
+          id: "privacy",
+          tag: "a",
+          role: "",
+          type: "",
+          priority: false,
+          text: "Privacy Policy",
+          label: "Privacy Policy",
+          ariaLabel: "",
+          placeholder: "",
+          contextPath: ["Application footer"],
+          hasValue: false,
+          checked: false
+        }
+      ]
+    },
+    actionHistory: [],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  const text = messages.dynamicContextText;
+  assert.ok(text.indexOf("`Desktop header`") < text.indexOf("`Primary navigation`"));
+  assert.ok(text.indexOf("`Primary navigation`") < text.indexOf("Scroll `s1`"));
+  assert.ok(text.indexOf("Scroll `s1`") < text.indexOf("`Application footer`"));
+});
+
+void test("planner messages distinguish offscreen document text from actionable controls", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Set the frequency to Daily.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: {
+      url: "https://example.test",
+      title: "Create routine",
+      modal: { open: true, title: "Create routine" },
+      headings: [],
+      alerts: [],
+      documentText: "Schedule Frequency Daily Weekly",
+      scrollContainers: [
+        {
+          id: "s1",
+          label: "Create routine form",
+          contextPath: ["Create routine"],
+          canScrollUp: false,
+          canScrollDown: true
+        }
+      ],
+      controls: [
+        {
+          id: "name",
+          tag: "input",
+          role: "",
+          type: "text",
+          priority: false,
+          text: "",
+          label: "Name",
+          ariaLabel: "",
+          placeholder: "Routine name",
+          contextPath: ["Create routine", "Create routine form", "form"],
+          scrollContainerId: "s1",
+          hasValue: true,
+          checked: false,
+          value: "Daily Breakfast"
+        }
+      ]
+    },
+    actionHistory: [],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  assert.match(messages.dynamicContextText, /Visible Page Text\nSchedule Frequency Daily Weekly/);
+  assert.match(
+    messages.dynamicContextText,
+    /Scroll `s1` \(`Create routine form`\): can scroll up: false; can scroll down: true/
+  );
+  assert.doesNotMatch(messages.dynamicContextText, /label: `Frequency`/);
+  assert.doesNotMatch(messages.dynamicContextText, /label: `Daily`/);
+});
+
+void test("planner messages nest observed controls under their semantic context", () => {
   const messages = buildPlannerMessages({
     testPrompt: "Open the routines page.",
     personaText: "persona",
@@ -311,7 +533,11 @@ void test("planner messages include landmark context for observed controls", () 
     screenshotRequested: false
   });
 
-  assert.match(messages.dynamicContextText, /label: `Routines`; text: `Routines`; context: `Primary navigation`/);
+  assert.match(
+    messages.dynamicContextText,
+    /- `Primary navigation`\n  - `a1`: label: `Routines`; text: `Routines`/
+  );
+  assert.doesNotMatch(messages.dynamicContextText, /context: `Primary navigation`/);
 });
 
 void test("planner messages include observed native select options", () => {
@@ -389,11 +615,19 @@ void test("planner messages retain completed work beyond recent action history",
     screenshotRequested: false
   });
 
-  assert.match(messages.dynamicContextText, /# Successful Actions: Historical Evidence Only/);
+  assert.match(
+    messages.systemText,
+    /do not restart a completed workflow merely because its entry control is visible/
+  );
+  assert.match(messages.dynamicContextText, /# Completed Work: Objective Evidence/);
+  assert.match(
+    messages.dynamicContextText,
+    /return finish instead of beginning the workflow again/
+  );
   assert.match(messages.dynamicContextText, /fill `Field 1` with `value 1`/);
 });
 
-void test("planner messages conditionally render runner feedback ahead of history", () => {
+void test("planner messages render feedback only from the immediately preceding action", () => {
   const baseArguments = {
     testPrompt: "Complete the form.",
     personaText: "persona",
@@ -413,34 +647,53 @@ void test("planner messages conditionally render runner feedback ahead of histor
   };
 
   const withoutFeedback = buildPlannerMessages({ ...baseArguments, actionHistory: [] });
-  assert.doesNotMatch(withoutFeedback.dynamicContextText, /# Recent Runner Feedback: Must Address/);
+  assert.doesNotMatch(
+    withoutFeedback.dynamicContextText,
+    /# Previous Action Feedback: Must Address/
+  );
 
+  const failedAction = {
+    step: 1,
+    outcome: "invalid_target",
+    runnerFeedback:
+      "The action targeted a control that is not in the current list of available controls.",
+    error: 'Planner target is not in the current observation: {"id":"ctl_missing"}',
+    action: {
+      reason: "Choose Daily.",
+      payload: { action: "click", target: { id: "ctl_missing" } }
+    }
+  };
   const withFeedback = buildPlannerMessages({
     ...baseArguments,
-    actionHistory: [
-      {
-        step: 1,
-        outcome: "invalid_target",
-        runnerFeedback: "The action targeted a control that is not in the current list of available controls.",
-        error: 'Planner target is not in the current observation: {"id":"ctl_missing"}',
-        action: {
-          reason: "Choose Daily.",
-          payload: { action: "click", target: { id: "ctl_missing" } }
-        }
-      }
-    ]
+    actionHistory: [failedAction]
   });
 
-  assert.match(withFeedback.dynamicContextText, /# Recent Runner Feedback: Must Address/);
+  assert.match(withFeedback.dynamicContextText, /# Previous Action Feedback: Must Address/);
   assert.match(withFeedback.dynamicContextText, /not in the current list of available controls/);
   assert.match(
     withFeedback.dynamicContextText,
     /Error: `Planner target is not in the current observation: \{"id":"ctl_missing"\}`/
   );
-  assert.ok(
-    withFeedback.dynamicContextText.indexOf("# Recent Runner Feedback: Must Address") <
-      withFeedback.dynamicContextText.indexOf("# Recent Actions")
+
+  const feedbackClearsAfterSuccess = buildPlannerMessages({
+    ...baseArguments,
+    actionHistory: [
+      failedAction,
+      {
+        step: 2,
+        outcome: "ok",
+        action: {
+          reason: "Choose the available option.",
+          payload: { action: "click", target: { id: "ctl_daily" } }
+        }
+      }
+    ]
+  });
+  assert.doesNotMatch(
+    feedbackClearsAfterSuccess.dynamicContextText,
+    /# Previous Action Feedback: Must Address/
   );
+  assert.doesNotMatch(withFeedback.dynamicContextText, /# Recent Actions/);
 });
 
 void test("secret redaction masks only exact string matches", () => {

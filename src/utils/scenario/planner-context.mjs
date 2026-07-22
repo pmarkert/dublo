@@ -31,8 +31,7 @@ function renderControl(control) {
     control.pressed && "pressed",
     control.disabled && "disabled",
     control.expanded === true && "expanded",
-    control.expanded === false && "collapsed",
-    control.contextPath?.length && `context: ${renderValue(control.contextPath.join(" > "))}`
+    control.expanded === false && "collapsed"
   ].filter(Boolean);
   const options = control.options?.length
     ? `; options: ${control.options.map((option) => renderValue(option.label || option.value)).join(", ")}`
@@ -40,16 +39,83 @@ function renderControl(control) {
   return `- ${renderValue(control.id)}: ${details.join("; ") || "control"}${options}`;
 }
 
+function createTreeNode() {
+  return { childNodes: new Map(), items: [] };
+}
+
+function treeNodeForPath(root, path) {
+  let node = root;
+  for (const segment of path || []) {
+    if (!node.childNodes.has(segment)) {
+      const child = createTreeNode();
+      node.childNodes.set(segment, child);
+      node.items.push({ type: "node", label: segment, node: child });
+    }
+    node = node.childNodes.get(segment);
+  }
+  return node;
+}
+
+function relativePath(path, ancestorPath) {
+  const normalizedPath = path || [];
+  const normalizedAncestor = ancestorPath || [];
+  return normalizedPath
+    .slice(0, normalizedAncestor.length)
+    .every((part, index) => part === normalizedAncestor[index])
+    ? normalizedPath.slice(normalizedAncestor.length)
+    : normalizedPath;
+}
+
+function pathWithinScrollContainer(control, container) {
+  const path = relativePath(control.contextPath, container.contextPath);
+  return path[0] === container.label ? path.slice(1) : path;
+}
+
+function renderActionableTree(controls, scrollContainers) {
+  const root = createTreeNode();
+  const containersById = new Map(scrollContainers.map((container) => [container.id, container]));
+  const containerNodes = new Map();
+
+  const insertScrollContainer = (container) => {
+    if (containerNodes.has(container.id)) return containerNodes.get(container.id);
+    const parentNode = treeNodeForPath(root, container.contextPath);
+    const containerNode = createTreeNode();
+    parentNode.items.push({ type: "scroll", container, node: containerNode });
+    containerNodes.set(container.id, containerNode);
+    return containerNode;
+  };
+
+  for (const control of controls) {
+    const container = containersById.get(control.scrollContainerId);
+    const parentNode = container ? insertScrollContainer(container) : root;
+    const path = container ? pathWithinScrollContainer(control, container) : control.contextPath;
+    treeNodeForPath(parentNode, path).items.push({ type: "control", control });
+  }
+
+  for (const container of scrollContainers) insertScrollContainer(container);
+
+  const renderNode = (node, indent = "") =>
+    node.items.flatMap((item) => {
+      if (item.type === "node") {
+        return [`${indent}- ${renderValue(item.label)}`, ...renderNode(item.node, `${indent}  `)];
+      }
+      if (item.type === "scroll") {
+        const { container } = item;
+        return [
+          `${indent}- Scroll ${renderValue(container.id)} (${renderValue(container.label)}): can scroll up: ${container.canScrollUp}; can scroll down: ${container.canScrollDown}`,
+          ...renderNode(item.node, `${indent}  `)
+        ];
+      }
+      return [`${indent}${renderControl(item.control)}`];
+    });
+
+  return renderNode(root);
+}
+
 function renderSuccessfulAction(item) {
   const target = item.target?.label || item.target?.ariaLabel || item.target?.text || "control";
   const value = item.value ? ` with ${renderValue(item.value)}` : "";
   return `- Step ${item.step}: ${item.action} ${renderValue(target)}${value}`;
-}
-
-function renderRecentAction(item) {
-  const target = item.action.payload.target?.id || item.action.payload.containerId || "";
-  const outcome = item.outcome === "ok" ? "succeeded" : item.outcome;
-  return `- Step ${item.step}: ${item.action.payload.action}${target ? ` ${renderValue(target)}` : ""} (${outcome})`;
 }
 
 export function buildPlannerMessages({
@@ -76,6 +142,7 @@ export function buildPlannerMessages({
     placeholder: clip(control.placeholder),
     ...(control.description ? { description: clip(control.description) } : {}),
     ...(control.contextPath?.length ? { contextPath: control.contextPath } : {}),
+    ...(control.scrollContainerId ? { scrollContainerId: control.scrollContainerId } : {}),
     ...(control.value ? { value: clip(control.value) } : {}),
     ...(control.options ? { options: control.options } : {}),
     hasValue: control.hasValue,
@@ -114,8 +181,10 @@ export function buildPlannerMessages({
     "For fill actions, also provide a value.",
     "Treat checked, selected, and pressed as current control state. Do not click a control that is already in the state required by the objective.",
     "Use select_option only for an observed native select that includes an options list, using an observed option value. For an open custom combobox, click the visible role=option control instead.",
-    "When an observed scroll container has canScrollDown or canScrollUp, use scroll with its containerId and direction to reveal more content before escalating.",
-    "Important: completedWork is a durable record of successful work from this run. Do not scroll only to re-verify completed work; use the current observation and completedWork to decide what remains. You might not be able to verify all fields on one screen at a time.",
+    "When an actionable Scroll entry has can scroll down or can scroll up, use scroll with its ID as containerId and the matching direction to reveal more content before escalating.",
+    "Visible Page Text may describe content outside the current viewport. Only IDs in the actionable tree can be clicked, filled, or selected. Never invent an ID or substitute another actionable control for a control mentioned only in Visible Page Text. When the objective requires such a control, scroll actionable Scroll ancestors that can reveal more content.",
+    "Important: completedWork is a durable record of successful work from this run and is authoritative evidence when deciding whether the objective is complete. Before choosing another action, compare the objective against completedWork. If it covers every success criterion, return finish; do not restart a completed workflow merely because its entry control is visible.",
+    "Do not scroll only to re-verify completed work; use the current observation and completedWork to decide what remains. You might not be able to verify all fields on one screen at a time.",
     "A successful submit or save followed by visible confirmation of the saved item is sufficient persistence evidence. Do not reopen a saved item merely to inspect settings already recorded in completedWork unless the objective explicitly requires post-save verification or visible evidence contradicts it.",
     "Before finishing, do not try to audit every part of a long form from one viewport. Combine current visible evidence with completedWork; if all success criteria are covered, finish instead of alternating scroll directions.",
     ...(secretValues.size > 0
@@ -140,8 +209,9 @@ export function buildPlannerMessages({
     "If the structured observation is insufficient, use request_screenshot."
   ];
 
-  const recentActions = actionHistory.slice(-10);
-  const runnerFeedback = recentActions.filter((item) => item.runnerFeedback);
+  const previousActionFeedback = actionHistory.at(-1)?.runnerFeedback
+    ? actionHistory.at(-1)
+    : undefined;
   const redactedCompletedWork = redactSecretValues(completedWork, secretValues);
   const knownHumanInputs = Object.fromEntries(humanInputs.entries());
 
@@ -163,16 +233,10 @@ export function buildPlannerMessages({
     "## Visible Page Text",
     clip(redactedObservation.documentText, 1600) || "(none)",
     "",
-    "## Scroll Containers",
-    ...(redactedObservation.scrollContainers?.length
-      ? redactedObservation.scrollContainers.map(
-          (container) =>
-            `- ${renderValue(container.id)}${container.label ? ` (${renderValue(container.label)})` : ""}: can scroll up: ${container.canScrollUp}; can scroll down: ${container.canScrollDown}`
-        )
-      : ["- None"]),
-    "",
     "## Currently Actionable Controls",
-    ...(compactControls.length ? compactControls.map(renderControl) : ["- None"]),
+    ...(compactControls.length || redactedObservation.scrollContainers?.length
+      ? renderActionableTree(compactControls, redactedObservation.scrollContainers || [])
+      : ["- None"]),
     ...(screenshotRequested
       ? ["", "## Screenshot", "A screenshot of the current viewport is attached to this turn."]
       : []),
@@ -185,26 +249,21 @@ export function buildPlannerMessages({
           )
         ]
       : []),
-    ...(runnerFeedback.length
+    ...(previousActionFeedback
       ? [
           "",
-          "# Recent Runner Feedback: Must Address",
-          ...runnerFeedback.map(
-            (item) =>
-              `- Step ${item.step}: ${item.runnerFeedback}${item.error ? ` Error: ${renderValue(item.error)}` : ""}`
-          )
+          "# Previous Action Feedback: Must Address",
+          `- Step ${previousActionFeedback.step}: ${previousActionFeedback.runnerFeedback}${previousActionFeedback.error ? ` Error: ${renderValue(previousActionFeedback.error)}` : ""}`
         ]
       : []),
     ...(redactedCompletedWork.length
       ? [
           "",
-          "# Successful Actions: Historical Evidence Only",
-          "These actions succeeded previously, but do not make their IDs valid for the current turn.",
+          "# Completed Work: Objective Evidence",
+          "These actions succeeded in this run. Their IDs are invalid unless currently observed, but the actions are authoritative evidence for deciding whether the objective is already complete.",
+          "If these actions cover every success criterion, return finish instead of beginning the workflow again.",
           ...redactedCompletedWork.map(renderSuccessfulAction)
         ]
-      : []),
-    ...(recentActions.length
-      ? ["", "# Recent Actions", ...recentActions.map(renderRecentAction)]
       : [])
   ].join("\n");
 

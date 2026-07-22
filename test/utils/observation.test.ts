@@ -11,8 +11,22 @@ type Observation = {
     ariaModal: string;
     title: string;
   };
-  controls: Array<{ id: string; label: string; text: string; role: string; priority: boolean; contextPath: string[] }>;
-  scrollContainers: Array<{ id: string; label?: string; contextPath: string[]; canScrollUp: boolean; canScrollDown: boolean }>;
+  controls: Array<{
+    id: string;
+    label: string;
+    text: string;
+    role: string;
+    priority: boolean;
+    contextPath: string[];
+    scrollContainerId?: string;
+  }>;
+  scrollContainers: Array<{
+    id: string;
+    label?: string;
+    contextPath: string[];
+    canScrollUp: boolean;
+    canScrollDown: boolean;
+  }>;
 };
 
 void test("observes blocking modal controls, active overlay options, and scroll containers", async () => {
@@ -32,7 +46,8 @@ void test("observes blocking modal controls, active overlay options, and scroll 
         <h2 id="dialog-title">Schedule</h2>
         <button id="inside">Save schedule</button>
         <button id="frequency" aria-expanded="true" aria-controls="frequency-options">Frequency</button>
-        <div id="scroll-area"><div id="scroll-content">Scrollable details<button id="offscreen">Offscreen action</button></div></div>
+        <div id="scroll-area"><form><button>Visible form action</button><div id="scroll-content">Scrollable details<button id="offscreen">Offscreen action</button></div></form></div>
+        <button>Close dialog</button>
       </section>
       <div id="frequency-options" role="listbox">
         <div role="option">Weekdays</div>
@@ -69,6 +84,25 @@ void test("observes blocking modal controls, active overlay options, and scroll 
     assert.equal(
       observation.scrollContainers.some((container) => container.canScrollDown),
       true
+    );
+    assert.deepEqual(
+      observation.scrollContainers.find((container) => container.id === "s1"),
+      {
+        id: "s1",
+        label: "Schedule form",
+        contextPath: ["Schedule"],
+        canScrollUp: false,
+        canScrollDown: true
+      }
+    );
+    assert.equal(
+      observation.controls.find((control) => control.label === "Visible form action")
+        ?.scrollContainerId,
+      "s1"
+    );
+    assert.equal(
+      observation.controls.find((control) => control.label === "Close dialog")?.scrollContainerId,
+      undefined
     );
   } finally {
     await browser.close();
@@ -162,7 +196,8 @@ void test("includes named native landmarks in control context", async () => {
     `);
 
     const observation = (await collectObservation(page, { maxControls: 10 }, "t1")) as Observation;
-    const contextFor = (label: string) => observation.controls.find((control) => control.label === label)?.contextPath;
+    const contextFor = (label: string) =>
+      observation.controls.find((control) => control.label === label)?.contextPath;
 
     assert.deepEqual(contextFor("Search"), ["Desktop header"]);
     assert.deepEqual(contextFor("Home"), ["Primary navigation"]);
