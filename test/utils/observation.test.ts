@@ -25,13 +25,14 @@ void test("observes blocking modal controls, active overlay options, and scroll 
         #dialog { width: 320px; height: 220px; }
         #scroll-area { height: 60px; overflow-y: auto; }
         #scroll-content { height: 180px; }
+        #offscreen { margin-top: 120px; }
       </style>
       <button id="outside">Background action</button>
       <section id="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
         <h2 id="dialog-title">Schedule</h2>
         <button id="inside">Save schedule</button>
         <button id="frequency" aria-expanded="true" aria-controls="frequency-options">Frequency</button>
-        <div id="scroll-area"><div id="scroll-content">Scrollable details</div></div>
+        <div id="scroll-area"><div id="scroll-content">Scrollable details<button id="offscreen">Offscreen action</button></div></div>
       </section>
       <div id="frequency-options" role="listbox">
         <div role="option">Weekdays</div>
@@ -60,6 +61,10 @@ void test("observes blocking modal controls, active overlay options, and scroll 
         (control) => control.role === "option" && control.text === "Weekdays" && control.priority
       ),
       true
+    );
+    assert.equal(
+      observation.controls.some((control) => control.label === "Offscreen action"),
+      false
     );
     assert.equal(
       observation.scrollContainers.some((container) => container.canScrollDown),

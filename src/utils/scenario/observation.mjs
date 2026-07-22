@@ -316,6 +316,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
     for (const el of overlayControls) {
       if (selectedElements.length >= maxControls) break;
       if (!isVisible(el)) continue;
+      if (!isLayerClickable(el)) continue;
       if (shouldIgnoreControl(el)) continue;
       seenElements.add(el);
       selectedElements.push({ el, priority: true });
@@ -327,7 +328,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
       for (const el of nodes) {
         if (seenElements.has(el)) continue;
         if (!isVisible(el)) continue;
-        if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
+        if (!isLayerClickable(el)) continue;
         if (shouldIgnoreControl(el)) continue;
         seenElements.add(el);
         selectedElements.push({ el, priority: true });
@@ -341,7 +342,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
       if (selectedElements.length >= maxControls) break;
       if (seenElements.has(el)) continue;
       if (!isVisible(el)) continue;
-      if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
+      if (!isLayerClickable(el)) continue;
       if (shouldIgnoreControl(el)) continue;
       seenElements.add(el);
       selectedElements.push({ el, priority: false });

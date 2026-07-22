@@ -55,6 +55,7 @@ export function classifyRecoverableActionError(error) {
   ) {
     return "disabled_target";
   }
+  if (message.includes("selected option before click")) return "already_selected";
   if (message.includes("planner target not found")) return "target_disappeared";
   if (message.includes("planner select_option target is not a native select")) return "invalid_selection";
   if (message.includes("alternating scroll loop")) return "scroll_loop";
@@ -217,6 +218,9 @@ export async function executeBrowserAction({
   if ((await target.count()) === 0) throw new Error(`Planner target not found: ${describeTarget(payload.target)}`);
 
   if (payload.action === "click") {
+    if (matchedControl.role === "option" && matchedControl.selected) {
+      throw new Error(`Selected option before click: ${describeTarget(payload.target)}`);
+    }
     if (await isTargetDisabled(target)) throw new Error(`Disabled target before click: ${describeTarget(payload.target)}`);
     logger.info(`clicking target ${describeTarget(payload.target)}`);
     await target.click({ timeout: 1500 });

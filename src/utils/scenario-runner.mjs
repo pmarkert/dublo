@@ -481,7 +481,6 @@ export async function runScenario(config, options = {}) {
         actionHistory,
         humanInputs,
         screenshotRequested: Boolean(screenshotBufferForThisTurn),
-        strictTargetSelectors: config.llm.supportsStrictToolUse === true,
       });
 
       debugLogger.log(
@@ -730,6 +729,8 @@ export async function runScenario(config, options = {}) {
         runnerFeedback:
           recoverableOutcome === "disabled_target"
             ? "Click was blocked because the target is disabled. Resolve any prerequisite validation or required fields before trying again."
+            : recoverableOutcome === "already_selected"
+              ? "The selected option already has the required state. Do not click it again; use the current observation to continue."
             : recoverableOutcome === "target_disappeared"
               ? "The target disappeared before the action could run, so the UI is transitioning. Inspect the fresh observation instead of repeating the action."
             : recoverableOutcome === "wait_timeout"

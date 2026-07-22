@@ -16,7 +16,6 @@ export function buildPlannerMessages({
   humanInputs,
   secretValues = new Map(),
   screenshotRequested,
-  strictTargetSelectors = false,
 }) {
   const redactedObservation = redactSecretValues(observation, secretValues);
   const compactControls = redactedObservation.controls.map((control) => ({
@@ -59,22 +58,18 @@ export function buildPlannerMessages({
     contextData,
     ...(secretValues.size > 0 ? { availableSecretPaths: [...secretValues.keys()] } : {}),
     planningRules: [
-      "Use visible controls only.",
       "Always provide a non-empty reason for the chosen action.",
       "If observation.modal.blocksBackground is true, only interact with controls listed from the blocking modal context.",
       "If observation.modal.open is true but observation.modal.blocksBackground is false, you may still use background controls when needed.",
-      "Do not invent element IDs.",
-      "For click and fill actions, always provide a target object that matches exactly one visible control.",
-      strictTargetSelectors
-        ? "Use only the visible control ID as the target selector, for example { id: 'a3' }."
-        : "Use only the visible control ID as the target selector by default, for example { id: 'a3' }. Add other visible control fields only after target-resolution feedback says the ID-only selector did not match.",
+      "Control IDs are assigned fresh on every observation. Choose an ID from the current observation only; never reuse an ID from a previous turn.",
+      "For click, fill, and select_option, set target to exactly { id: '<observed control ID>' }.",
       "Put action and action-specific fields in payload; keep reason at the root.",
       "Never emit click or fill without target.",
       "For fill actions, also provide a value.",
       "Treat checked, selected, and pressed as current control state. Do not click a control that is already in the state required by the objective.",
       "Use select_option only for an observed native select that includes an options list, using an observed option value. For an open custom combobox, click the visible role=option control instead.",
       "When an observed scroll container has canScrollDown or canScrollUp, use scroll with its containerId and direction to reveal more content before escalating.",
-      "completedWork is a durable record of successful work from this run. Do not scroll only to re-verify completed work; use the current observation and completedWork to decide what remains.",
+      "Important: completedWork is a durable record of successful work from this run. Do not scroll only to re-verify completed work; use the current observation and completedWork to decide what remains. You might not be able to verify all fields on one screen at a time.",
       "A successful submit or save followed by visible confirmation of the saved item is sufficient persistence evidence. Do not reopen a saved item merely to inspect settings already recorded in completedWork unless the objective explicitly requires post-save verification or visible evidence contradicts it.",
       "Before finishing, do not try to audit every part of a long form from one viewport. Combine current visible evidence with completedWork; if all success criteria are covered, finish instead of alternating scroll directions.",
       ...(secretValues.size > 0

@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
-import { PlannerActionSchema } from "../ports/planner.js";
+import { parsePlannerAction } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface BedrockPlannerConfig {
@@ -65,9 +65,9 @@ function assertBedrockConverseResponse(value: unknown): Record<string, unknown> 
   return value;
 }
 
-function parsePlannerAction(rawAction: unknown) {
+function parseBedrockPlannerAction(rawAction: unknown) {
   try {
-    return PlannerActionSchema.parse(rawAction);
+    return parsePlannerAction(rawAction);
   } catch (error) {
     const action =
       isRecord(rawAction) &&
@@ -123,33 +123,12 @@ function serviceTier(config: BedrockPlannerConfig): "priority" | "flex" | "reser
     : undefined;
 }
 
-function buildTargetSchema(strict: boolean): Record<string, unknown> {
-  if (strict) {
-    return {
-      type: "object",
-      additionalProperties: false,
-      required: ["id"],
-      properties: { id: { type: "string" } }
-    };
-  }
-
+function buildTargetSchema(): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
-    properties: {
-      id: { type: "string" },
-      tag: { type: "string" },
-      role: { type: "string" },
-      type: { type: "string" },
-      priority: { type: "boolean" },
-      text: { type: "string" },
-      ariaLabel: { type: "string" },
-      label: { type: "string" },
-      placeholder: { type: "string" },
-      hasValue: { type: "boolean" },
-      checked: { type: "boolean" },
-      disabled: { type: "boolean" }
-    }
+    required: ["id"],
+    properties: { id: { type: "string" } }
   };
 }
 
@@ -169,8 +148,8 @@ function buildActionPayloadVariant(
   };
 }
 
-function buildActionSchema(strict: boolean): Record<string, unknown> {
-  const target = buildTargetSchema(strict);
+function buildActionSchema(): Record<string, unknown> {
+  const target = buildTargetSchema();
   const expectGone = {
     type: "object",
     additionalProperties: false,
@@ -234,7 +213,7 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
               name: "planner_action",
               description: "Return the next UI automation action as structured JSON input.",
               strict: true,
-              inputSchema: { json: buildActionSchema(true) }
+              inputSchema: { json: buildActionSchema() }
             }
           }
         ],
@@ -250,7 +229,7 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
           toolSpec: {
             name: "planner_action",
             description: "Return the next UI automation action as structured JSON input.",
-            inputSchema: { json: buildActionSchema(false) }
+            inputSchema: { json: buildActionSchema() }
           }
         }
       ],
@@ -367,12 +346,12 @@ export function createBedrockPlanner(
           .trim();
         if (!text) throw new Error("Bedrock planner API returned no planner action.");
         return {
-          action: parsePlannerAction(extractJsonObject(text)),
+          action: parseBedrockPlannerAction(extractJsonObject(text)),
           tokenUsage: normalizeTokenUsage(result.usage)
         };
       }
       return {
-        action: parsePlannerAction(rawAction),
+        action: parseBedrockPlannerAction(rawAction),
         tokenUsage: normalizeTokenUsage(result.usage)
       };
     }

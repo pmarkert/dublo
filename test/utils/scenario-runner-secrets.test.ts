@@ -34,6 +34,13 @@ void test("treats targets that disappear during a transition as recoverable", ()
   );
 });
 
+void test("treats selected options as recoverable no-op clicks", () => {
+  assert.equal(
+    classifyRecoverableActionError(new Error('Selected option before click: {"id":"a4"}')),
+    "already_selected"
+  );
+});
+
 void test("treats custom combobox selection as recoverable", () => {
   assert.equal(
     classifyRecoverableActionError(
@@ -119,6 +126,38 @@ void test("executes a click against the turn-scoped observed control", async () 
   assert.deepEqual(result.target, { label: "Continue", text: "Continue", type: "button" });
 });
 
+void test("does not click an already selected option", async () => {
+  const target = {
+    count: () => Promise.resolve(1),
+    evaluate: () => Promise.resolve(false),
+    click: () => Promise.resolve()
+  };
+  const page = {
+    locator: () => ({ first: () => target })
+  };
+
+  await assert.rejects(
+    () =>
+      executeBrowserAction({
+        page,
+        action: { payload: { action: "click", target: { id: "a1" } } },
+        observation: {
+          controls: [{ id: "a1", label: "Daily", role: "option", selected: true }],
+          scrollContainers: []
+        },
+        turnToken: "t1",
+        contextData: {},
+        humanInputs: new Map(),
+        secretValues: new Map(),
+        settleDelayMs: 1,
+        settleTimeoutMs: 20,
+        logger: { info: () => {} },
+        throwIfInterrupted: () => {}
+      }),
+    /Selected option before click/
+  );
+});
+
 void test("resolves exactly one control from all target selector properties", () => {
   const controls = [
     { id: "a1", tag: "button", text: "Continue", priority: false, checked: false },
@@ -179,7 +218,7 @@ void test("environment-backed secrets stay out of planner context and resolve on
   assert.doesNotMatch(messages.dynamicContextText, /correct-horse-battery-staple/);
 });
 
-void test("strict planner messages require ID-only target selectors", () => {
+void test("planner messages require ID-only target selectors", () => {
   const messages = buildPlannerMessages({
     testPrompt: "Create a routine.",
     personaText: "persona",
@@ -197,18 +236,17 @@ void test("strict planner messages require ID-only target selectors", () => {
     },
     actionHistory: [],
     humanInputs: new Map(),
-    screenshotRequested: false,
-    strictTargetSelectors: true
+    screenshotRequested: false
   });
 
-  assert.match(messages.staticContextText, /Use only the visible control ID/);
+  assert.match(messages.staticContextText, /set target to exactly/);
   assert.match(messages.staticContextText, /action and action-specific fields in payload/);
   assert.match(messages.staticContextText, /use scroll with its containerId and direction/);
   assert.match(messages.dynamicContextText, /"scrollContainers"/);
   assert.doesNotMatch(messages.staticContextText, /You may combine any visible control fields/);
 });
 
-void test("default planner messages use ID-only selectors until matching feedback requires more detail", () => {
+void test("planner messages do not permit target-selector fallbacks", () => {
   const messages = buildPlannerMessages({
     testPrompt: "Create a routine.",
     personaText: "persona",
@@ -228,14 +266,7 @@ void test("default planner messages use ID-only selectors until matching feedbac
     screenshotRequested: false
   });
 
-  assert.match(
-    messages.staticContextText,
-    /Use only the visible control ID as the target selector by default/
-  );
-  assert.match(
-    messages.staticContextText,
-    /only after target-resolution feedback says the ID-only selector did not match/
-  );
+  assert.match(messages.staticContextText, /Do not include other target fields/);
   assert.doesNotMatch(messages.staticContextText, /You may combine any visible control fields/);
 });
 
