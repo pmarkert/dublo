@@ -237,6 +237,7 @@ export function loadScenarioConfig(overrides = {}) {
       persona: overrides.persona,
       scenario: overrides.scenario,
       adhocScenario: overrides.adhocScenario,
+      outputDir: overrides.outputDir,
       ...(overrideContextRefs.length > 0
         ? { contextRefs: overrideContextRefs, cliContextRefs: overrideContextRefs }
         : {}),

@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { PlannerActionSchema } from "../ports/planner.js";
+import { parsePlannerAction } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface OpenAICompatiblePlannerConfig {
@@ -99,20 +99,8 @@ function buildPlannerActionSchema(): Record<string, unknown> {
   const target = {
     type: "object",
     additionalProperties: false,
-    properties: {
-      id: { type: "string" },
-      tag: { type: "string" },
-      role: { type: "string" },
-      type: { type: "string" },
-      priority: { type: "boolean" },
-      text: { type: "string" },
-      ariaLabel: { type: "string" },
-      label: { type: "string" },
-      placeholder: { type: "string" },
-      hasValue: { type: "boolean" },
-      checked: { type: "boolean" },
-      disabled: { type: "boolean" }
-    }
+    required: ["id"],
+    properties: { id: { type: "string" } }
   };
   const variant = (
     action: string,
@@ -199,10 +187,11 @@ export function createOpenAICompatiblePlanner(
     },
 
     async nextAction(request: PlannerRequest): Promise<PlannerResponse> {
-      const userContent: Array<Record<string, unknown>> = [
-        { type: "text", text: request.messages.staticContextText },
-        { type: "text", text: request.messages.dynamicContextText }
-      ];
+      const userContent: Array<Record<string, unknown>> = [];
+      if (request.messages.staticContextText) {
+        userContent.push({ type: "text", text: request.messages.staticContextText });
+      }
+      userContent.push({ type: "text", text: request.messages.dynamicContextText });
       if (request.screenshot) {
         userContent.push({
           type: "image_url",
@@ -266,7 +255,7 @@ export function createOpenAICompatiblePlanner(
         throw new Error("OpenAI-compatible planner API returned no planner action.");
 
       return {
-        action: PlannerActionSchema.parse(rawAction),
+        action: parsePlannerAction(rawAction),
         tokenUsage: normalizeTokenUsage(result.usage)
       };
     }

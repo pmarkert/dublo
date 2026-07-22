@@ -4,7 +4,7 @@ import { createOpenAICompatiblePlanner } from "../../src/node/openai-compatible-
 
 const messages = {
   systemText: "system",
-  staticContextText: "static",
+  staticContextText: "",
   dynamicContextText: "dynamic"
 };
 
@@ -62,8 +62,50 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
   const requestBody = requests[0]?.body;
   assert.equal(typeof requestBody, "string");
   assert.match(requestBody, /data:image\/png;base64/);
+  assert.match(requestBody, /"text":"dynamic"/);
+  assert.doesNotMatch(requestBody, /"text":""/);
   assert.match(requestBody, /expectGone/);
   assert.match(requestBody, /documentText/);
+  assert.match(
+    requestBody,
+    /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id"/
+  );
+  assert.doesNotMatch(requestBody, /"ariaLabel"/);
+});
+
+void test("OpenAI-compatible planner normalizes compound targets to their ID", async () => {
+  const fetchStub: typeof fetch = () =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      arguments: JSON.stringify({
+                        reason: "Open the routine form.",
+                        payload: { action: "click", target: { id: "a1", text: "New Routine" } }
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200 }
+      )
+    );
+  const planner = createOpenAICompatiblePlanner(
+    { baseUrl: "http://planner.test/v1", modelId: "test-model" },
+    { fetch: fetchStub }
+  );
+
+  const response = await planner.nextAction({ messages });
+
+  assert.deepEqual(response.action.payload, { action: "click", target: { id: "a1" } });
 });
 
 void test("OpenAI-compatible planner accepts a structured wait-until-gone action", async () => {

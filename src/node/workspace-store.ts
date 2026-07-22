@@ -4,7 +4,14 @@ import process from "node:process";
 import { WorkspaceDefaultsSchema } from "../core/config/schemas.js";
 import type { WorkspaceDefaults } from "../core/config/schemas.js";
 
-const WORKSPACE_DIRECTORIES = ["llm", "personas", "scenarios", "context", "blocks"] as const;
+const WORKSPACE_DIRECTORIES = [
+  "llm",
+  "personas",
+  "scenarios",
+  "context",
+  "blocks",
+  "suites"
+] as const;
 
 export interface WorkspaceStore {
   ensure(workspace: string): Promise<void>;

@@ -68,6 +68,21 @@ export const PlannerActionSchema = z
   })
   .strict();
 
+export function parsePlannerAction(value: unknown) {
+  const action = PlannerActionSchema.parse(value);
+  if (!("target" in action.payload)) return action;
+
+  const { id } = action.payload.target;
+  if (!id) {
+    throw new Error("Planner target must include an observed control ID.");
+  }
+
+  return {
+    ...action,
+    payload: { ...action.payload, target: { id } }
+  };
+}
+
 export interface PlannerMessages {
   systemText: string;
   staticContextText: string;
