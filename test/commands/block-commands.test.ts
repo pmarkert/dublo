@@ -22,7 +22,8 @@ void test("lists, shows, and edits an imported block", async (t) => {
   const show = run(["block", "show", "login", "--workspace", workspace]);
   assert.equal(show.status, 0, show.stderr);
   assert.match(show.stdout, new RegExp(`File: ${escapeRegex(blockPath)}`));
-  assert.match(show.stdout, /"documentText": "Loading your account"/);
+  assert.match(show.stdout, /"kind": "text"/);
+  assert.match(show.stdout, /"text": "Loading your account"/);
 
   const updatedBlock = validBlock(["Loading your account", "Still loading your details"]);
   const edit = run(["block", "edit", "login", "--workspace", workspace], updatedBlock);
@@ -58,7 +59,7 @@ void test("validates a manually authored block without source provenance", async
   assert.match(result.stdout, /OK {3}manual/);
 });
 
-function validBlock(documentText: string | string[], includeSource = true): string {
+function validBlock(text: string | string[], includeSource = true): string {
   const source = includeSource ? { source: { runId: "run-1", steps: [2] } } : {};
   return `${JSON.stringify(
     {
@@ -70,7 +71,7 @@ function validBlock(documentText: string | string[], includeSource = true): stri
           reason: "Wait for the loading screen.",
           payload: {
             action: "wait_until_gone",
-            expectGone: { documentText }
+            expectGone: (Array.isArray(text) ? text : [text]).map((value) => ({ kind: "text", text: value }))
           }
         }
       ]

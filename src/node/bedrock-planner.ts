@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
-import { parsePlannerAction } from "../ports/planner.js";
+import { parsePlannerAction, PlannerResponseValidationError } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface BedrockPlannerConfig {
@@ -65,7 +65,7 @@ function assertBedrockConverseResponse(value: unknown): Record<string, unknown> 
   return value;
 }
 
-function parseBedrockPlannerAction(rawAction: unknown) {
+function parseBedrockPlannerAction(rawAction: unknown, tokenUsage: TokenUsage, source: string) {
   try {
     return parsePlannerAction(rawAction);
   } catch (error) {
@@ -77,9 +77,13 @@ function parseBedrockPlannerAction(rawAction: unknown) {
         : "unknown";
     const fields = isRecord(rawAction) ? Object.keys(rawAction).sort().join(", ") : "non-object";
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(
+    throw new PlannerResponseValidationError(
       `Bedrock planner returned an invalid '${action}' action with fields [${fields}]: ${detail}`,
-      { cause: error }
+      {
+        cause: error,
+        plannerResponse: { source, rawAction },
+        tokenUsage
+      }
     );
   }
 }
@@ -128,7 +132,7 @@ function buildTargetSchema(): Record<string, unknown> {
     type: "object",
     additionalProperties: false,
     required: ["id"],
-    properties: { id: { type: "string" } }
+    properties: { id: { type: "string", minLength: 1 } }
   };
 }
 
@@ -150,12 +154,31 @@ function buildActionPayloadVariant(
 
 function buildActionSchema(): Record<string, unknown> {
   const target = buildTargetSchema();
-  const expectGone = {
+  const observedNodeSelector = {
     type: "object",
     additionalProperties: false,
-    required: ["documentText"],
-    properties: { documentText: { type: "string" } }
+    minProperties: 1,
+    properties: {
+      kind: { type: "string" },
+      id: { type: "string" },
+      name: { type: "string" },
+      title: { type: "string" },
+      tag: { type: "string" },
+      role: { type: "string" },
+      type: { type: "string" },
+      text: { type: "string" },
+      ariaLabel: { type: "string" },
+      label: { type: "string" },
+      description: { type: "string" },
+      checked: { type: "boolean" },
+      selected: { type: "boolean" },
+      pressed: { type: "boolean" },
+      expanded: { type: "boolean" },
+      disabled: { type: "boolean" },
+      blocking: { type: "boolean" }
+    }
   };
+  const expectGone = { type: "array", minItems: 1, items: observedNodeSelector };
 
   return {
     type: "object",
@@ -339,14 +362,16 @@ export function createBedrockPlanner(
           .join("\n")
           .trim();
         if (!text) throw new Error("Bedrock planner API returned no planner action.");
+        const tokenUsage = normalizeTokenUsage(result.usage);
         return {
-          action: parseBedrockPlannerAction(extractJsonObject(text)),
-          tokenUsage: normalizeTokenUsage(result.usage)
+          action: parseBedrockPlannerAction(extractJsonObject(text), tokenUsage, "text"),
+          tokenUsage
         };
       }
+      const tokenUsage = normalizeTokenUsage(result.usage);
       return {
-        action: parseBedrockPlannerAction(rawAction),
-        tokenUsage: normalizeTokenUsage(result.usage)
+        action: parseBedrockPlannerAction(rawAction, tokenUsage, "tool_use"),
+        tokenUsage
       };
     }
   };

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -29,6 +29,16 @@ void test("loadScenarioConfig accepts run-level settling overrides", async (t) =
 
   assert.equal(config.settleDelayMs, 650);
   assert.equal(config.settleTimeoutMs, 5000);
+});
+
+void test("loadScenarioConfig lets a run-level max-steps override workspace defaults", async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "dublo-config-"));
+  t.after(async () => rm(workspace, { force: true, recursive: true }));
+  await writeFile(path.join(workspace, "defaults.json"), '{"maxSteps": 40}\n');
+
+  const config = loadScenarioConfig({ workspace, maxSteps: "12" });
+
+  assert.equal(config.maxSteps, 12);
 });
 
 void test("loadScenarioConfig rejects invalid settling overrides", async (t) => {

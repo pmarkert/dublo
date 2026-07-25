@@ -43,7 +43,7 @@ void test("imports successful replayable steps after startup from the latest run
           outcome: "ok",
           plannerAction: {
             reason: "Loading.",
-            payload: { action: "wait_until_gone", expectGone: { documentText: "Loading" } }
+            payload: { action: "wait_until_gone", expectGone: [{ kind: "text", text: "Loading" }] }
           }
         },
         {
@@ -84,26 +84,32 @@ void test("imports successful replayable steps after startup from the latest run
       },
       {
         reason: "Loading.",
-        payload: { action: "wait_until_gone", expectGone: { documentText: "Loading" } }
+        payload: { action: "wait_until_gone", expectGone: [{ kind: "text", text: "Loading" }] }
       }
     ]
   });
 });
 
-void test("allows a block wait to name alternative transient document texts", () => {
+void test("allows a block wait to name multiple transient tree nodes", () => {
   assert.deepEqual(
     BlockActionSchema.parse({
       reason: "Wait for the login splash screens.",
       payload: {
         action: "wait_until_gone",
-        expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+        expectGone: [
+          { kind: "text", text: "Loading your account" },
+          { kind: "text", text: "Still loading your details" }
+        ]
       }
     }),
     {
       reason: "Wait for the login splash screens.",
       payload: {
         action: "wait_until_gone",
-        expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+        expectGone: [
+          { kind: "text", text: "Loading your account" },
+          { kind: "text", text: "Still loading your details" }
+        ]
       }
     }
   );
@@ -121,13 +127,13 @@ void test("rejects flat block actions", () => {
   );
 });
 
-void test("requires planner waits to name one observed document text", () => {
+void test("rejects planner waits that do not use a tree-node selector array", () => {
   assert.throws(() =>
     PlannerActionSchema.parse({
       reason: "Loading.",
       payload: {
         action: "wait_until_gone",
-        expectGone: { documentText: ["Loading your account", "Still loading your details"] }
+        expectGone: { kind: "text", text: "Loading your account" }
       }
     })
   );

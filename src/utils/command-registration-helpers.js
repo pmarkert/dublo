@@ -263,11 +263,14 @@ function addRunCompletionHandlers(completion) {
     listProfileCompletions(complete, "context", { fileExtensions: [".json", ".yaml", ".yml"] });
   };
 
-  setOptionHandler(getCommand(completion, "run"), "llm", llm);
-  setOptionHandler(getCommand(completion, "run"), "persona", persona);
-  setOptionHandler(getCommand(completion, "run"), "scenario", scenario);
-  setOptionHandler(getCommand(completion, "run"), "context", context);
-  setArgumentHandler(getCommand(completion, "run"), scenario);
+  for (const commandName of ["test run", "run"]) {
+    const command = getCommand(completion, commandName);
+    setOptionHandler(command, "llm", llm);
+    setOptionHandler(command, "persona", persona);
+    setOptionHandler(command, "scenario", scenario);
+    setOptionHandler(command, "context", context);
+    setArgumentHandler(command, scenario);
+  }
   setOptionHandler(getCommand(completion, "init"), "llm", llm);
 }
 
@@ -291,7 +294,7 @@ function addProfileCompletionHandlers(completion) {
   for (const commandName of ["persona show", "persona edit"]) {
     setArgumentHandler(getCommand(completion, commandName), persona);
   }
-  for (const commandName of ["scenario show", "scenario edit"]) {
+  for (const commandName of ["test show", "test edit"]) {
     setArgumentHandler(getCommand(completion, commandName), scenario);
   }
   for (const commandName of ["context show", "context edit", "context validate"]) {

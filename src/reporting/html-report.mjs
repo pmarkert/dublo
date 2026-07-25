@@ -86,149 +86,43 @@ function renderStepTabs(stepIndex, sections) {
 }
 
 function renderObservationHtml(observation, stepIndex) {
-  if (!observation) {
+  if (!observation || !Array.isArray(observation.tree)) {
     return "";
   }
 
-  const modal = observation.modal || {};
-  const headings = Array.isArray(observation.headings) ? observation.headings : [];
-  const alerts = Array.isArray(observation.alerts) ? observation.alerts : [];
-  const scrollContainers = Array.isArray(observation.scrollContainers)
-    ? observation.scrollContainers
-    : [];
-  const controls = Array.isArray(observation.controls) ? observation.controls : [];
-
-  const renderChipList = (items, emptyLabel) =>
-    items.length > 0
-      ? `<div class="pill-list">${items.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("")}</div>`
-      : `<p class="empty-note">${escapeHtml(emptyLabel)}</p>`;
-
-  const controlCards = controls.length
-    ? `<div class="control-grid">${controls
-        .map((control) => {
-          const titleBits = [control.tag, control.role, control.type]
-            .filter(Boolean)
-            .map((part) => escapeHtml(part));
-          const fieldRows = [
-            control.text
-              ? `<div><span class="field-label">Text</span><strong>${escapeHtml(control.text)}</strong></div>`
-              : "",
-            control.label
-              ? `<div><span class="field-label">Label</span><strong>${escapeHtml(control.label)}</strong></div>`
-              : "",
-            control.ariaLabel
-              ? `<div><span class="field-label">ARIA</span><strong>${escapeHtml(control.ariaLabel)}</strong></div>`
-              : "",
-            control.description
-              ? `<div><span class="field-label">Description</span><strong>${escapeHtml(control.description)}</strong></div>`
-              : "",
-            control.contextPath?.length
-              ? `<div><span class="field-label">Context</span><strong>${escapeHtml(control.contextPath.join(" > "))}</strong></div>`
-              : "",
-            control.placeholder
-              ? `<div><span class="field-label">Placeholder</span><strong>${escapeHtml(control.placeholder)}</strong></div>`
-              : "",
-            control.value
-              ? `<div><span class="field-label">Value</span><strong>${escapeHtml(control.value)}</strong></div>`
-              : ""
-          ]
-            .filter(Boolean)
-            .join("");
-          const flags = [
-            control.priority ? "priority" : "",
-            control.checked ? "checked" : "",
-            control.hasValue ? "has value" : "",
-            control.required ? "required" : "",
-            typeof control.expanded === "boolean"
-              ? control.expanded
-                ? "expanded"
-                : "collapsed"
-              : "",
-            control.selected ? "selected" : "",
-            control.pressed ? "pressed" : "",
-            control.current ? `current: ${control.current}` : "",
-            control.invalid ? "invalid" : "",
-            control.disabled ? "disabled" : ""
-          ]
-            .filter(Boolean)
-            .map((flag) => `<span class="mini-pill">${escapeHtml(flag)}</span>`)
-            .join("");
-
-          return `<article class="control-card">
-            <div class="control-card-head">
-              <span class="control-id">${escapeHtml(control.id || "")}</span>
-              <span class="control-kind">${titleBits.join(" · ") || "control"}</span>
-            </div>
-            ${flags ? `<div class="mini-pill-row">${flags}</div>` : ""}
-            <div class="field-grid">${fieldRows || '<div><span class="field-label">Text</span><strong>(empty)</strong></div>'}</div>
-          </article>`;
-        })
-        .join("")}</div>`
-    : `<p class="empty-note">No controls captured for this step.</p>`;
-
   const viewPrefix = `step-${stepIndex}-observation`;
+  const renderTree = (nodes) => {
+      if (!nodes.length) return `<p class="empty-note">No observable page content captured.</p>`;
+      const labelFor = (node) => {
+        if (node.kind === "context") return node.name;
+        if (node.kind === "dialog") return `${node.role || "dialog"}: ${node.title || "Untitled"}${node.blocking ? " (blocking)" : ""}`;
+        if (node.kind === "scroll") return `Scroll ${node.id}${node.label ? `: ${node.label}` : ""}`;
+        if (node.kind === "preview") return `Scroll ${node.direction} to reveal`;
+        if (node.kind === "control" || node.kind === "preview-control") return `${node.kind === "preview-control" ? "Preview: " : ""}${node.id ? `${node.id} - ` : ""}${node.label || node.text || node.ariaLabel || "Unnamed control"}`;
+        if (node.kind === "heading" || node.kind === "preview-heading") return `${node.kind === "preview-heading" ? "Preview: " : ""}Heading level ${node.level}: ${node.text}`;
+        if (node.kind === "text" || node.kind === "preview-text") return `${node.kind === "preview-text" ? "Preview: " : ""}${node.text}`;
+        if (node.kind === "alert") return `Alert: ${node.text}`;
+        return node.kind;
+      };
+      return `<ul class="observation-tree">${nodes.map((node) => `<li class="tree-node tree-node-${escapeHtml(node.kind)}"><span>${escapeHtml(labelFor(node))}</span>${node.children?.length ? renderTree(node.children) : ""}</li>`).join("")}</ul>`;
+    };
+  const activeDialog = observation.activeDialog;
   return `<section class="observation">
-    <h4>Observation</h4>
-    <div class="observation-mode-toggle" role="group" aria-label="Observation view" data-observation-toggle>
-      <button type="button" aria-controls="${viewPrefix}-ui" aria-pressed="true" data-observation-view="ui">UI</button>
-      <button type="button" aria-controls="${viewPrefix}-raw" aria-pressed="false" data-observation-view="raw">Raw</button>
-    </div>
-    <div class="observation-layout" id="${viewPrefix}-ui" data-observation-panel="ui">
-      <div class="observation-grid">
-        <article class="info-card">
-          <span class="field-label">URL</span>
-          <strong>${escapeHtml(observation.url || "n/a")}</strong>
-        </article>
-        <article class="info-card">
-          <span class="field-label">Title</span>
-          <strong>${escapeHtml(observation.title || "Untitled")}</strong>
-        </article>
-        <article class="info-card">
-          <span class="field-label">Modal</span>
-          <strong>${modal.open ? "Open" : "Closed"}</strong>
-          <div class="mini-pill-row">
-            <span class="mini-pill ${modal.blocksBackground ? "mini-pill-alert" : ""}">${modal.blocksBackground ? "blocks background" : "background accessible"}</span>
-            ${modal.role ? `<span class="mini-pill">${escapeHtml(modal.role)}</span>` : ""}
-            ${modal.title ? `<span class="mini-pill">${escapeHtml(modal.title)}</span>` : ""}
-          </div>
-        </article>
-        <article class="info-card info-card-wide">
-          <span class="field-label">Document Text</span>
-          <p class="document-text">${escapeHtml(observation.documentText || "")}</p>
-        </article>
+      <h4>Observation</h4>
+      <div class="observation-mode-toggle" role="group" aria-label="Observation view" data-observation-toggle>
+        <button type="button" aria-controls="${viewPrefix}-ui" aria-pressed="true" data-observation-view="ui">UI</button>
+        <button type="button" aria-controls="${viewPrefix}-raw" aria-pressed="false" data-observation-view="raw">Raw</button>
       </div>
-
-      <div class="observation-section">
-        <span class="field-label">Headings</span>
-        ${renderChipList(headings, "No headings captured.")}
+      <div class="observation-layout" id="${viewPrefix}-ui" data-observation-panel="ui">
+        <div class="observation-grid">
+          <article class="info-card"><span class="field-label">URL</span><strong>${escapeHtml(observation.url || "n/a")}</strong></article>
+          <article class="info-card"><span class="field-label">Title</span><strong>${escapeHtml(observation.title || "Untitled")}</strong></article>
+          <article class="info-card"><span class="field-label">Active dialog</span><strong>${activeDialog ? escapeHtml(activeDialog.title || activeDialog.role) : "None"}</strong></article>
+        </div>
+        <div class="observation-section"><span class="field-label">Observed hierarchy</span>${renderTree(observation.tree)}</div>
       </div>
-
-      <div class="observation-section">
-        <span class="field-label">Alerts</span>
-        ${renderChipList(alerts, "No alerts captured.")}
-      </div>
-
-      <div class="observation-section">
-        <span class="field-label">Scroll Containers</span>
-        ${renderChipList(
-          scrollContainers.map(
-            (container) =>
-              `${container.id}${container.label ? ` (${container.label})` : ""}: ${container.canScrollUp ? "up" : ""}${container.canScrollUp && container.canScrollDown ? ", " : ""}${container.canScrollDown ? "down" : ""}`
-          ),
-          "No scrollable content in the active scope."
-        )}
-      </div>
-
-      <div class="observation-section">
-        <span class="field-label">Controls (${controls.length})</span>
-        ${controlCards}
-      </div>
-
-    </div>
-    <div class="raw-observation" id="${viewPrefix}-raw" data-observation-panel="raw" hidden>
-      ${renderJsonHtml(observation)}
-    </div>
-  </section>`;
+      <div class="raw-observation" id="${viewPrefix}-raw" data-observation-panel="raw" hidden>${renderJsonHtml(observation)}</div>
+    </section>`;
 }
 
 export const reportGenerator = {
@@ -275,6 +169,9 @@ export const reportGenerator = {
         const plannerActionBlock = step.plannerAction
           ? `<section><h4>Planner Action</h4>${renderJsonHtml(step.plannerAction)}</section>`
           : "";
+        const plannerResponseBlock = step.plannerResponse
+          ? `<section><h4>Invalid Planner Response</h4>${renderJsonHtml(step.plannerResponse)}</section>`
+          : "";
         const screenshotBlock = screenshotPreview
           ? `<section><h4>Resulting Screenshot</h4>${screenshotPreview}</section>`
           : "";
@@ -286,6 +183,9 @@ export const reportGenerator = {
           : "";
         const stepTabs = renderStepTabs(step.index, [
           { id: "action", label: "Planner Action", content: plannerActionBlock },
+          ...(plannerResponseBlock
+            ? [{ id: "planner-response", label: "Invalid Response", content: plannerResponseBlock }]
+            : []),
           { id: "screenshot", label: "Resulting Screenshot", content: screenshotBlock },
           { id: "observation", label: "Observation", content: observationBlock },
           { id: "aria-snapshot", label: "ARIA Snapshot", content: ariaSnapshotBlock },

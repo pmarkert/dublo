@@ -230,6 +230,7 @@ export function loadScenarioConfig(overrides = {}) {
     ...cleanUndefined({
       workspace: overrides.workspace,
       llmRef: overrides.llm,
+      maxSteps: parsePositiveInteger(overrides.maxSteps, undefined),
       settleDelayMs: parsePositiveInteger(overrides.settleDelayMs, undefined),
       settleTimeoutMs: parsePositiveInteger(overrides.settleTimeoutMs, undefined),
       headless: overrides.headless ? true : undefined,

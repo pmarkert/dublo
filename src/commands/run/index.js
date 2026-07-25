@@ -351,15 +351,16 @@ export async function resolveInitBlocks(value, workspace) {
   return blocks;
 }
 
-export default function registerRunCommand(program) {
+export default function registerRunCommand(program, options = {}) {
   program
     .command("run [scenario]")
-    .description("Run using workspace config and selectors")
+    .description(options.alias ? "Alias for 'dublo test run'" : "Run a test using workspace config and selectors")
     .option("--workspace <path>", "Workspace directory (contains defaults.json and llm/personas/scenarios/context)")
     .option("--llm <value>", "LLM config file path or profile name in <workspace>/llm")
     .option("--persona <value>", "Persona file path or profile name in <workspace>/personas")
     .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios (or use positional [scenario])")
     .option("--adhoc <text>", "Inline ad hoc scenario text to run without a scenario file")
+    .option("--max-steps <count>", "Maximum planner steps for this run")
     .option("--settle-delay-ms <milliseconds>", "Stable UI duration before each LLM observation")
     .option("--settle-timeout-ms <milliseconds>", "Maximum UI settling duration before each LLM observation")
     .option("--headless", "Run browser in headless mode")

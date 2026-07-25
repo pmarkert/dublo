@@ -18,10 +18,11 @@ const program = new Command();
 program.name("dublo").description("Agentic LLM web testing with Playwright").version("0.1.0", "--version");
 
 registerConfigCommands(program);
-registerRunCommand(program);
 registerLlmCommands(program);
 registerPersonaCommands(program);
-registerScenarioCommands(program);
+const testProgram = registerScenarioCommands(program, "test");
+registerRunCommand(testProgram);
+registerRunCommand(program, { alias: true });
 registerContextCommands(program);
 registerBlockCommands(program);
 registerReportCommands(program);

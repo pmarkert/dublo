@@ -2,10 +2,10 @@ import { editScenarioCommand } from "./edit.js";
 import { listScenarioCommand } from "./list.js";
 import { showScenarioCommand } from "./show.js";
 
-export default function registerScenarioCommands(program) {
+export default function registerScenarioCommands(program, commandName = "scenario") {
   const scenarioProgram = program
-    .command("scenario")
-    .description("Manage scenario profiles");
+    .command(commandName)
+    .description("Manage test profiles and run tests");
 
   scenarioProgram
     .command("list")
@@ -36,4 +36,6 @@ export default function registerScenarioCommands(program) {
         profile,
       });
     });
+
+  return scenarioProgram;
 }

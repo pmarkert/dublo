@@ -65,12 +65,13 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
   assert.match(requestBody, /"text":"dynamic"/);
   assert.doesNotMatch(requestBody, /"text":""/);
   assert.match(requestBody, /expectGone/);
-  assert.match(requestBody, /documentText/);
+  assert.match(requestBody, /"expectGone":\{"type":"array","minItems":1/);
+  assert.match(requestBody, /"kind":\{"type":"string"/);
   assert.match(
     requestBody,
-    /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id"/
+    /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id":\{"type":"string","minLength":1\}\}\}/
   );
-  assert.doesNotMatch(requestBody, /"ariaLabel"/);
+  assert.match(requestBody, /"ariaLabel":\{"type":"string"/);
 });
 
 void test("OpenAI-compatible planner normalizes compound targets to their ID", async () => {
@@ -123,7 +124,7 @@ void test("OpenAI-compatible planner accepts a structured wait-until-gone action
                         reason: "Authentication is still loading.",
                         payload: {
                           action: "wait_until_gone",
-                          expectGone: { documentText: "Checking your account..." }
+                          expectGone: [{ kind: "text", text: "Checking your account..." }]
                         }
                       })
                     }
@@ -145,7 +146,10 @@ void test("OpenAI-compatible planner accepts a structured wait-until-gone action
 
   assert.deepEqual(response.action, {
     reason: "Authentication is still loading.",
-    payload: { action: "wait_until_gone", expectGone: { documentText: "Checking your account..." } }
+    payload: {
+      action: "wait_until_gone",
+      expectGone: [{ kind: "text", text: "Checking your account..." }]
+    }
   });
 });
 
@@ -298,5 +302,12 @@ void test("OpenAI-compatible planner rejects an invalid action before browser ex
     { fetch: fetchStub }
   );
 
-  await assert.rejects(() => planner.nextAction({ messages }), /target[\s\S]*Invalid input/);
+  await assert.rejects(() => planner.nextAction({ messages }), (error) => {
+    assert.match(error.message, /invalid 'click' action[\s\S]*target[\s\S]*Invalid input/);
+    assert.deepEqual(error.plannerResponse, {
+      source: "tool_use",
+      rawAction: { reason: "Click it.", payload: { action: "click" } }
+    });
+    return true;
+  });
 });

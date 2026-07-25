@@ -23,7 +23,7 @@ Option A — Lambda + Docker container image (recommended)
 Build a Docker image: Node 20 + Playwright + Chromium + Dublo installed
 Deploy as a Lambda function with 10 GB memory / 15 min timeout, ARM64 or x86
 Playwright in headless mode works inside Lambda containers with the right system deps
-Each invocation runs a single dublo run with config injected via the event payload
+Each invocation runs a single `dublo test run` with config injected via the event payload
 Option B — ECS Fargate tasks (for longer-running scenarios)
 
 Same Docker image deployed to ECR
@@ -60,7 +60,7 @@ Receive event: { suiteRunId, taskId, workspaceName, scenario, context, llmProfil
 Sync workspace files from S3 into /tmp/workspace/ (only what's needed for this run)
 Fetch context variables from DynamoDB → write to /tmp/workspace/context/<name>.json
 Fetch secrets from AWS Secrets Manager → pass as DUBLO_SECRET_* env vars (never written to disk)
-Build dublo run arguments and exec in-process (call runScenario() directly via the library API, avoiding subprocess overhead)
+Build `dublo test run` arguments and exec in-process (call runScenario() directly via the library API, avoiding subprocess overhead)
 Capture the report artifacts
 Upload report artifacts to s3://dublo-reports/<suiteRunId>/<taskId>/
 Write task result (pass/fail, cost, step count, duration) to DubloSuiteRuns DynamoDB record

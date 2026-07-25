@@ -20,6 +20,7 @@ function renderValue(value) {
 
 function renderControl(control) {
   const details = [
+    control.tag && `tag: ${renderValue(control.tag)}`,
     control.label && `label: ${renderValue(control.label)}`,
     control.text && `text: ${renderValue(control.text)}`,
     control.role && `role: ${renderValue(control.role)}`,
@@ -41,6 +42,7 @@ function renderControl(control) {
 
 function renderPreviewControl(control) {
   const details = [
+    control.tag && `tag: ${renderValue(control.tag)}`,
     control.label && `label: ${renderValue(control.label)}`,
     control.text && `text: ${renderValue(control.text)}`,
     control.role && `role: ${renderValue(control.role)}`,
@@ -50,140 +52,45 @@ function renderPreviewControl(control) {
   return `- Preview: Control: ${details.join("; ") || "control"}`;
 }
 
-function createTreeNode() {
-  return { childNodes: new Map(), items: [] };
+function renderTextNode(textNode) {
+  return `- Text: ${renderValue(textNode.text)}`;
 }
 
-function treeNodeForPath(root, path) {
-  let node = root;
-  for (const segment of path || []) {
-    if (!node.childNodes.has(segment)) {
-      const child = createTreeNode();
-      node.childNodes.set(segment, child);
-      node.items.push({ type: "node", label: segment, node: child });
+function renderObservationTree(nodes, indent = "") {
+  return (nodes || []).flatMap((node) => {
+    if (node.kind === "context") {
+      return [`${indent}- ${renderValue(node.name)}`, ...renderObservationTree(node.children, `${indent}  `)];
     }
-    node = node.childNodes.get(segment);
-  }
-  return node;
-}
-
-function relativePath(path, ancestorPath) {
-  const normalizedPath = path || [];
-  const normalizedAncestor = ancestorPath || [];
-  return normalizedPath
-    .slice(0, normalizedAncestor.length)
-    .every((part, index) => part === normalizedAncestor[index])
-    ? normalizedPath.slice(normalizedAncestor.length)
-    : normalizedPath;
-}
-
-function pathWithinScrollContainer(control, container) {
-  const path = relativePath(control.contextPath, container.contextPath);
-  return path[0] === container.label ? path.slice(1) : path;
-}
-
-function renderActionableTree(
-  controls,
-  scrollContainers,
-  headings = [],
-  scrollPreviews = [],
-  modal = {},
-  alerts = []
-) {
-  const root = createTreeNode();
-  const modalTitle = modal.open && modal.title ? modal.title : "";
-  const hierarchyRoot = modalTitle
-    ? (() => {
-        const dialogNode = createTreeNode();
-        root.items.push({ type: "dialog", modal, node: dialogNode });
-        return dialogNode;
-      })()
-    : root;
-  const containersById = new Map(scrollContainers.map((container) => [container.id, container]));
-  const containerNodes = new Map();
-  const normalizePath = (path) =>
-    modalTitle && path?.[0] === modalTitle ? path.slice(1) : path || [];
-
-  const insertScrollContainer = (container) => {
-    if (containerNodes.has(container.id)) return containerNodes.get(container.id);
-    const parentNode = treeNodeForPath(hierarchyRoot, normalizePath(container.contextPath));
-    const containerNode = createTreeNode();
-    parentNode.items.push({ type: "scroll", container, node: containerNode });
-    containerNodes.set(container.id, containerNode);
-    return containerNode;
-  };
-
-  const entries = [
-    ...controls.map((control, index) => ({ type: "control", value: control, order: control.order ?? index * 2 + 1 })),
-    ...headings
-      .filter((heading) => heading.text !== modalTitle)
-      .map((heading, index) => ({ type: "heading", value: heading, order: heading.order ?? index * 2 }))
-  ].sort((left, right) => left.order - right.order);
-
-  for (const entry of entries) {
-    const item = entry.value;
-    const container = containersById.get(item.scrollContainerId);
-    const parentNode = container ? insertScrollContainer(container) : hierarchyRoot;
-    const contextPath = normalizePath(item.contextPath);
-    const path = container ? pathWithinScrollContainer({ ...item, contextPath }, container) : contextPath;
-    treeNodeForPath(parentNode, path).items.push({ type: entry.type, [entry.type]: item });
-  }
-
-  for (const container of scrollContainers) insertScrollContainer(container);
-
-  const previewGroups = new Map();
-  for (const preview of scrollPreviews.sort((left, right) => left.order - right.order)) {
-    const container = containersById.get(preview.scrollContainerId);
-    if (!container) continue;
-    const key = `${container.id}:${preview.revealDirection}`;
-    let group = previewGroups.get(key);
-    if (!group) {
-      group = { type: "preview", container, direction: preview.revealDirection, previews: [] };
-      insertScrollContainer(container).items.push(group);
-      previewGroups.set(key, group);
+    if (node.kind === "dialog") {
+      const label = node.role === "alertdialog" ? "Alert dialog" : "Dialog";
+      return [
+        `${indent}- ${label} ${renderValue(node.title)}; blocking: ${Boolean(node.blocking)}`,
+        ...renderObservationTree(node.children, `${indent}  `)
+      ];
     }
-    group.previews.push(preview);
-  }
-
-  for (const alert of alerts) root.items.push({ type: "alert", text: alert });
-
-  const renderNode = (node, indent = "") =>
-    node.items.flatMap((item) => {
-      if (item.type === "dialog") {
-        const label = item.modal.role === "alertdialog" ? "Alert dialog" : "Dialog";
-        return [
-          `${indent}- ${label} ${renderValue(item.modal.title)}; modal: ${item.modal.ariaModal === "true" || item.modal.blocksBackground}`,
-          ...renderNode(item.node, `${indent}  `)
-        ];
-      }
-      if (item.type === "node") {
-        return [`${indent}- ${renderValue(item.label)}`, ...renderNode(item.node, `${indent}  `)];
-      }
-      if (item.type === "scroll") {
-        const { container } = item;
-        return [
-          `${indent}- Scroll ${renderValue(container.id)} (${renderValue(container.label)}): can scroll up: ${container.canScrollUp}; can scroll down: ${container.canScrollDown}`,
-          ...renderNode(item.node, `${indent}  `)
-        ];
-      }
-      if (item.type === "preview") {
-        return [
-          `${indent}- Scroll ${item.direction} in ${renderValue(item.container.id)} to reveal:`,
-          ...item.previews.flatMap((preview) =>
-            preview.kind === "heading"
-              ? [`${indent}  - Preview: Heading ${renderValue(preview.text)} [level ${preview.level}]`]
-              : [`${indent}  ${renderPreviewControl(preview)}`]
-          )
-        ];
-      }
-      if (item.type === "heading") {
-        return [`${indent}- Heading ${renderValue(item.heading.text)} [level ${item.heading.level}]`];
-      }
-      if (item.type === "alert") return [`${indent}- Alert: ${renderValue(item.text)}`];
-      return [`${indent}${renderControl(item.control)}`];
-    });
-
-  return renderNode(root);
+    if (node.kind === "scroll") {
+      return [
+        `${indent}- Scroll ${renderValue(node.id)} (${renderValue(node.label)}): can scroll up: ${Boolean(node.canScrollUp)}; can scroll down: ${Boolean(node.canScrollDown)}`,
+        ...renderObservationTree(node.children, `${indent}  `)
+      ];
+    }
+    if (node.kind === "preview") {
+      return [
+        `${indent}- Scroll ${node.direction} to reveal:`,
+        ...renderObservationTree(node.children, `${indent}  `)
+      ];
+    }
+    if (node.kind === "preview-heading") {
+      return [`${indent}- Preview: Heading ${renderValue(node.text)} [level ${node.level}]`];
+    }
+    if (node.kind === "preview-text") return [`${indent}- Preview: Text: ${renderValue(node.text)}`];
+    if (node.kind === "preview-control") return [`${indent}${renderPreviewControl(node)}`];
+    if (node.kind === "heading") return [`${indent}- Heading ${renderValue(node.text)} [level ${node.level}]`];
+    if (node.kind === "text") return [`${indent}- Text: ${renderValue(node.text)}`];
+    if (node.kind === "alert") return [`${indent}- Alert: ${renderValue(node.text)}`];
+    if (node.kind === "control") return [`${indent}${renderControl(node)}`];
+    return [];
+  });
 }
 
 function renderSuccessfulAction(item) {
@@ -204,51 +111,6 @@ export function buildPlannerMessages({
   screenshotRequested
 }) {
   const redactedObservation = redactSecretValues(observation, secretValues);
-  const compactControls = redactedObservation.controls.map((control) => ({
-    id: control.id,
-    ...(Number.isFinite(control.order) ? { order: control.order } : {}),
-    tag: control.tag,
-    role: control.role,
-    type: control.type,
-    priority: control.priority,
-    text: clip(control.text),
-    label: clip(control.label),
-    ariaLabel: clip(control.ariaLabel),
-    placeholder: clip(control.placeholder),
-    ...(control.description ? { description: clip(control.description) } : {}),
-    ...(control.contextPath?.length ? { contextPath: control.contextPath } : {}),
-    ...(control.scrollContainerId ? { scrollContainerId: control.scrollContainerId } : {}),
-    ...(control.value ? { value: clip(control.value) } : {}),
-    ...(control.options ? { options: control.options } : {}),
-    hasValue: control.hasValue,
-    checked: control.checked,
-    required: Boolean(control.required),
-    ...(typeof control.expanded === "boolean" ? { expanded: control.expanded } : {}),
-    ...(typeof control.selected === "boolean" ? { selected: control.selected } : {}),
-    ...(typeof control.pressed === "boolean" ? { pressed: control.pressed } : {}),
-    ...(control.current ? { current: control.current } : {}),
-    invalid: Boolean(control.invalid),
-    disabled: Boolean(control.disabled)
-  }));
-  const compactHeadings = (redactedObservation.headingNodes || []).map((heading) => ({
-    text: clip(heading.text),
-    level: heading.level,
-    ...(Number.isFinite(heading.order) ? { order: heading.order } : {}),
-    ...(heading.contextPath?.length ? { contextPath: heading.contextPath } : {}),
-    ...(heading.scrollContainerId ? { scrollContainerId: heading.scrollContainerId } : {})
-  }));
-  const compactScrollPreviews = (redactedObservation.scrollPreviews || []).map((preview) => ({
-    kind: preview.kind,
-    order: preview.order,
-    revealDirection: preview.revealDirection,
-    scrollContainerId: preview.scrollContainerId,
-    text: clip(preview.text),
-    ...(Number.isFinite(preview.level) ? { level: preview.level } : {}),
-    label: clip(preview.label),
-    role: preview.role,
-    type: preview.type,
-    ...(preview.description ? { description: clip(preview.description) } : {})
-  }));
 
   const completedWork = actionHistory
     .filter(
@@ -271,12 +133,13 @@ export function buildPlannerMessages({
     "Always provide a non-empty reason for the chosen action.",
     "Control IDs identify the same visible control across observations when it persists. Choose an ID from the current observation only; do not guess IDs for controls not currently observed.",
     "For click, fill, and select_option, set target to exactly { id: '<observed control ID>' }.",
+    "Read the observation as a tree: indented names such as `Authentication` or `form` are semantic context only, never target IDs or scroll container IDs. A control line begins with its ID, and only a `Scroll <id>` line supplies a valid scroll container ID.",
     "Put action and action-specific fields in payload; keep reason at the root.",
     "Never emit click or fill without target.",
     "For fill actions, also provide a value.",
     "Treat checked, selected, and pressed as current control state. Do not click a control that is already in the state required by the objective.",
     "Use select_option only for an observed native select that includes an options list, using an observed option value. For an open custom combobox, click the visible role=option control instead.",
-    "When an actionable Scroll entry has can scroll down or can scroll up, use scroll with its ID as containerId and the matching direction to reveal more content before escalating.",
+    "Use scroll only when the current observation contains a `Scroll <id>` entry with the requested direction available. If there is no Scroll entry, do not use a context name as containerId; take the visible action that advances the workflow instead.",
     "When a scroll preview names a control required by the objective and that control has no actionable ID, the next action must scroll the named container in the preview direction. Do not click a different visible control as a substitute.",
     "Scroll preview groups identify content outside the current viewport. After scrolling, reassess the new actionable hierarchy before selecting an observed ID.",
     "The chosen target's label, semantic path, and current state must directly support the reason. Do not claim to act on Schedule while targeting a control in another section.",
@@ -290,9 +153,10 @@ export function buildPlannerMessages({
         ]
       : []),
     "Do not fill the same field with a different value unless visible validation or error evidence shows correction is needed.",
+    "Do not infer an absent field from a familiar workflow. After filling a visible identifier field, click its visible enabled Continue or submit control when that is the next available step; wait for the next observation before looking for a password field.",
     "The runner automatically waits for ordinary UI transitions to settle before each observation; do not wait merely to pause after an action.",
     "After a click or fill, do not repeat it based on an earlier observation. If its target is absent or disabled in the current observation, the UI is transitioning.",
-    "When a persistent transition leaves an old screen visible but its submit control is absent or disabled, use wait_until_gone with expectGone.documentText set to a currently observed alert, heading, or control label from that old screen which must disappear.",
+    "For wait_until_gone, provide expectGone as an array of one or more selectors copied from currently observed tree nodes. Wait completes only when every selected node is absent from a fresh observation.",
     "Do not repeat the same wait_until_gone condition unless a UI action or URL change has occurred.",
     "Do not return finish while the UI appears to be loading or transitioning.",
     "Before finish, verify visible evidence for the success criteria in the test prompt.",
@@ -320,9 +184,7 @@ export function buildPlannerMessages({
     `- Title: ${renderValue(redactedObservation.title)}`,
     "",
     "## Currently Actionable Controls",
-    ...(compactControls.length || compactHeadings.length || compactScrollPreviews.length || redactedObservation.scrollContainers?.length || redactedObservation.modal?.open || redactedObservation.alerts?.length
-      ? renderActionableTree(compactControls, redactedObservation.scrollContainers || [], compactHeadings, compactScrollPreviews, redactedObservation.modal || {}, redactedObservation.alerts || [])
-      : ["- None"]),
+    ...(redactedObservation.tree?.length ? renderObservationTree(redactedObservation.tree) : ["- None"]),
     ...(screenshotRequested
       ? ["", "## Screenshot", "A screenshot of the current viewport is attached to this turn."]
       : []),

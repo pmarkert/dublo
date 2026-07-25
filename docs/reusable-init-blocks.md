@@ -2,7 +2,7 @@
 
 ## Status
 
-Partially implemented. `block import`, `list`, `show`, `edit`, and `validate` manage validated reusable action lists. Replaying those blocks through `dublo run --init` remains pending.
+Partially implemented. `block import`, `list`, `show`, `edit`, and `validate` manage validated reusable action lists. Replaying those blocks through `dublo test run --init` remains pending.
 
 ## Problem
 
@@ -27,21 +27,19 @@ Step 6 is why a recorded fixed-duration wait is not sufficient. The current plan
 
 Introduce a first-class `wait_until_gone` action that can be selected by the LLM and replayed from an initialization block. It waits for a visible, currently observed blocker to disappear rather than sleeping for a fixed duration or predicting an unknown future state.
 
-The initial action should support a small, validated condition vocabulary:
+The action uses selectors copied from observed tree nodes:
 
 ```json
 {
   "action": "wait_until_gone",
   "reason": "Authentication is still loading.",
-  "expectGone": {
-    "documentText": "Checking your account..."
-  }
+  "expectGone": [{ "kind": "text", "text": "Checking your account..." }]
 }
 ```
 
-The runner owns polling, the configured settle delay, and the configured settle timeout. It returns the LLM a new observation as soon as the text has remained absent for the settle delay. A timeout reports the remaining document text to the LLM; the same timed-out condition cannot be repeated without a UI action or URL change.
+The runner owns polling, the configured settle delay, and the configured settle timeout. It returns the LLM a new observation as soon as every selected node has remained absent for the settle delay. The same timed-out condition cannot be repeated without a UI action or URL change.
 
-The LLM schema intentionally accepts only observed document text. It does not accept arbitrary CSS selectors, JavaScript expressions, fixed delays, or a predicted destination state. The runner automatically settles ordinary UI transitions and URL changes before every LLM observation, so the LLM only uses `wait_until_gone` for a persistent visible blocker.
+The LLM schema accepts only selectors for currently observed tree nodes. It does not accept arbitrary CSS selectors, JavaScript expressions, fixed delays, or a predicted destination state. The runner automatically settles ordinary UI transitions and URL changes before every LLM observation, so the LLM only uses `wait_until_gone` for a persistent visible blocker.
 
 ## Proposed Initialization Block Model
 
@@ -54,7 +52,7 @@ dublo block import login
 dublo block import login 2026-07-20T17-58-27-724Z_pass_myday
 dublo block show login
 dublo block validate login
-dublo run myday --init login
+dublo test run myday --init login
 ```
 
 Use `block` as the command namespace because `init` is already the workspace creation command. `--init` names a block's execution phase, and should eventually be repeatable.
@@ -94,12 +92,10 @@ A block is an executable, versioned action list. It is not a saved planner trans
     },
     {
       "action": "wait_until_gone",
-      "expectGone": {
-        "documentText": [
-          "Checking your account...",
-          "Still loading your details..."
-        ]
-      },
+      "expectGone": [
+        { "kind": "text", "text": "Checking your account..." },
+        { "kind": "text", "text": "Still loading your details..." }
+      ],
       "reason": "Wait for the authentication loading state to disappear."
     }
   ]
@@ -126,14 +122,14 @@ Initialization steps remain visible in reports and are marked with `phase: "init
 - Flag literal `fill` values during validation and recommend context or secret placeholders where applicable.
 - A missing target or failed readiness condition is a block failure. Do not fall back to the LLM within the first version, because that makes the result nondeterministic and obscures a stale block.
 - The planner may use `give_up` with a concrete reason when it has exhausted credible actions and cannot safely complete the scenario. This ends the run as failed; initialization blocks cannot contain `give_up`.
-- Planner actions always contain one observed `expectGone.documentText`. Imported blocks retain that string, but users may edit it into a list of alternate transient texts. The wait completes only after every listed text is absent.
+- Planner actions always contain an `expectGone` array of observed tree-node selectors. The wait completes only after every selected node is absent.
 - Click and fill actions use a `target` object. It may contain any observed control field except `value`; every supplied property must match, and exactly one visible control must match overall. `{ "id": "a3" }` is the normal lightweight selector.
 
 ## Target Resolution
 
 The current `a1`, `a2`, and similar identifiers are assigned during each fresh observation, rather than being persistent page-owned DOM IDs. Actions select a control by matching every field in `target` against the fresh observation, and the runner requires exactly one match before dispatching to that control's current ID. `{ "id": "a3" }` is the default selector, while a manually edited block can use fields such as `{ "tag": "button", "type": "submit", "text": "Sign in" }` to survive control reordering.
 
-If a selector matches no controls or more than one control, replay fails loudly with the selector and match count. Future scoped metadata can improve selectors that remain ambiguous in a flat control list.
+If a selector matches no controls or more than one control, replay fails loudly with the selector and match count. Future scoped metadata can improve selectors that remain ambiguous in the observed tree.
 
 ## Delivery Sequence
 

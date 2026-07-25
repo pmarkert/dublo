@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   classifyRecoverableActionError,
-  isDocumentTextGone,
   isAlternatingScrollLoop,
   isRepeatedClickLoop,
   resolveTargetControl
@@ -13,19 +12,39 @@ import {
   resolveFillValue
 } from "../../src/utils/scenario/context-operations.mjs";
 import { executeBrowserAction } from "../../src/utils/scenario/action-executor.mjs";
+import { areExpectedNodesGone } from "../../src/utils/scenario/action-executor.mjs";
 import { buildPlannerMessages } from "../../src/utils/scenario/planner-context.mjs";
 
-void test("detects when observed document text has disappeared", () => {
-  assert.equal(isDocumentTextGone("Checking your account...", "checking YOUR account"), false);
-  assert.equal(isDocumentTextGone("Welcome back", "Checking your account..."), true);
-});
+void test("detects when a selected observed tree node has disappeared", () => {
+  const loadingTree = [{ kind: "text", text: "Checking your account..." }];
+  const completeTree = [{ kind: "heading", text: "Welcome back", level: 1 }];
 
-void test("waits until all configured document texts have disappeared", () => {
   assert.equal(
-    isDocumentTextGone("Still loading your details...", ["Loading your account", "Still loading"]),
+    areExpectedNodesGone(loadingTree, [{ kind: "text", text: "Checking your account..." }]),
     false
   );
-  assert.equal(isDocumentTextGone("Welcome back", ["Loading your account", "Still loading"]), true);
+  assert.equal(
+    areExpectedNodesGone(completeTree, [{ kind: "text", text: "Checking your account..." }]),
+    true
+  );
+});
+
+void test("waits until every configured tree-node selector is absent", () => {
+  const loadingTree = [
+    { kind: "text", text: "Still loading your details..." },
+    { kind: "control", id: "submit", name: "Loading your account" }
+  ];
+  const completeTree = [{ kind: "heading", text: "Welcome back", level: 1 }];
+  const expectedNodes = [
+    { kind: "text", text: "Still loading your details..." },
+    { kind: "control", name: "Loading your account" }
+  ];
+
+  assert.equal(
+    areExpectedNodesGone(loadingTree, expectedNodes),
+    false
+  );
+  assert.equal(areExpectedNodesGone(completeTree, expectedNodes), true);
 });
 
 void test("distinguishes invalid planner targets from targets that disappear during a transition", () => {
@@ -91,6 +110,12 @@ void test("detects an alternating scroll loop in one container", () => {
     classifyRecoverableActionError(new Error("Planner scroll container 's1' cannot scroll down.")),
     "scroll_boundary"
   );
+  assert.equal(
+    classifyRecoverableActionError(
+      new Error("Planner scroll container 'Authentication' is not in the observation.")
+    ),
+    "invalid_target"
+  );
 });
 
 void test("detects repeated clicks on the same target", () => {
@@ -140,10 +165,9 @@ void test("executes a click against the turn-scoped observed control", async () 
     page,
     action: { payload: { action: "click", target: { id: "a1" } } },
     observation: {
-      controls: [
-        { id: "a1", label: "Continue", ariaLabel: "", text: "Continue", role: "", type: "button" }
-      ],
-      scrollContainers: []
+        tree: [
+          { kind: "control", id: "a1", label: "Continue", text: "Continue", type: "button" }
+        ]
     },
     turnToken: "t1",
     contextData: {},
@@ -175,8 +199,7 @@ void test("does not click an already selected option", async () => {
         page,
         action: { payload: { action: "click", target: { id: "a1" } } },
         observation: {
-          controls: [{ id: "a1", label: "Daily", role: "option", selected: true }],
-          scrollContainers: []
+            tree: [{ kind: "control", id: "a1", label: "Daily", role: "option", selected: true }]
         },
         turnToken: "t1",
         contextData: {},
@@ -192,21 +215,21 @@ void test("does not click an already selected option", async () => {
 });
 
 void test("resolves exactly one control from all target selector properties", () => {
-  const controls = [
-    { id: "a1", tag: "button", text: "Continue", priority: false, checked: false },
-    { id: "a2", tag: "button", text: "Continue", priority: true, checked: false }
+  const tree = [
+    { kind: "control", id: "a1", tag: "button", text: "Continue", priority: false, checked: false },
+    { kind: "control", id: "a2", tag: "button", text: "Continue", priority: true, checked: false }
   ];
 
   assert.deepEqual(
-    resolveTargetControl(controls, { tag: "BUTTON", text: " continue ", priority: true }),
-    controls[1]
+    resolveTargetControl(tree, { tag: "BUTTON", text: " continue ", priority: true }),
+    tree[1]
   );
   assert.throws(
-    () => resolveTargetControl(controls, { text: "Continue" }),
+    () => resolveTargetControl(tree, { text: "Continue" }),
     /selector is ambiguous/
   );
   assert.throws(
-    () => resolveTargetControl(controls, { label: "Email" }),
+    () => resolveTargetControl(tree, { label: "Email" }),
     /Planner target is not in the current observation/
   );
 });
@@ -237,11 +260,7 @@ void test("environment-backed secrets stay out of planner context and resolve on
     observation: {
       url: "https://example.test",
       title: "Sign in",
-      modal: {},
-      headings: [],
-      alerts: [],
-      documentText: "correct-horse-battery-staple",
-      controls: []
+      tree: []
     },
     actionHistory: [],
     humanInputs: new Map(),
@@ -264,79 +283,32 @@ void test("planner messages require ID-only target selectors", () => {
     observation: {
       url: "https://example.test",
       title: "Routines",
-      modal: {},
-      headings: [],
-      alerts: [],
-      documentText: "Routines",
-      scrollContainers: [
+      tree: [
         {
-          id: "s1",
-          label: "Routine form",
-          contextPath: ["Create routine"],
-          canScrollUp: false,
-          canScrollDown: true
-        }
-      ],
-      controls: [
-        {
-          id: "name",
-          tag: "input",
-          role: "",
-          type: "text",
-          priority: false,
-          text: "",
-          label: "Name",
-          ariaLabel: "",
-          placeholder: "Routine name",
-          contextPath: ["Create routine", "Routine form", "form"],
-          scrollContainerId: "s1",
-          hasValue: false,
-          checked: false
-        },
-        {
-          id: "description",
-          tag: "textarea",
-          role: "",
-          type: "",
-          priority: false,
-          text: "",
-          label: "Description",
-          ariaLabel: "",
-          placeholder: "Routine description",
-          contextPath: ["Create routine", "Routine form", "form"],
-          scrollContainerId: "s1",
-          hasValue: false,
-          checked: false
-        },
-        {
-          id: "duration",
-          tag: "button",
-          role: "",
-          type: "button",
-          priority: false,
-          text: "Duration Not selected",
-          label: "Add duration section",
-          ariaLabel: "",
-          placeholder: "",
-          contextPath: ["Create routine", "Routine form", "form", "Duration"],
-          scrollContainerId: "s1",
-          hasValue: false,
-          checked: false,
-          expanded: false
-        },
-        {
-          id: "close",
-          tag: "button",
-          role: "",
-          type: "button",
-          priority: false,
-          text: "Close",
-          label: "Close dialog",
-          ariaLabel: "",
-          placeholder: "",
-          contextPath: ["Create routine"],
-          hasValue: false,
-          checked: false
+          kind: "dialog",
+          title: "Create routine",
+          blocking: true,
+          children: [
+            {
+              kind: "scroll",
+              id: "s1",
+              label: "Routine form",
+              canScrollUp: false,
+              canScrollDown: true,
+              children: [
+                {
+                  kind: "context",
+                  name: "form",
+                  children: [
+                    { kind: "control", id: "name", tag: "input", type: "text", label: "Name", placeholder: "Routine name" },
+                    { kind: "control", id: "description", tag: "textarea", label: "Description", placeholder: "Routine description" },
+                    { kind: "context", name: "Duration", children: [{ kind: "control", id: "duration", tag: "button", type: "button", label: "Add duration section", text: "Duration Not selected", expanded: false }] }
+                  ]
+                }
+              ]
+            },
+            { kind: "control", id: "close", tag: "button", type: "button", label: "Close dialog", text: "Close" }
+          ]
         }
       ]
     },
@@ -347,16 +319,55 @@ void test("planner messages require ID-only target selectors", () => {
 
   assert.match(messages.systemText, /set target to exactly/);
   assert.match(messages.systemText, /action and action-specific fields in payload/);
-  assert.match(messages.systemText, /use scroll with its ID as containerId/);
+  assert.match(messages.systemText, /only a `Scroll <id>` line supplies a valid scroll container ID/);
+  assert.match(messages.systemText, /semantic context only/);
   assert.match(messages.systemText, /Never invent an ID or substitute another actionable control/);
   assert.match(messages.dynamicContextText, /## Currently Actionable Controls/);
   assert.match(
     messages.dynamicContextText,
-    /- `Create routine`\n  - Scroll `s1` \(`Routine form`\): can scroll up: false; can scroll down: true\n    - `form`\n      - `name`: label: `Name`; type: `text`; placeholder: `Routine name`\n      - `description`: label: `Description`; placeholder: `Routine description`\n      - `Duration`\n        - `duration`: label: `Add duration section`; text: `Duration Not selected`; type: `button`; collapsed\n  - `close`: label: `Close dialog`; text: `Close`; type: `button`/
+    /- Dialog `Create routine`; blocking: true\n  - Scroll `s1` \(`Routine form`\): can scroll up: false; can scroll down: true\n    - `form`\n      - `name`: tag: `input`; label: `Name`; type: `text`; placeholder: `Routine name`\n      - `description`: tag: `textarea`; label: `Description`; placeholder: `Routine description`\n      - `Duration`\n        - `duration`: tag: `button`; label: `Add duration section`; text: `Duration Not selected`; type: `button`; collapsed\n  - `close`: tag: `button`; label: `Close dialog`; text: `Close`; type: `button`/
   );
   assert.doesNotMatch(messages.dynamicContextText, /- `Routine form`\n/);
   assert.doesNotMatch(messages.dynamicContextText, /## Scroll Containers/);
   assert.doesNotMatch(messages.systemText, /You may combine any visible control fields/);
+});
+
+void test("planner messages distinguish semantic context from scroll container IDs", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Sign in.",
+    personaText: "persona",
+    workspacePromptText: "Use email/password login.",
+    contextData: { email: "user@example.test" },
+    observation: {
+      url: "https://example.test/login",
+      title: "Sign in",
+      tree: [
+        {
+          kind: "context",
+          name: "Authentication",
+          children: [
+            {
+              kind: "context",
+              name: "form",
+              children: [
+                { kind: "control", id: "email", tag: "input", type: "text", label: "Email", value: "user@example.test" },
+                { kind: "control", id: "continue", tag: "button", type: "submit", label: "Continue with email", text: "Continue with email" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    actionHistory: [],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  assert.match(messages.systemText, /`Authentication` or `form` are semantic context only/);
+  assert.match(messages.systemText, /If there is no Scroll entry, do not use a context name as containerId/);
+  assert.match(messages.systemText, /Do not infer an absent field from a familiar workflow/);
+  assert.match(messages.dynamicContextText, /- `Authentication`\n  - `form`\n    - `email`/);
+  assert.doesNotMatch(messages.dynamicContextText, /Scroll `Authentication`/);
 });
 
 void test("planner messages do not permit target-selector fallbacks", () => {
@@ -368,11 +379,7 @@ void test("planner messages do not permit target-selector fallbacks", () => {
     observation: {
       url: "https://example.test",
       title: "Routines",
-      modal: {},
-      headings: [],
-      alerts: [],
-      documentText: "Routines",
-      controls: []
+      tree: []
     },
     actionHistory: [],
     humanInputs: new Map(),
@@ -394,71 +401,11 @@ void test("planner messages place a scroll container at its first owned control"
     observation: {
       url: "https://example.test",
       title: "Home",
-      modal: {},
-      headings: [],
-      alerts: [],
-      documentText: "Home",
-      scrollContainers: [
-        { id: "s1", label: "main", contextPath: [], canScrollUp: false, canScrollDown: true }
-      ],
-      controls: [
-        {
-          id: "header",
-          tag: "button",
-          role: "",
-          type: "button",
-          priority: true,
-          text: "Search",
-          label: "Search",
-          ariaLabel: "",
-          placeholder: "",
-          contextPath: ["Desktop header"],
-          hasValue: false,
-          checked: false
-        },
-        {
-          id: "routine",
-          tag: "a",
-          role: "",
-          type: "",
-          priority: true,
-          text: "Routines",
-          label: "Routines",
-          ariaLabel: "",
-          placeholder: "",
-          contextPath: ["Primary navigation"],
-          hasValue: false,
-          checked: false
-        },
-        {
-          id: "task",
-          tag: "button",
-          role: "",
-          type: "button",
-          priority: false,
-          text: "Add task",
-          label: "Add task",
-          ariaLabel: "",
-          placeholder: "",
-          contextPath: ["main"],
-          scrollContainerId: "s1",
-          hasValue: false,
-          checked: false
-        },
-        {
-          id: "privacy",
-          tag: "a",
-          role: "",
-          type: "",
-          priority: false,
-          text: "Privacy Policy",
-          label: "Privacy Policy",
-          ariaLabel: "",
-          placeholder: "",
-          contextPath: ["Application footer"],
-          hasValue: false,
-          checked: false
-        }
+      tree: [
+        { kind: "context", name: "Desktop header", children: [{ kind: "control", id: "header", tag: "button", type: "button", label: "Search", text: "Search", priority: true }] },
+        { kind: "context", name: "Primary navigation", children: [{ kind: "control", id: "routine", tag: "a", label: "Routines", text: "Routines", priority: true }] },
+        { kind: "scroll", id: "s1", label: "main", canScrollUp: false, canScrollDown: true, children: [{ kind: "context", name: "main", children: [{ kind: "control", id: "task", tag: "button", type: "button", label: "Add task", text: "Add task" }] }] },
+        { kind: "context", name: "Application footer", children: [{ kind: "control", id: "privacy", tag: "a", label: "Privacy Policy", text: "Privacy Policy" }] }
       ]
     },
     actionHistory: [],
@@ -472,7 +419,7 @@ void test("planner messages place a scroll container at its first owned control"
   assert.ok(text.indexOf("Scroll `s1`") < text.indexOf("`Application footer`"));
 });
 
-void test("planner messages exclude document text from the actionable hierarchy", () => {
+void test("planner messages render scroll previews in the actionable hierarchy", () => {
   const messages = buildPlannerMessages({
     testPrompt: "Set the frequency to Daily.",
     personaText: "persona",
@@ -481,55 +428,35 @@ void test("planner messages exclude document text from the actionable hierarchy"
     observation: {
       url: "https://example.test",
       title: "Create routine",
-      modal: { open: true, title: "Create routine" },
-      headings: [],
-      alerts: [],
-      documentText: "Schedule Frequency Daily Weekly",
-      scrollContainers: [
+      tree: [
         {
-          id: "s1",
-          label: "Create routine form",
-          contextPath: ["Create routine"],
-          canScrollUp: false,
-          canScrollDown: true
-        }
-      ],
-      scrollPreviews: [
-        {
-          kind: "heading",
-          order: 2,
-          revealDirection: "down",
-          scrollContainerId: "s1",
-          text: "Schedule",
-          level: 2
-        },
-        {
-          kind: "control",
-          order: 3,
-          revealDirection: "down",
-          scrollContainerId: "s1",
-          label: "Frequency",
-          text: "Frequency",
-          role: "",
-          type: "button"
-        }
-      ],
-      controls: [
-        {
-          id: "name",
-          tag: "input",
-          role: "",
-          type: "text",
-          priority: false,
-          text: "",
-          label: "Name",
-          ariaLabel: "",
-          placeholder: "Routine name",
-          contextPath: ["Create routine", "Create routine form", "form"],
-          scrollContainerId: "s1",
-          hasValue: true,
-          checked: false,
-          value: "Daily Breakfast"
+          kind: "dialog",
+          title: "Create routine",
+          blocking: true,
+          children: [
+            {
+              kind: "scroll",
+              id: "s1",
+              label: "Create routine form",
+              canScrollUp: false,
+              canScrollDown: true,
+              children: [
+                {
+                  kind: "context",
+                  name: "form",
+                  children: [{ kind: "control", id: "name", tag: "input", type: "text", label: "Name", placeholder: "Routine name", value: "Daily Breakfast" }]
+                },
+                {
+                  kind: "preview",
+                  direction: "down",
+                  children: [
+                    { kind: "preview-heading", text: "Schedule", level: 2 },
+                    { kind: "preview-control", label: "Frequency", text: "Frequency", type: "button" }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -546,7 +473,7 @@ void test("planner messages exclude document text from the actionable hierarchy"
   );
   assert.match(
     messages.dynamicContextText,
-    /Scroll down in `s1` to reveal:\n      - Preview: Heading `Schedule` \[level 2\]\n      - Preview: Control: label: `Frequency`; text: `Frequency`; type: `button`/
+    /    - Scroll down to reveal:\n      - Preview: Heading `Schedule` \[level 2\]\n      - Preview: Control: label: `Frequency`; text: `Frequency`; type: `button`/
   );
   assert.match(
     messages.systemText,
@@ -555,6 +482,32 @@ void test("planner messages exclude document text from the actionable hierarchy"
   assert.doesNotMatch(messages.dynamicContextText, /label: `Daily`/);
   assert.doesNotMatch(messages.dynamicContextText, /- `Frequency`:/);
   assert.doesNotMatch(messages.dynamicContextText, /\n      - Control:/);
+});
+
+void test("planner messages place visible and preview text in the semantic hierarchy", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Review the routine guidance.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: {
+      url: "https://example.test",
+      title: "Routines",
+      tree: [{ kind: "context", name: "main", children: [{ kind: "heading", text: "Routines", level: 1 }, { kind: "text", text: "A routine repeats its tasks on a schedule." }, { kind: "scroll", id: "s1", label: "Routine details", canScrollUp: false, canScrollDown: true, children: [{ kind: "preview", direction: "down", children: [{ kind: "preview-text", text: "Additional schedule guidance below." }] }] }] }]
+    },
+    actionHistory: [],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  assert.match(
+    messages.dynamicContextText,
+    /- `main`\n  - Heading `Routines` \[level 1\]\n  - Text: `A routine repeats its tasks on a schedule\.`/
+  );
+  assert.match(
+    messages.dynamicContextText,
+    /    - Scroll down to reveal:\n      - Preview: Text: `Additional schedule guidance below\.`/
+  );
 });
 
 void test("planner messages nest observed controls under their semantic context", () => {
@@ -566,26 +519,7 @@ void test("planner messages nest observed controls under their semantic context"
     observation: {
       url: "https://example.test",
       title: "Home",
-      modal: {},
-      headings: [],
-      alerts: [],
-      documentText: "Home",
-      controls: [
-        {
-          id: "a1",
-          tag: "a",
-          role: "",
-          type: "",
-          priority: true,
-          text: "Routines",
-          label: "Routines",
-          ariaLabel: "",
-          placeholder: "",
-          contextPath: ["Primary navigation"],
-          hasValue: false,
-          checked: false
-        }
-      ]
+      tree: [{ kind: "context", name: "Primary navigation", children: [{ kind: "control", id: "a1", tag: "a", label: "Routines", text: "Routines", priority: true }] }]
     },
     actionHistory: [],
     humanInputs: new Map(),
@@ -594,7 +528,7 @@ void test("planner messages nest observed controls under their semantic context"
 
   assert.match(
     messages.dynamicContextText,
-    /- `Primary navigation`\n  - `a1`: label: `Routines`; text: `Routines`/
+    /- `Primary navigation`\n  - `a1`: tag: `a`; label: `Routines`; text: `Routines`/
   );
   assert.doesNotMatch(messages.dynamicContextText, /context: `Primary navigation`/);
 });
@@ -608,31 +542,7 @@ void test("planner messages render dialogs and headings in the semantic hierarch
     observation: {
       url: "https://example.test",
       title: "Routines",
-      modal: { open: true, role: "dialog", ariaModal: "true", title: "Create routine" },
-      headings: ["Create routine", "Schedule"],
-      headingNodes: [
-        { text: "Create routine", level: 2, order: 1, contextPath: ["Create routine"] },
-        { text: "Schedule", level: 3, order: 2, contextPath: ["Create routine"] }
-      ],
-      alerts: ["Required fields are missing"],
-      documentText: "Create routine Schedule",
-      controls: [
-        {
-          id: "name",
-          tag: "input",
-          role: "",
-          type: "text",
-          priority: false,
-          text: "",
-          label: "Name",
-          ariaLabel: "",
-          placeholder: "Routine name",
-          contextPath: ["Create routine"],
-          order: 3,
-          hasValue: false,
-          checked: false
-        }
-      ]
+      tree: [{ kind: "dialog", role: "dialog", title: "Create routine", blocking: true, children: [{ kind: "heading", text: "Schedule", level: 3 }, { kind: "control", id: "name", tag: "input", type: "text", label: "Name", placeholder: "Routine name" }, { kind: "alert", text: "Required fields are missing" }] }]
     },
     actionHistory: [],
     humanInputs: new Map(),
@@ -642,7 +552,7 @@ void test("planner messages render dialogs and headings in the semantic hierarch
   const text = messages.dynamicContextText;
   assert.match(
     text,
-    /- Dialog `Create routine`; modal: true\n  - Heading `Schedule` \[level 3\]\n  - `name`:/
+    /- Dialog `Create routine`; blocking: true\n  - Heading `Schedule` \[level 3\]\n  - `name`:/
   );
   assert.match(text, /- Alert: `Required fields are missing`/);
   assert.doesNotMatch(text, /- Modal:/);
@@ -660,30 +570,7 @@ void test("planner messages include observed native select options", () => {
     observation: {
       url: "https://example.test",
       title: "Schedule",
-      modal: {},
-      headings: [],
-      alerts: [],
-      documentText: "Schedule",
-      controls: [
-        {
-          id: "a1",
-          tag: "select",
-          role: "",
-          type: "",
-          priority: false,
-          text: "Frequency",
-          label: "Frequency",
-          ariaLabel: "",
-          placeholder: "",
-          hasValue: true,
-          checked: false,
-          value: "daily",
-          options: [
-            { label: "Daily", value: "daily", selected: true },
-            { label: "Weekdays", value: "weekdays" }
-          ]
-        }
-      ]
+      tree: [{ kind: "control", id: "a1", tag: "select", text: "Frequency", label: "Frequency", value: "daily", options: [{ label: "Daily", value: "daily", selected: true }, { label: "Weekdays", value: "weekdays" }] }]
     },
     actionHistory: [],
     humanInputs: new Map(),
@@ -715,11 +602,7 @@ void test("planner messages retain completed work beyond recent action history",
     observation: {
       url: "https://example.test",
       title: "Form",
-      modal: {},
-      headings: [],
-      alerts: [],
-      documentText: "Form",
-      controls: []
+      tree: []
     },
     actionHistory,
     humanInputs: new Map(),
@@ -752,11 +635,7 @@ void test("planner messages render feedback only from the immediately preceding 
     observation: {
       url: "https://example.test",
       title: "Form",
-      modal: {},
-      headings: [],
-      alerts: [],
-      documentText: "Form",
-      controls: []
+      tree: []
     },
     humanInputs: new Map(),
     screenshotRequested: false

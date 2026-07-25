@@ -7,6 +7,7 @@ import {
 } from "../reporting/report-artifacts.mjs";
 import { createBedrockPlanner } from "../node/bedrock-planner.js";
 import { createOpenAICompatiblePlanner } from "../node/openai-compatible-planner.js";
+import { PlannerResponseValidationError } from "../ports/planner.js";
 import { createPlaywrightBrowserFactory } from "../node/playwright-browser.js";
 import { createTerminalInteractionProvider } from "../node/terminal-interaction.js";
 import { loadContextFromOperations, redactSecretValues } from "./scenario/context-operations.mjs";
@@ -21,12 +22,11 @@ import {
 import {
   classifyRecoverableActionError,
   executeBrowserAction,
-  formatExpectedDocumentText,
+  formatExpectedNodes,
   isAlternatingScrollLoop,
   isRepeatedClickLoop,
-  isDocumentTextGone,
   resolveTargetControl,
-  waitForDocumentTextGone,
+  waitForObservedNodesGone,
   waitForUiSettle
 } from "./scenario/action-executor.mjs";
 
@@ -34,7 +34,6 @@ export {
   classifyRecoverableActionError,
   isAlternatingScrollLoop,
   isRepeatedClickLoop,
-  isDocumentTextGone,
   resolveTargetControl
 };
 
@@ -280,12 +279,20 @@ export async function runScenario(config, options = {}) {
   const debugLogger = createDebugLogger(config.debug);
   const interactionProvider = createTerminalInteractionProvider();
   const formatObservationSummary = (observation) => {
-    const visibleButtons = observation.controls.filter(
-      (control) => control.tag === "button"
-    ).length;
-    const visibleInputs = observation.controls.filter((control) => control.tag === "input").length;
-    const visibleAlerts = observation.alerts.length;
-    return `${observation.title || "untitled"} | ${observation.url} | controls=${observation.controls.length} buttons=${visibleButtons} inputs=${visibleInputs} alerts=${visibleAlerts}`;
+    const counts = { controls: 0, buttons: 0, inputs: 0, alerts: 0 };
+    const visit = (nodes) => {
+      for (const node of nodes || []) {
+        if (node.kind === "control") {
+          counts.controls += 1;
+          if (node.tag === "button") counts.buttons += 1;
+          if (node.tag === "input") counts.inputs += 1;
+        }
+        if (node.kind === "alert") counts.alerts += 1;
+        visit(node.children);
+      }
+    };
+    visit(observation.tree);
+    return `${observation.title || "untitled"} | ${observation.url} | controls=${counts.controls} buttons=${counts.buttons} inputs=${counts.inputs} alerts=${counts.alerts}`;
   };
 
   const providerLabel =
@@ -440,6 +447,7 @@ export async function runScenario(config, options = {}) {
         knownHumanInputs: stepDebugContext?.knownHumanInputs,
         agentPrompt: stepDebugContext?.agentPrompt,
         plannerTokenUsage: stepDebugContext?.plannerTokenUsage,
+        plannerResponse: stepDebugContext?.plannerResponse,
         phase: metadata?.phase,
         initBlock: metadata?.initBlock,
         outcome: stepError ? "error" : "ok",
@@ -451,16 +459,17 @@ export async function runScenario(config, options = {}) {
   async function executeDeterministicAction(action, observation, turnToken) {
     const payload = action.payload;
     if (payload.action === "wait_until_gone") {
-      const expectedText = payload.expectGone.documentText;
-      const waitResult = await waitForDocumentTextGone(
-        page,
-        expectedText,
+      const expectedNodes = payload.expectGone;
+      const formattedExpectedNodes = formatExpectedNodes(expectedNodes);
+      const waitResult = await waitForObservedNodesGone(
+        () => collectObservation(page, observationConfig, `wait-t${++observationTurn}`),
+        expectedNodes,
         config.settleDelayMs,
         config.settleTimeoutMs
       );
       if (!waitResult.completed) {
         throw new Error(
-          `Timed out after ${waitResult.elapsedMs}ms waiting for document text to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formatExpectedDocumentText(expectedText)}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`
+          `Timed out after ${waitResult.elapsedMs}ms waiting for observed nodes to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formattedExpectedNodes}'.`
         );
       }
       return;
@@ -564,12 +573,35 @@ export async function runScenario(config, options = {}) {
       debugLogger.log(messages.debugUserText);
       debugLogger.log("planner_user_end");
 
-      const plannerResult = await requestPlannerAction({
-        planner,
-        messages,
-        screenshotBuffer: screenshotBufferForThisTurn,
-        signal: plannerAbortController.signal
-      });
+      let plannerResult;
+      try {
+        plannerResult = await requestPlannerAction({
+          planner,
+          messages,
+          screenshotBuffer: screenshotBufferForThisTurn,
+          signal: plannerAbortController.signal
+        });
+      } catch (error) {
+        if (error instanceof PlannerResponseValidationError) {
+          addTokenUsageTotals(report.tokenUsage, error.tokenUsage);
+          await captureStep(
+            "invalid_planner_response",
+            undefined,
+            async () => {
+              throw error;
+            },
+            {
+              observation: redactSecretValues(observation, secretValues),
+              ...(ariaSnapshot ? { ariaSnapshot } : {}),
+              knownHumanInputs: knownHumanInputsSnapshot,
+              agentPrompt: { userText: messages.debugUserText },
+              plannerTokenUsage: error.tokenUsage,
+              plannerResponse: redactSecretValues(error.plannerResponse, secretValues)
+            }
+          );
+        }
+        throw error;
+      }
 
       throwIfInterrupted();
 
@@ -630,27 +662,27 @@ export async function runScenario(config, options = {}) {
             }
 
             if (plannerPayload.action === "wait_until_gone") {
-              const expectedText = plannerPayload.expectGone.documentText;
-              const formattedExpectedText = formatExpectedDocumentText(expectedText);
-              const waitKey = `${page.url()}::${formattedExpectedText}`;
+              const expectedNodes = plannerPayload.expectGone;
+              const formattedExpectedNodes = formatExpectedNodes(expectedNodes);
+              const waitKey = `${page.url()}::${formattedExpectedNodes}`;
               if (previousTimedOutWait === waitKey) {
                 recoverableOutcome = "duplicate_wait";
-                recoverableErrorMessage = `The same wait_until_gone condition already timed out without a URL change: '${formattedExpectedText}'.`;
+                recoverableErrorMessage = `The same wait_until_gone condition already timed out without a URL change: '${formattedExpectedNodes}'.`;
                 logger.warn(recoverableErrorMessage);
                 return;
               }
 
-              logger.info(`waiting for document text to disappear: ${clip(formattedExpectedText)}`);
-              const waitResult = await waitForDocumentTextGone(
-                page,
-                expectedText,
+              logger.info(`waiting for observed nodes to disappear: ${clip(formattedExpectedNodes)}`);
+              const waitResult = await waitForObservedNodesGone(
+                () => collectObservation(page, observationConfig, `wait-t${++observationTurn}`),
+                expectedNodes,
                 config.settleDelayMs,
                 config.settleTimeoutMs
               );
               if (!waitResult.completed) {
                 previousTimedOutWait = waitKey;
                 recoverableOutcome = "wait_timeout";
-                recoverableErrorMessage = `Timed out after ${waitResult.elapsedMs}ms waiting for document text to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formattedExpectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
+                recoverableErrorMessage = `Timed out after ${waitResult.elapsedMs}ms waiting for observed nodes to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formattedExpectedNodes}'.`;
                 logger.warn(recoverableErrorMessage);
                 return;
               }
@@ -810,11 +842,11 @@ export async function runScenario(config, options = {}) {
             : recoverableOutcome === "already_selected"
               ? "The selected option already has the required state. Do not click it again; use the current observation to continue."
               : recoverableOutcome === "invalid_target"
-                ? "The action targeted a control that is not in the current list of available controls. Choose an ID from Currently Actionable Controls in the fresh observation; historical IDs are not valid targets."
+                ? "The action targeted a control or scroll container that is not in the current observation. Use a control ID for click, fill, or select_option; use only an ID from a visible Scroll entry for scroll. Context labels are not action IDs."
               : recoverableOutcome === "target_disappeared"
                 ? "The target disappeared before the action could run, so the UI is transitioning. Inspect the fresh observation instead of repeating the action."
                 : recoverableOutcome === "wait_timeout"
-                  ? "The requested document text did not disappear within the configured settle timeout. Inspect the current observation and choose a different action."
+                  ? "The requested observed nodes did not disappear within the configured settle timeout. Inspect the current observation and choose a different action."
                   : recoverableOutcome === "duplicate_wait"
                     ? "The same wait condition already timed out without a state change. Choose a different action."
                     : recoverableOutcome === "invalid_selection"

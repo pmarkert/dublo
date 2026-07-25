@@ -578,11 +578,11 @@ void test("suite list, show, edit, and validate manage workspace manifests", asy
 });
 
 // ---------------------------------------------------------------------------
-// CLI integration — run --output-dir option
+// CLI integration — test run --output-dir option
 // ---------------------------------------------------------------------------
 
-void test("run command exposes --output-dir option", () => {
-  const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, "run", "--help"], {
+void test("test run command exposes --output-dir option", () => {
+  const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, "test", "run", "--help"], {
     cwd: process.cwd(),
     encoding: "utf8"
   });

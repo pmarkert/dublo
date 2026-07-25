@@ -27,12 +27,17 @@ void test("renders ordered debug step details including the exact agent prompt a
           observation: {
             url: "https://example.com/login",
             title: "Sign in",
-            modal: {},
-            headings: [],
-            alerts: [],
-            documentText: "Sign in",
-            scrollContainers: [],
-            controls: []
+            tree: [
+              {
+                kind: "context",
+                name: "main",
+                children: [
+                  { kind: "heading", level: 1, text: "Sign in" },
+                  { kind: "text", text: "Use your account email to continue." },
+                  { kind: "control", id: "a2", tag: "input", label: "Email" }
+                ]
+              }
+            ]
           },
           agentPrompt: {
             userText: "# Current Turn: Authoritative State\n\n## Currently Actionable Controls"
@@ -78,6 +83,9 @@ void test("renders ordered debug step details including the exact agent prompt a
   assert.match(html, /<span class="step-reason">Enter the email address to sign in\.<\/span>/);
   assert.match(html, /<h4>Resulting Screenshot<\/h4>/);
   assert.match(html, /<h4>Observation<\/h4>/);
+  assert.match(html, /Observed hierarchy/);
+  assert.match(html, /Use your account email to continue\./);
+  assert.doesNotMatch(html, /Visible Text/);
   assert.match(html, /<h4>ARIA Snapshot<\/h4>/);
   assert.match(html, /- main:\n\s{2}- button &quot;Save &amp; continue&quot;/);
   assert.match(html, /role="group" aria-label="Observation view" data-observation-toggle/);
@@ -171,4 +179,38 @@ void test("promotes the system prompt from older debug steps when rerendering", 
   assert.match(html, /<details class="card prompt system-prompt"><summary><h2>Agent System Prompt<\/h2><\/summary>/);
   assert.match(html, /Older shared system prompt\./);
   assert.ok(html.indexOf("<h2>Agent System Prompt</h2>") < html.indexOf("<h2>Steps</h2>"));
+});
+
+void test("renders the invalid planner response captured for a failed turn", () => {
+  const html = reportGenerator.render({
+    context: {
+      config: { baseUrl: "https://example.com" },
+      modelSummary: "test/model",
+      runId: "run-1",
+      scenario: "Create a routine",
+      screenshots: "none"
+    },
+    report: {
+      finalUrl: "https://example.com/routines",
+      status: "failed",
+      steps: [
+        {
+          durationMs: 10,
+          index: 1,
+          name: "invalid_planner_response",
+          plannerResponse: {
+            source: "tool_use",
+            rawAction: { reason: "Click it.", payload: { action: "click", target: { id: "" } } }
+          },
+          error: "Planner target must include an observed control ID.",
+          url: "https://example.com/routines"
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /<h4>Invalid Planner Response<\/h4>/);
+  assert.match(html, /id="step-1-tab-planner-response"/);
+  assert.match(html, /&quot;source&quot;: &quot;tool_use&quot;/);
+  assert.match(html, /Planner target must include an observed control ID\./);
 });
