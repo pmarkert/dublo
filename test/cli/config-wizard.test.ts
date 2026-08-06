@@ -118,3 +118,28 @@ void test("configuration wizard omits unavailable profiles while offering built-
   assert.equal(promptsSeen.includes("Default context profiles"), false);
   assert.deepEqual(personaChoices, ["", "qa-strict"]);
 });
+
+void test("configuration wizard writes only fields that differ from its baseline", async () => {
+  const prompts: ConfigWizardPrompts = {
+    input: ({ default: defaultValue }) => Promise.resolve(defaultValue),
+    number: ({ default: defaultValue }) => Promise.resolve(defaultValue),
+    confirm: ({ default: defaultValue }) => Promise.resolve(defaultValue),
+    select: ({ default: defaultValue }) => Promise.resolve(defaultValue),
+    checkbox: ({ choices }) => Promise.resolve(choices.filter((choice) => choice.checked).map((choice) => choice.value))
+  };
+
+  const overrides = await runConfigWizard({
+    current: { baseUrl: "https://example.test", maxSteps: 60 },
+    baseline: { baseUrl: "https://example.test", maxSteps: 40 },
+    heading: "Dublo test configuration: smoke",
+    profiles: {
+      llm: [],
+      persona: [{ name: "No default persona", value: "" }],
+      context: []
+    },
+    prompts,
+    write: () => undefined
+  });
+
+  assert.deepEqual(overrides, { maxSteps: 60 });
+});

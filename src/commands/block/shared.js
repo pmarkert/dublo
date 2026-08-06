@@ -4,14 +4,29 @@ import path from "node:path";
 import process from "node:process";
 import { z } from "zod";
 
-const BlockWaitUntilGoneExpectationSchema = z
+const BlockObservedNodeSelectorSchema = z
   .object({
-    documentText: z.union([
-      z.string().trim().min(1),
-      z.array(z.string().trim().min(1)).min(1)
-    ])
+    kind: z.string().trim().min(1).optional(),
+    id: z.string().trim().min(1).optional(),
+    name: z.string().trim().min(1).optional(),
+    title: z.string().trim().min(1).optional(),
+    tag: z.string().trim().min(1).optional(),
+    role: z.string().trim().min(1).optional(),
+    type: z.string().trim().min(1).optional(),
+    text: z.string().trim().min(1).optional(),
+    ariaLabel: z.string().trim().min(1).optional(),
+    label: z.string().trim().min(1).optional(),
+    description: z.string().trim().min(1).optional(),
+    checked: z.boolean().optional(),
+    selected: z.boolean().optional(),
+    pressed: z.boolean().optional(),
+    expanded: z.boolean().optional(),
+    disabled: z.boolean().optional(),
+    blocking: z.boolean().optional()
   })
-  .strict();
+  .strict()
+  .refine((selector) => Object.keys(selector).length > 0);
+const BlockWaitUntilGoneExpectationSchema = z.array(BlockObservedNodeSelectorSchema).min(1);
 const BlockTargetSelectorSchema = z
   .object({
     id: z.string().trim().min(1).optional(),

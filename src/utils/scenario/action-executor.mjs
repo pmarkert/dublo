@@ -1,6 +1,6 @@
 import { resolveFillValue } from "./context-operations.mjs";
 
-function normalizeDocumentText(value) {
+function normalizeObservedString(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
     .trim()
@@ -11,35 +11,58 @@ function describeTarget(target) {
   return target ? JSON.stringify(target) : "none";
 }
 
-export function formatExpectedDocumentText(expectedText) {
-  const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
-  return expectedTexts.map((item) => normalizeDocumentText(item)).join("|");
-}
-
-export function isDocumentTextGone(documentText, expectedText) {
-  const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
-  const normalizedDocumentText = normalizeDocumentText(documentText);
-  return expectedTexts.every((item) => !normalizedDocumentText.includes(normalizeDocumentText(item)));
-}
-
 function normalizeTargetValue(value) {
-  return typeof value === "string" ? normalizeDocumentText(value) : value;
+  return typeof value === "string" ? normalizeObservedString(value) : value;
 }
 
-export function resolveTargetControl(controls, targetSelector) {
+function visitTreeNodes(nodes, visit) {
+  for (const node of nodes || []) {
+    visit(node);
+    if (Array.isArray(node.children)) {
+      visitTreeNodes(node.children, visit);
+    }
+  }
+}
+
+export function findObservedNodes(tree, selector) {
+  const selectorEntries = Object.entries(selector || {});
+  const matches = [];
+  visitTreeNodes(tree, (node) => {
+    if (
+      selectorEntries.every(([key, expectedValue]) => {
+        const actualValue = key === "disabled" ? Boolean(node.disabled) : node[key];
+        return normalizeTargetValue(actualValue) === normalizeTargetValue(expectedValue);
+      })
+    ) {
+      matches.push(node);
+    }
+  });
+  return matches;
+}
+
+export function resolveTargetControl(tree, targetSelector) {
   const selectorEntries = Object.entries(targetSelector || {});
-  const matches = controls.filter((control) =>
-    selectorEntries.every(([key, expectedValue]) => {
-      const actualValue = key === "disabled" ? Boolean(control.disabled) : control[key];
-      return normalizeTargetValue(actualValue) === normalizeTargetValue(expectedValue);
-    })
-  );
+  const matches = findObservedNodes(tree, { kind: "control", ...targetSelector });
 
   if (matches.length === 1) return matches[0];
 
   const selectorText = JSON.stringify(targetSelector);
-  if (matches.length === 0) throw new Error(`Planner target not found: ${selectorText}`);
+  if (matches.length === 0) {
+    throw new Error(`Planner target is not in the current observation: ${selectorText}`);
+  }
   throw new Error(`Planner target selector is ambiguous: ${selectorText} matched ${matches.length} controls.`);
+}
+
+export function resolveScrollContainer(tree, containerId) {
+  return findObservedNodes(tree, { kind: "scroll", id: containerId })[0];
+}
+
+export function areExpectedNodesGone(tree, expectedNodes) {
+  return expectedNodes.every((selector) => findObservedNodes(tree, selector).length === 0);
+}
+
+export function formatExpectedNodes(expectedNodes) {
+  return expectedNodes.map((selector) => JSON.stringify(selector)).join("|");
 }
 
 function errorMessage(error) {
@@ -55,9 +78,15 @@ export function classifyRecoverableActionError(error) {
   ) {
     return "disabled_target";
   }
-  if (message.includes("planner target not found")) return "target_disappeared";
+  if (message.includes("selected option before click")) return "already_selected";
+  if (message.includes("planner target is not in the current observation")) return "invalid_target";
+  if (message.includes("planner scroll container") && message.includes("is not in the observation")) {
+    return "invalid_target";
+  }
+  if (message.includes("planner target disappeared from the dom")) return "target_disappeared";
   if (message.includes("planner select_option target is not a native select")) return "invalid_selection";
   if (message.includes("alternating scroll loop")) return "scroll_loop";
+  if (message.includes("repeated click loop")) return "click_loop";
   if (message.includes("cannot scroll down") || message.includes("cannot scroll up") || message.includes("did not move")) {
     return "scroll_boundary";
   }
@@ -83,6 +112,18 @@ export function isAlternatingScrollLoop(actionHistory, nextAction) {
   );
 }
 
+export function isRepeatedClickLoop(actionHistory, nextAction) {
+  if (nextAction.action !== "click" || !nextAction.target?.id) return false;
+
+  const recentClicks = actionHistory
+    .filter(({ outcome, action }) => outcome === "ok" && action.payload.action === "click")
+    .slice(-3);
+  return (
+    recentClicks.length === 3 &&
+    recentClicks.every(({ action }) => action.payload.target?.id === nextAction.target.id)
+  );
+}
+
 export async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
   const minStableMs = Number.isFinite(settleDelayMs) ? Math.max(1, Number(settleDelayMs)) : 500;
   const maxWaitMs = Number.isFinite(settleTimeoutMs) ? Math.max(minStableMs, Number(settleTimeoutMs)) : 3000;
@@ -105,6 +146,7 @@ export async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
         )
       )
         .filter((element) => {
+          if (element.closest("[aria-hidden='true']")) return false;
           const style = globalThis.window.getComputedStyle(element);
           if (style.display === "none" || style.visibility === "hidden") return false;
           const rect = element.getBoundingClientRect();
@@ -120,6 +162,7 @@ export async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
         })
         .join("|");
       const alerts = Array.from(globalThis.document.querySelectorAll("[role='alert']"))
+        .filter((element) => !element.closest("[aria-hidden='true']"))
         .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80))
         .join("|");
       return `${globalThis.window.location.href}::${globalThis.document.title}::${controls}::${alerts}`;
@@ -135,24 +178,24 @@ export async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
   }
 }
 
-export async function waitForDocumentTextGone(page, expectedText, settleDelayMs, settleTimeoutMs) {
+export async function waitForObservedNodesGone(captureObservation, expectedNodes, settleDelayMs, settleTimeoutMs) {
   const startedAt = Date.now();
   const pollMs = 120;
   let absentSince = null;
-  let latestDocumentText = "";
+  let latestObservation;
   while (Date.now() - startedAt < settleTimeoutMs) {
-    latestDocumentText = await page.evaluate(() => String(globalThis.document.body?.innerText || "").replace(/\s+/g, " ").trim());
-    if (isDocumentTextGone(latestDocumentText, expectedText)) {
+    latestObservation = await captureObservation();
+    if (areExpectedNodesGone(latestObservation.tree, expectedNodes)) {
       absentSince ??= Date.now();
       if (Date.now() - absentSince >= settleDelayMs) {
-        return { completed: true, latestDocumentText, elapsedMs: Date.now() - startedAt };
+        return { completed: true, latestObservation, elapsedMs: Date.now() - startedAt };
       }
     } else {
       absentSince = null;
     }
-    await page.waitForTimeout(pollMs);
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  return { completed: false, latestDocumentText, elapsedMs: Date.now() - startedAt };
+  return { completed: false, latestObservation, elapsedMs: Date.now() - startedAt };
 }
 
 async function isTargetDisabled(target) {
@@ -182,11 +225,17 @@ export async function executeBrowserAction({
 }) {
   const payload = action.payload;
 
+  if (isRepeatedClickLoop(actionHistory, payload)) {
+    throw new Error(
+      `Repeated click loop detected for target '${payload.target.id}'. Choose a different control or scroll to reveal the required control.`
+    );
+  }
+
   if (payload.action === "scroll") {
     if (isAlternatingScrollLoop(actionHistory, payload)) {
       throw new Error(`Alternating scroll loop detected in '${payload.containerId}'. Choose a non-scroll action or finish based on current evidence.`);
     }
-    const container = observation.scrollContainers.find((candidate) => candidate.id === payload.containerId);
+    const container = resolveScrollContainer(observation.tree, payload.containerId);
     if (!container) throw new Error(`Planner scroll container '${payload.containerId}' is not in the observation.`);
     if (payload.direction === "down" && !container.canScrollDown) {
       throw new Error(`Planner scroll container '${container.id}' cannot scroll down.`);
@@ -212,11 +261,16 @@ export async function executeBrowserAction({
     throw new Error(`Unsupported browser action: ${payload.action}`);
   }
 
-  const matchedControl = resolveTargetControl(observation.controls, payload.target);
+  const matchedControl = resolveTargetControl(observation.tree, payload.target);
   const target = page.locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${matchedControl.id}"]`).first();
-  if ((await target.count()) === 0) throw new Error(`Planner target not found: ${describeTarget(payload.target)}`);
+  if ((await target.count()) === 0) {
+    throw new Error(`Planner target disappeared from the DOM: ${describeTarget(payload.target)}`);
+  }
 
   if (payload.action === "click") {
+    if (matchedControl.role === "option" && matchedControl.selected) {
+      throw new Error(`Selected option before click: ${describeTarget(payload.target)}`);
+    }
     if (await isTargetDisabled(target)) throw new Error(`Disabled target before click: ${describeTarget(payload.target)}`);
     logger.info(`clicking target ${describeTarget(payload.target)}`);
     await target.click({ timeout: 1500 });

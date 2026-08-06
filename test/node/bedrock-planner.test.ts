@@ -4,7 +4,7 @@ import { createBedrockPlanner } from "../../src/node/bedrock-planner.js";
 
 const messages = {
   systemText: "system",
-  staticContextText: "static",
+  staticContextText: "",
   dynamicContextText: "dynamic"
 };
 
@@ -58,10 +58,61 @@ void test("Bedrock planner validates tool-use actions through an injected client
   assert.match(requestJson, /"toolConfig":\{"tools"/);
   assert.match(requestJson, /"toolChoice":\{"tool":\{"name":"planner_action"/);
   assert.match(requestJson, /"expectGone"/);
-  assert.match(requestJson, /"documentText"/);
+  assert.match(requestJson, /"expectGone":\{"type":"array","minItems":1/);
+  assert.match(requestJson, /"kind":\{"type":"string"/);
   assert.match(requestJson, /"target"/);
+  assert.match(
+    requestJson,
+    /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id":\{"type":"string","minLength":1\}\}\}/
+  );
+  assert.match(requestJson, /"ariaLabel":\{"type":"string"/);
   assert.match(requestJson, /"give_up"/);
+  assert.match(requestJson, /"text":"dynamic"/);
+  assert.doesNotMatch(requestJson, /"text":""/);
   assert.doesNotMatch(requestJson, /"strict":true/);
+  assert.doesNotMatch(requestJson, /"inferenceConfig"/);
+});
+
+void test("Bedrock planner forwards configured inference settings without a token default", async () => {
+  const requests: unknown[] = [];
+  const planner = createBedrockPlanner(
+    {
+      modelId: "test-model",
+      region: "us-east-1",
+      inferenceConfig: { temperature: 0, maxTokens: 1400 }
+    },
+    {
+      client: {
+        send(command) {
+          requests.push(command.input);
+          return Promise.resolve({
+            output: {
+              message: {
+                content: [
+                  {
+                    toolUse: {
+                      name: "planner_action",
+                      input: {
+                        reason: "Success criteria are visible.",
+                        payload: { action: "finish" }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          });
+        }
+      }
+    }
+  );
+
+  await planner.nextAction({ messages });
+
+  assert.deepEqual((requests[0] as { inferenceConfig?: unknown }).inferenceConfig, {
+    temperature: 0,
+    maxTokens: 1400
+  });
 });
 
 void test("Bedrock planner enables strict tool validation when the model supports it", async () => {
@@ -105,9 +156,9 @@ void test("Bedrock planner enables strict tool validation when the model support
   assert.match(requestJson, /"payload":\{"anyOf"/);
   assert.match(
     requestJson,
-    /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id"/
+    /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id":\{"type":"string","minLength":1\}\}\}/
   );
-  assert.doesNotMatch(requestJson, /"ariaLabel"/);
+  assert.match(requestJson, /"ariaLabel":\{"type":"string"/);
   assert.match(
     requestJson,
     /"required":\["action","interactionPrompt"\][\s\S]*"const":"request_user_interaction"/
@@ -163,6 +214,39 @@ void test("Bedrock planner preserves strict action payloads", async () => {
     reason: "The structured observation is insufficient.",
     payload: { action: "request_screenshot", screenshotPrompt: "Show the open menu." }
   });
+});
+
+void test("Bedrock planner normalizes compound targets to their ID", async () => {
+  const planner = createBedrockPlanner(
+    { modelId: "test-model", region: "us-east-1" },
+    {
+      client: {
+        send() {
+          return Promise.resolve({
+            output: {
+              message: {
+                content: [
+                  {
+                    toolUse: {
+                      name: "planner_action",
+                      input: {
+                        reason: "Open the routine form.",
+                        payload: { action: "click", target: { id: "a1", text: "New Routine" } }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          });
+        }
+      }
+    }
+  );
+
+  const response = await planner.nextAction({ messages });
+
+  assert.deepEqual(response.action.payload, { action: "click", target: { id: "a1" } });
 });
 
 void test("Bedrock planner preflight sends the planner tool definition", async () => {
@@ -222,7 +306,7 @@ void test("Bedrock planner rejects resolved error responses", async () => {
   );
 });
 
-void test("Bedrock planner identifies malformed actions without exposing their values", async () => {
+void test("Bedrock planner captures malformed action input for reporting", async () => {
   const planner = createBedrockPlanner(
     { modelId: "test-model", region: "us-east-1" },
     {
@@ -250,8 +334,22 @@ void test("Bedrock planner identifies malformed actions without exposing their v
     }
   );
 
-  await assert.rejects(
-    () => planner.nextAction({ messages }),
-    /invalid 'click' action with fields \[payload, reason\][\s\S]*value/
-  );
+  await assert.rejects(() => planner.nextAction({ messages }), (error) => {
+    assert.match(error.message, /invalid 'click' action with fields \[payload, reason\][\s\S]*value/);
+    assert.deepEqual(error.plannerResponse, {
+      source: "tool_use",
+      rawAction: {
+        reason: "Click the control.",
+        payload: { action: "click", target: { id: "new-routine" }, value: "secret" }
+      }
+    });
+    assert.deepEqual(error.tokenUsage, {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0
+    });
+    return true;
+  });
 });

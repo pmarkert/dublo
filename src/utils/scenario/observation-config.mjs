@@ -1,22 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-
-const DEFAULT_OBSERVATION_CONFIG = {
-  controlsSelector:
-    "button, a, input, textarea, select, [role='button'], [role='link'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [contenteditable='true']",
-  maxControls: 80,
-  ignoreControlSelectors: ["button[aria-label='Open Tanstack query devtools']"],
-  ignoreControlTextPatterns: [],
-  priorityControlSelectors: ["nav a", "nav button", "[role='navigation'] a", "[role='navigation'] button"],
-  headingSelector: "h1, h2, h3",
-  maxHeadings: 10,
-  alertSelector: "[role='alert']",
-  maxAlerts: 6,
-  documentTextScopeSelectors: ["main", "[role='main']"],
-  documentTextExcludeSelectors: ["button[aria-label='Open Tanstack query devtools']"],
-  documentTextMaxChars: 2400,
-};
+import { DEFAULT_OBSERVATION_CONFIG } from "./observation-defaults.mjs";
 
 function mergeObservationConfig(defaultConfig, overrideConfig) {
   if (!overrideConfig || typeof overrideConfig !== "object" || Array.isArray(overrideConfig)) {

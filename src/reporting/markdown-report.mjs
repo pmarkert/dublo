@@ -41,7 +41,13 @@ export const reportGenerator = {
         const stepUrlPart = formatSummaryStepUrl(step.url, config.baseUrl);
         const screenshotPart = step.screenshot ? ` [${step.screenshot}](${step.screenshot})` : "";
         const htmlPart = step.html ? ` [${step.html}](${step.html})` : "";
-        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner} -> ${stepUrlPart}${screenshotPart}${htmlPart}`;
+        const invalidResponsePart = step.plannerResponse
+          ? `\n  - Invalid planner response: \`${JSON.stringify(step.plannerResponse)}\``
+          : "";
+        const assertionsPart = step.assertions?.length
+          ? `\n  - Assertions: ${step.assertions.map((assertion) => `${assertion.subject}=${assertion.observed} [${assertion.status}, ${assertion.durability}]`).join("; ")}`
+          : "";
+        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner} -> ${stepUrlPart}${screenshotPart}${htmlPart}${invalidResponsePart}${assertionsPart}`;
       }),
       "",
       displayError ? `## Error\n\n\`\`\`text\n${displayError}\n\`\`\`` : "## Result\n\nScenario objective completed.",

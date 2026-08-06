@@ -85,8 +85,8 @@ dublo config report clear [--workspace <path>]
 dublo config prompt edit [--workspace <path>]
 dublo config prompt show [--workspace <path>]
 
-dublo run [scenario] [options]
-dublo run --prompt <text> [options]
+dublo test run [scenario] [options]
+dublo test run --prompt <text> [options]
 
 dublo llm create <name> [options]
 dublo llm edit <name> [options]
@@ -98,9 +98,9 @@ dublo persona list [options]
 dublo persona show <name> [options]
 dublo persona edit <name> [options]
 
-dublo scenario list [options]
-dublo scenario show <name> [options]
-dublo scenario edit <name> [options]
+dublo test list [options]
+dublo test show <name> [options]
+dublo test edit <name> [options]
 
 dublo context list [options]
 dublo context show <name> [options]

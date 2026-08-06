@@ -26,6 +26,7 @@ void test("tab completion suggests workspace profiles, run IDs, and enum values"
   );
 
   const workspacePath = path.join(workspace, ".dublo");
+  assert.match(complete(["test", "run", "--workspace", workspacePath, "--llm="]), /fast\tllm profile/);
   assert.match(complete(["run", "--workspace", workspacePath, "--llm="]), /fast\tllm profile/);
   assert.match(
     complete(["report", "show", "--workspace", workspacePath, ""]),

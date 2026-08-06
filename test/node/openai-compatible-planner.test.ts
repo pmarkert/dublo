@@ -4,7 +4,7 @@ import { createOpenAICompatiblePlanner } from "../../src/node/openai-compatible-
 
 const messages = {
   systemText: "system",
-  staticContextText: "static",
+  staticContextText: "",
   dynamicContextText: "dynamic"
 };
 
@@ -24,6 +24,14 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
                     function: {
                       arguments: JSON.stringify({
                         reason: "Continue the visible flow.",
+                        assertions: [
+                          {
+                            subject: "sign-in.email",
+                            observed: "The email field contains the provided address.",
+                            status: "confirmed",
+                            durability: "current_view"
+                          }
+                        ],
                         payload: { action: "click", target: { id: "button-1" } }
                       })
                     }
@@ -49,6 +57,14 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
 
   assert.deepEqual(response.action, {
     reason: "Continue the visible flow.",
+    assertions: [
+      {
+        subject: "sign-in.email",
+        observed: "The email field contains the provided address.",
+        status: "confirmed",
+        durability: "current_view"
+      }
+    ],
     payload: { action: "click", target: { id: "button-1" } }
   });
   assert.deepEqual(response.tokenUsage, {
@@ -62,8 +78,53 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
   const requestBody = requests[0]?.body;
   assert.equal(typeof requestBody, "string");
   assert.match(requestBody, /data:image\/png;base64/);
+  assert.match(requestBody, /"text":"dynamic"/);
+  assert.doesNotMatch(requestBody, /"text":""/);
   assert.match(requestBody, /expectGone/);
-  assert.match(requestBody, /documentText/);
+  assert.match(requestBody, /"expectGone":\{"type":"array","minItems":1/);
+  assert.match(requestBody, /"kind":\{"type":"string"/);
+  assert.match(
+    requestBody,
+    /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id":\{"type":"string","minLength":1\}\}\}/
+  );
+  assert.match(requestBody, /"ariaLabel":\{"type":"string"/);
+  assert.match(requestBody, /"assertions":\{"type":"array","maxItems":3/);
+  assert.match(requestBody, /"contradicts_objective"/);
+});
+
+void test("OpenAI-compatible planner normalizes compound targets to their ID", async () => {
+  const fetchStub: typeof fetch = () =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    function: {
+                      arguments: JSON.stringify({
+                        reason: "Open the routine form.",
+                        payload: { action: "click", target: { id: "a1", text: "New Routine" } }
+                      })
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }),
+        { status: 200 }
+      )
+    );
+  const planner = createOpenAICompatiblePlanner(
+    { baseUrl: "http://planner.test/v1", modelId: "test-model" },
+    { fetch: fetchStub }
+  );
+
+  const response = await planner.nextAction({ messages });
+
+  assert.deepEqual(response.action.payload, { action: "click", target: { id: "a1" } });
 });
 
 void test("OpenAI-compatible planner accepts a structured wait-until-gone action", async () => {
@@ -81,7 +142,7 @@ void test("OpenAI-compatible planner accepts a structured wait-until-gone action
                         reason: "Authentication is still loading.",
                         payload: {
                           action: "wait_until_gone",
-                          expectGone: { documentText: "Checking your account..." }
+                          expectGone: [{ kind: "text", text: "Checking your account..." }]
                         }
                       })
                     }
@@ -103,7 +164,10 @@ void test("OpenAI-compatible planner accepts a structured wait-until-gone action
 
   assert.deepEqual(response.action, {
     reason: "Authentication is still loading.",
-    payload: { action: "wait_until_gone", expectGone: { documentText: "Checking your account..." } }
+    payload: {
+      action: "wait_until_gone",
+      expectGone: [{ kind: "text", text: "Checking your account..." }]
+    }
   });
 });
 
@@ -256,5 +320,12 @@ void test("OpenAI-compatible planner rejects an invalid action before browser ex
     { fetch: fetchStub }
   );
 
-  await assert.rejects(() => planner.nextAction({ messages }), /target[\s\S]*Invalid input/);
+  await assert.rejects(() => planner.nextAction({ messages }), (error) => {
+    assert.match(error.message, /invalid 'click' action[\s\S]*target[\s\S]*Invalid input/);
+    assert.deepEqual(error.plannerResponse, {
+      source: "tool_use",
+      rawAction: { reason: "Click it.", payload: { action: "click" } }
+    });
+    return true;
+  });
 });

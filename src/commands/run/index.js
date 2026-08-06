@@ -137,8 +137,10 @@ export async function runCommand(options) {
     throw new Error("LLM baseUrl is required for openai-compatible. Set it in your llm profile or DUBLO_LLM_BASE_URL.");
   }
 
-  logger.info("Starting dublo run");
-  logger.info(`Target: ${config.baseUrl}`);
+  if (!process.stdout.isTTY) {
+    logger.info("Starting dublo test run");
+    logger.info(`Target: ${config.baseUrl}`);
+  }
 
   try {
     const report = await runScenario(config, {
@@ -161,7 +163,9 @@ export async function runCommand(options) {
     process.off("SIGTERM", onInterrupt);
   }
 
-  logger.info("Run complete");
+  if (!process.stdout.isTTY) {
+    logger.info("Test run complete");
+  }
 }
 
 function inferSingleProfile(workspace, folder, exts) {
@@ -288,7 +292,8 @@ export function resolveContextSelections(config) {
 export function resolveInheritedContextSelections(config) {
   return [
     ...normalizeContextRefs(config.workspaceContextRefs),
-    ...normalizeContextRefs(config.environmentContextRefs)
+    ...normalizeContextRefs(config.environmentContextRefs),
+    ...normalizeContextRefs(config.testContextRefs)
   ];
 }
 
@@ -351,15 +356,16 @@ export async function resolveInitBlocks(value, workspace) {
   return blocks;
 }
 
-export default function registerRunCommand(program) {
+export default function registerRunCommand(program, options = {}) {
   program
     .command("run [scenario]")
-    .description("Run using workspace config and selectors")
+    .description(options.alias ? "Alias for 'dublo test run'" : "Run a test using workspace config and selectors")
     .option("--workspace <path>", "Workspace directory (contains defaults.json and llm/personas/scenarios/context)")
     .option("--llm <value>", "LLM config file path or profile name in <workspace>/llm")
     .option("--persona <value>", "Persona file path or profile name in <workspace>/personas")
     .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios (or use positional [scenario])")
     .option("--adhoc <text>", "Inline ad hoc scenario text to run without a scenario file")
+    .option("--max-steps <count>", "Maximum planner steps for this run")
     .option("--settle-delay-ms <milliseconds>", "Stable UI duration before each LLM observation")
     .option("--settle-timeout-ms <milliseconds>", "Maximum UI settling duration before each LLM observation")
     .option("--headless", "Run browser in headless mode")
@@ -370,6 +376,7 @@ export default function registerRunCommand(program) {
     .option("--set <keyValue>", "Inline context assignment key.path=value (or key.path:value); repeatable", collectOptionValues)
     .option("--json <object>", "Inline JSON object merged into context (repeatable)", collectOptionValues)
     .option("--secret <pathEnv>", "Secret path or path=ENV_VAR for {{secret:path}} fills (repeatable)", collectOptionValues)
+    .option("--output-dir <path>", "Override output directory for this run")
     .action(async (scenarioArg, options) => {
       const orderedContextOperations = collectOrderedContextOperations(process.argv);
       await runCommand({

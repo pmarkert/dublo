@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { PlannerActionSchema } from "../ports/planner.js";
+import { parsePlannerAction, PlannerResponseValidationError } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface OpenAICompatiblePlannerConfig {
@@ -99,19 +99,22 @@ function buildPlannerActionSchema(): Record<string, unknown> {
   const target = {
     type: "object",
     additionalProperties: false,
-    properties: {
-      id: { type: "string" },
-      tag: { type: "string" },
-      role: { type: "string" },
-      type: { type: "string" },
-      priority: { type: "boolean" },
-      text: { type: "string" },
-      ariaLabel: { type: "string" },
-      label: { type: "string" },
-      placeholder: { type: "string" },
-      hasValue: { type: "boolean" },
-      checked: { type: "boolean" },
-      disabled: { type: "boolean" }
+    required: ["id"],
+    properties: { id: { type: "string", minLength: 1 } }
+  };
+  const assertions = {
+    type: "array",
+    maxItems: 3,
+    items: {
+      type: "object",
+      additionalProperties: false,
+      required: ["subject", "observed", "status", "durability"],
+      properties: {
+        subject: { type: "string", minLength: 1, maxLength: 80 },
+        observed: { type: "string", minLength: 1, maxLength: 240 },
+        status: { enum: ["confirmed", "contradicts_objective", "unknown"] },
+        durability: { enum: ["current_view", "persisted"] }
+      }
     }
   };
   const variant = (
@@ -131,6 +134,7 @@ function buildPlannerActionSchema(): Record<string, unknown> {
     required: ["reason", "payload"],
     properties: {
       reason: { type: "string" },
+      assertions,
       payload: {
         anyOf: [
           variant("click", { target }, ["target"]),
@@ -145,10 +149,32 @@ function buildPlannerActionSchema(): Record<string, unknown> {
             "wait_until_gone",
             {
               expectGone: {
-                type: "object",
-                additionalProperties: false,
-                required: ["documentText"],
-                properties: { documentText: { type: "string" } }
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  minProperties: 1,
+                  properties: {
+                    kind: { type: "string" },
+                    id: { type: "string" },
+                    name: { type: "string" },
+                    title: { type: "string" },
+                    tag: { type: "string" },
+                    role: { type: "string" },
+                    type: { type: "string" },
+                    text: { type: "string" },
+                    ariaLabel: { type: "string" },
+                    label: { type: "string" },
+                    description: { type: "string" },
+                    checked: { type: "boolean" },
+                    selected: { type: "boolean" },
+                    pressed: { type: "boolean" },
+                    expanded: { type: "boolean" },
+                    disabled: { type: "boolean" },
+                    blocking: { type: "boolean" }
+                  }
+                }
               }
             },
             ["expectGone"]
@@ -199,10 +225,11 @@ export function createOpenAICompatiblePlanner(
     },
 
     async nextAction(request: PlannerRequest): Promise<PlannerResponse> {
-      const userContent: Array<Record<string, unknown>> = [
-        { type: "text", text: request.messages.staticContextText },
-        { type: "text", text: request.messages.dynamicContextText }
-      ];
+      const userContent: Array<Record<string, unknown>> = [];
+      if (request.messages.staticContextText) {
+        userContent.push({ type: "text", text: request.messages.staticContextText });
+      }
+      userContent.push({ type: "text", text: request.messages.dynamicContextText });
       if (request.screenshot) {
         userContent.push({
           type: "image_url",
@@ -265,10 +292,33 @@ export function createOpenAICompatiblePlanner(
       if (rawAction === undefined)
         throw new Error("OpenAI-compatible planner API returned no planner action.");
 
-      return {
-        action: PlannerActionSchema.parse(rawAction),
-        tokenUsage: normalizeTokenUsage(result.usage)
-      };
+      const tokenUsage = normalizeTokenUsage(result.usage);
+      try {
+        return {
+          action: parsePlannerAction(rawAction),
+          tokenUsage
+        };
+      } catch (error) {
+        const action =
+          isRecord(rawAction) &&
+          isRecord(rawAction.payload) &&
+          typeof rawAction.payload.action === "string"
+            ? rawAction.payload.action
+            : "unknown";
+        const fields = isRecord(rawAction) ? Object.keys(rawAction).sort().join(", ") : "non-object";
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new PlannerResponseValidationError(
+          `OpenAI-compatible planner returned an invalid '${action}' action with fields [${fields}]: ${detail}`,
+          {
+            cause: error,
+            plannerResponse: {
+              source: typeof argumentsText === "string" ? "tool_use" : "text",
+              rawAction
+            },
+            tokenUsage
+          }
+        );
+      }
     }
   };
 }

@@ -12,8 +12,20 @@ import {
 
 const cliPath = path.resolve(import.meta.dirname, "../../src/cli.ts");
 
-void test("run help exposes repeatable initialization blocks", () => {
-  const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, "run", "--help"], {
+void test("test groups profile management with the canonical run command", () => {
+  const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, "test", "--help"], {
+    cwd: process.cwd(),
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /list \[options\]\s+List available scenario profiles/);
+  assert.match(result.stdout, /show \[options\] <profile>\s+Write scenario text to stdout/);
+  assert.match(result.stdout, /run \[options\] \[scenario\]\s+Run a test using workspace config and selectors/);
+});
+
+void test("test run help exposes repeatable initialization blocks", () => {
+  const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, "test", "run", "--help"], {
     cwd: process.cwd(),
     encoding: "utf8"
   });
@@ -21,6 +33,18 @@ void test("run help exposes repeatable initialization blocks", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /--init <block>/);
   assert.match(result.stdout, /repeatable/);
+  assert.match(result.stdout, /--max-steps <count>/);
+});
+
+void test("run is an alias for test run", () => {
+  const result = spawnSync(process.execPath, ["--import", "tsx", cliPath, "run", "--help"], {
+    cwd: process.cwd(),
+    encoding: "utf8"
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Alias for 'dublo test run'/);
+  assert.match(result.stdout, /--init <block>/);
 });
 
 void test("context selections combine sources in last-wins precedence order", () => {

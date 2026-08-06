@@ -4,6 +4,8 @@ Agentic LLM-in-the-loop web testing CLI using Playwright and AWS Bedrock.
 
 The TypeScript migration, library API, CLI redesign, and quality roadmap are documented in [the implementation plan](docs/implementation-plan.md).
 
+For a locally installable Chrome toolbar action that captures the active page as a Dublo-style observation and opens a report-style HTML viewer, see [the browser extension instructions](browser-extension/README.md).
+
 ## Requirements
 
 - Node.js 20+
@@ -46,20 +48,20 @@ npx playwright install chromium
 
 ```bash
 dublo llm config default --workspace ./.dublo
-dublo run homepage-smoke --workspace ./.dublo
+dublo test run homepage-smoke --workspace ./.dublo
 ```
 
 If no scenario is specified, dublo reads scenario text from stdin:
 
 ```bash
-echo "Verify the home page loads and primary CTA is visible." | dublo run --workspace ./.dublo
+echo "Verify the home page loads and primary CTA is visible." | dublo test run --workspace ./.dublo
 ```
 
 For local development, use the compiled CLI after building:
 
 ```bash
 npm run build
-node dist/cli.js run homepage-smoke --workspace ./.dublo
+node dist/cli.js test run homepage-smoke --workspace ./.dublo
 ```
 
 Workspace defaults can be inspected and updated without rerunning the full setup flow:
@@ -95,12 +97,37 @@ The LLM wizard lets users:
 - `<workspace>/scenarios`
 - `<workspace>/context`
 - `<workspace>/blocks`
+- `<workspace>/suites`
 
 Workspace prompt:
 
 - `dublo config prompt edit` edits `<workspace>/prompt.md`
 - `dublo config prompt show` writes `<workspace>/prompt.md` to stdout
 - if `prompt.md` exists, its contents are injected into the LLM prompt as application-specific background and testing instructions
+
+Test-specific configuration:
+
+- A saved test at `<workspace>/scenarios/checkout.md` can have an adjacent `<workspace>/scenarios/checkout.config.json`.
+- The sidecar accepts the same fields as `defaults.json`, including `llm`, `persona`, `context`, `maxSteps`, settling values, screenshots, reports, debug, output directory, and observation config.
+- Run `dublo test config checkout --workspace <workspace>` for the interactive wizard, or use `show|edit|validate` for direct config-file operations.
+- Run configuration precedence is CLI flags, test sidecar, environment variables, workspace defaults, then built-in defaults.
+- Sidecars apply only to saved workspace test profiles, not direct prompt files or built-in templates.
+
+## Suites
+
+Suite tasks can wait on task IDs or labels. `dependsOn` accepts one entry or an array; every entry must match. A string dependency requires all matching tasks to pass. An object can specify one status or an array of allowed statuses. `success` and `fail` are aliases for `passed` and `failed`. Tasks with unmet dependency expectations are recorded as skipped.
+
+```yaml
+tasks:
+  - scenario: prepare-test-data
+    id: init
+  - scenario: checkout-happy-path
+    dependsOn: init
+  - scenario: inspect-failure-state
+    dependsOn:
+      - task: checkout-happy-path
+        status: [success, fail]
+```
 
 ## Shell completion
 
@@ -136,8 +163,8 @@ dublo config validate [options]
 dublo config context add|remove|clear [options]
 dublo config report add|remove|clear [options]
 dublo config prompt edit|show [options]
-dublo run [scenario] [options]
-dublo run checkout --init login --init select-tenant
+dublo test run [scenario] [options]
+dublo test run checkout --init login --init select-tenant
 dublo llm config [profile] [options]
 dublo llm list [options]
 dublo llm show [profile] [options]
@@ -145,9 +172,12 @@ dublo llm validate [profile] [options]
 dublo persona list [options]
 dublo persona show <profile> [options]
 dublo persona edit <profile> [options]
-dublo scenario list [options]
-dublo scenario show <profile> [options]
-dublo scenario edit <profile> [options]
+dublo test list [options]
+dublo test show <profile> [options]
+dublo test edit <profile> [options]
+dublo test config show <profile> [options]
+dublo test config edit <profile> [options]
+dublo test config validate <profile> [options]
 dublo context list [options]
 dublo context show <profile> [options]
 dublo context edit <profile> [options]
@@ -157,6 +187,12 @@ dublo block list [options]
 dublo block show <name> [options]
 dublo block edit <name> [options]
 dublo block validate [name] [options]
+dublo suite list [options]
+dublo suite show <suite> [options]
+dublo suite edit <suite> [options]
+dublo suite validate [suite] [options]
+dublo suite run <manifest> [options]
+dublo suite open [suite-id] [options]
 dublo report list [options]
 dublo report show [run-id] [options]
 dublo report open [run-id] [options]
@@ -229,20 +265,32 @@ dublo persona edit <profile> [options]
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
 
-dublo scenario list [options]
+dublo test list [options]
 
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
 
-Built-in scenario templates are bundled with Dublo and appear in `dublo scenario list` alongside workspace scenarios.
-You can use a built-in template name directly with `--scenario`, export it with `dublo scenario show <template>`, or seed a workspace copy with `dublo scenario edit <template>`.
+Built-in scenario templates are bundled with Dublo and appear in `dublo test list` alongside workspace scenarios.
+You can use a built-in template name directly with `--scenario`, export it with `dublo test show <template>`, or seed a workspace copy with `dublo test edit <template>`.
 
-dublo scenario show <profile> [options]
+Each workspace scenario may optionally define a sidecar configuration file named `<profile>.config.json`. For example:
+
+```json
+{
+  "llm": "fast",
+  "maxSteps": 60,
+  "screenshots": "viewport"
+}
+```
+
+Create or update it with `dublo test config edit <profile>`. Its values override workspace defaults for that test.
+
+dublo test show <profile> [options]
 
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
 
-dublo scenario edit <profile> [options]
+dublo test edit <profile> [options]
 
 Options:
   --workspace <path>    Workspace directory (default: DUBLO_WORKSPACE or ./.dublo)
@@ -384,25 +432,25 @@ Examples:
 
 ```bash
 # simple scalar values
-dublo run --set username:phillip --set retries=3
+dublo test run --set username:phillip --set retries=3
 
 # nested values
-dublo run --set auth.user.name=phillip --set auth.user.admin=true
+dublo test run --set auth.user.name=phillip --set auth.user.admin=true
 
 # merge object JSON
-dublo run --json '{"featureFlags":{"newCheckout":true}}'
+dublo test run --json '{"featureFlags":{"newCheckout":true}}'
 
 # provide a password from the environment without exposing it to the planner
-CHECKOUT_PASSWORD='correct-horse-battery-staple' dublo run --secret checkout.password=CHECKOUT_PASSWORD
+CHECKOUT_PASSWORD='correct-horse-battery-staple' dublo test run --secret checkout.password=CHECKOUT_PASSWORD
 
 # auto-discover a secret without adding a CLI option
-DUBLO_SECRET_password='correct-horse-battery-staple' dublo run myday
+DUBLO_SECRET_password='correct-horse-battery-staple' dublo test run myday
 
 # combine files + inline overrides
-dublo run --context shared --context qa-user --set auth.user.name=phillip --json '{"region":"us-east-1"}'
+dublo test run --context shared --context qa-user --set auth.user.name=phillip --json '{"region":"us-east-1"}'
 
 # ordering is preserved across mixed types
-dublo run --context base --set auth.user.name=phillip --json '{"auth":{"role":"admin"}}' --context final-overrides
+dublo test run --context base --set auth.user.name=phillip --json '{"auth":{"role":"admin"}}' --context final-overrides
 ```
 
 Environment variable precedence:
