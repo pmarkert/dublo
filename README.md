@@ -105,6 +105,14 @@ Workspace prompt:
 - `dublo config prompt show` writes `<workspace>/prompt.md` to stdout
 - if `prompt.md` exists, its contents are injected into the LLM prompt as application-specific background and testing instructions
 
+Test-specific configuration:
+
+- A saved test at `<workspace>/scenarios/checkout.md` can have an adjacent `<workspace>/scenarios/checkout.config.json`.
+- The sidecar accepts the same fields as `defaults.json`, including `llm`, `persona`, `context`, `maxSteps`, settling values, screenshots, reports, debug, output directory, and observation config.
+- Run `dublo test config checkout --workspace <workspace>` for the interactive wizard, or use `show|edit|validate` for direct config-file operations.
+- Run configuration precedence is CLI flags, test sidecar, environment variables, workspace defaults, then built-in defaults.
+- Sidecars apply only to saved workspace test profiles, not direct prompt files or built-in templates.
+
 ## Suites
 
 Suite tasks can wait on task IDs or labels. `dependsOn` accepts one entry or an array; every entry must match. A string dependency requires all matching tasks to pass. An object can specify one status or an array of allowed statuses. `success` and `fail` are aliases for `passed` and `failed`. Tasks with unmet dependency expectations are recorded as skipped.
@@ -167,6 +175,9 @@ dublo persona edit <profile> [options]
 dublo test list [options]
 dublo test show <profile> [options]
 dublo test edit <profile> [options]
+dublo test config show <profile> [options]
+dublo test config edit <profile> [options]
+dublo test config validate <profile> [options]
 dublo context list [options]
 dublo context show <profile> [options]
 dublo context edit <profile> [options]
@@ -261,6 +272,18 @@ Options:
 
 Built-in scenario templates are bundled with Dublo and appear in `dublo test list` alongside workspace scenarios.
 You can use a built-in template name directly with `--scenario`, export it with `dublo test show <template>`, or seed a workspace copy with `dublo test edit <template>`.
+
+Each workspace scenario may optionally define a sidecar configuration file named `<profile>.config.json`. For example:
+
+```json
+{
+  "llm": "fast",
+  "maxSteps": 60,
+  "screenshots": "viewport"
+}
+```
+
+Create or update it with `dublo test config edit <profile>`. Its values override workspace defaults for that test.
 
 dublo test show <profile> [options]
 

@@ -7,6 +7,7 @@ import type { WorkspaceDefaults } from "../core/config/schemas.js";
 const WORKSPACE_DIRECTORIES = [
   "llm",
   "personas",
+  "tests",
   "scenarios",
   "context",
   "blocks",

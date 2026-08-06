@@ -13,7 +13,10 @@ import {
 } from "../../src/utils/scenario/context-operations.mjs";
 import { executeBrowserAction } from "../../src/utils/scenario/action-executor.mjs";
 import { areExpectedNodesGone } from "../../src/utils/scenario/action-executor.mjs";
-import { buildPlannerMessages } from "../../src/utils/scenario/planner-context.mjs";
+import {
+  appendPlannerValidationFeedback,
+  buildPlannerMessages
+} from "../../src/utils/scenario/planner-context.mjs";
 
 void test("detects when a selected observed tree node has disappeared", () => {
   const loadingTree = [{ kind: "text", text: "Checking your account..." }];
@@ -567,6 +570,7 @@ void test("planner messages include observed native select options", () => {
     personaText: "persona",
     workspacePromptText: "",
     contextData: {},
+
     observation: {
       url: "https://example.test",
       title: "Schedule",
@@ -691,6 +695,74 @@ void test("planner messages render feedback only from the immediately preceding 
   assert.doesNotMatch(withFeedback.dynamicContextText, /# Recent Actions/);
 });
 
+void test("planner messages retain the latest successful assertions as facts and gaps", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Create three independently scheduled routine steps.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: { url: "https://example.test/routine", title: "Routine", tree: [] },
+    actionHistory: [
+      {
+        step: 1,
+        outcome: "ok",
+        action: { reason: "Open routine.", payload: { action: "click", target: { id: "open" } } },
+        assertions: [
+          {
+            subject: "routine.recurrence",
+            observed: "Daily at 08:00.",
+            status: "confirmed",
+            durability: "persisted"
+          },
+          {
+            subject: "routine.steps",
+            observed: "The routine has 1 checklist step.",
+            status: "contradicts_objective",
+            durability: "persisted"
+          }
+        ]
+      },
+      {
+        step: 2,
+        outcome: "ok",
+        action: { reason: "Set recurrence.", payload: { action: "click", target: { id: "daily" } } },
+        assertions: [
+          {
+            subject: "routine.recurrence",
+            observed: "Daily at 07:30.",
+            status: "confirmed",
+            durability: "persisted"
+          }
+        ]
+      },
+      {
+        step: 3,
+        outcome: "invalid_target",
+        action: { reason: "Edit steps.", payload: { action: "click", target: { id: "missing" } } },
+        assertions: [
+          {
+            subject: "routine.steps",
+            observed: "The routine has 3 steps.",
+            status: "confirmed",
+            durability: "persisted"
+          }
+        ]
+      }
+    ],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  assert.match(messages.systemText, /You may include up to three assertions/);
+  assert.match(messages.dynamicContextText, /# Established Facts/);
+  assert.match(messages.dynamicContextText, /Daily at 07:30/);
+  assert.doesNotMatch(messages.dynamicContextText, /Daily at 08:00/);
+  assert.match(messages.dynamicContextText, /# Known Gaps/);
+  assert.match(messages.dynamicContextText, /The routine has 1 checklist step/);
+  assert.doesNotMatch(messages.dynamicContextText, /The routine has 3 steps/);
+  assert.match(messages.dynamicContextText, /Do not return finish while they contradict/);
+});
+
 void test("secret redaction masks only exact string matches", () => {
   const redacted: unknown = redactSecretValues(
     { exact: "token", embedded: "prefix-token", nested: ["token"] },
@@ -722,4 +794,33 @@ void test("empty DUBLO_SECRET variables fail loudly", async () => {
     () => loadContextFromOperations([], { DUBLO_SECRET_password: "" }),
     /Secret environment variable 'DUBLO_SECRET_password' is not set or is empty/
   );
+});
+
+void test("planner validation feedback retains the current turn and rejected response", () => {
+  const messages = buildPlannerMessages({
+    testPrompt: "Continue the sign-in flow.",
+    personaText: "persona",
+    workspacePromptText: "",
+    contextData: {},
+    observation: {
+      url: "https://example.test/login",
+      title: "Sign in",
+      tree: [{ kind: "control", id: "continue", tag: "button", label: "Continue" }]
+    },
+    actionHistory: [],
+    humanInputs: new Map(),
+    screenshotRequested: false
+  });
+
+  const retryMessages = appendPlannerValidationFeedback(
+    messages,
+    "Planner target must include an observed control ID.",
+    { source: "tool_use", rawAction: { reason: "Continue", payload: { action: "click" } } }
+  );
+
+  assert.match(retryMessages.dynamicContextText, /`continue`: tag: `button`; label: `Continue`/);
+  assert.match(retryMessages.dynamicContextText, /# Previous Planner Response: Invalid/);
+  assert.match(retryMessages.dynamicContextText, /Planner target must include an observed control ID/);
+  assert.match(retryMessages.dynamicContextText, /"action": "click"/);
+  assert.equal(retryMessages.debugUserText, retryMessages.dynamicContextText);
 });

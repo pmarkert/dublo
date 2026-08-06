@@ -55,6 +55,9 @@
       }
     };
     const isVisible = (el) => {
+      if (el.closest("[aria-hidden='true']")) {
+        return false;
+      }
       const style = globalThis.window.getComputedStyle(el);
       if (style.display === "none" || style.visibility === "hidden") {
         return false;
@@ -525,7 +528,7 @@
         headingNodes.push(heading);
       }
     }
-    const alerts = queryAllWithin(scopeRoot, alertSelector).map((el) => normalizeText(el.textContent || "")).filter(Boolean).slice(0, maxAlerts);
+    const alerts = queryAllWithin(scopeRoot, alertSelector).filter((el) => isVisible(el)).map((el) => normalizeText(el.textContent || "")).filter(Boolean).slice(0, maxAlerts);
     const textNodeSelector = "p, li, dt, dd, blockquote, figcaption, caption, td, th, [role='status'], [role='note'], [role='article']";
     const textWithoutSemanticDescendants = (el) => {
       const segments = [];
@@ -557,7 +560,7 @@
       if (el.closest(alertSelector) || el.matches("label") || el.closest("label")) {
         return false;
       }
-      return !el.closest("script, style, noscript, template, [aria-hidden='true']");
+      return !el.closest("script, style, noscript, template");
     });
     const textNodes = [];
     for (const el of textElements) {

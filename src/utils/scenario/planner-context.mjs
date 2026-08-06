@@ -99,6 +99,42 @@ function renderSuccessfulAction(item) {
   return `- Step ${item.step}: ${item.action} ${renderValue(target)}${value}`;
 }
 
+function resolveAssertionLedger(actionHistory) {
+  const assertionsBySubject = new Map();
+  for (const item of actionHistory) {
+    if (item.outcome !== "ok") continue;
+    for (const assertion of item.assertions || []) {
+      assertionsBySubject.set(assertion.subject, { ...assertion, step: item.step });
+    }
+  }
+  return [...assertionsBySubject.values()];
+}
+
+function renderAssertion(assertion) {
+  return `- ${renderValue(assertion.subject)}: ${renderValue(assertion.observed)} [${assertion.status}, ${assertion.durability}; step ${assertion.step}]`;
+}
+
+export function appendPlannerValidationFeedback(messages, validationError, plannerResponse) {
+  const rejectedResponse = JSON.stringify(plannerResponse, null, 2);
+  const feedback = [
+    "# Previous Planner Response: Invalid",
+    "The previous planner_action response was rejected locally, and no browser action was performed.",
+    `Validation error: ${validationError}`,
+    "Rejected response:",
+    "```json",
+    rejectedResponse,
+    "```",
+    "Return a corrected planner_action now. Follow the tool schema and the current observation exactly."
+  ].join("\n");
+  const dynamicContextText = `${messages.dynamicContextText}\n\n${feedback}`;
+
+  return {
+    ...messages,
+    dynamicContextText,
+    debugUserText: dynamicContextText
+  };
+}
+
 export function buildPlannerMessages({
   testPrompt,
   personaText,
@@ -131,6 +167,7 @@ export function buildPlannerMessages({
     "If every success criterion is achieved, return finish immediately and do not take another browser action. Otherwise, identify the specific unmet criterion and choose exactly one action that advances it.",
     "Do not restart, recreate, or repeat a workflow whose successful completion is recorded in completedWork and confirmed by the current observation.",
     "Always provide a non-empty reason for the chosen action.",
+    "You may include up to three assertions about facts directly observed in the current turn. Each assertion needs a stable subject, concise observed value, status confirmed, contradicts_objective, or unknown, and durability current_view or persisted. Never assert a predicted result of your chosen action.",
     "Control IDs identify the same visible control across observations when it persists. Choose an ID from the current observation only; do not guess IDs for controls not currently observed.",
     "For click, fill, and select_option, set target to exactly { id: '<observed control ID>' }.",
     "Read the observation as a tree: indented names such as `Authentication` or `form` are semantic context only, never target IDs or scroll container IDs. A control line begins with its ID, and only a `Scroll <id>` line supplies a valid scroll container ID.",
@@ -173,6 +210,13 @@ export function buildPlannerMessages({
     ? actionHistory.at(-1)
     : undefined;
   const redactedCompletedWork = redactSecretValues(completedWork, secretValues);
+  const assertionLedger = redactSecretValues(resolveAssertionLedger(actionHistory), secretValues);
+  const establishedFacts = assertionLedger.filter(
+    (assertion) => assertion.status === "confirmed"
+  );
+  const knownGaps = assertionLedger.filter(
+    (assertion) => assertion.status !== "confirmed"
+  );
   const knownHumanInputs = Object.fromEntries(humanInputs.entries());
 
   const dynamicContextText = [
@@ -202,6 +246,22 @@ export function buildPlannerMessages({
           "",
           "# Previous Action Feedback: Must Address",
           `- Step ${previousActionFeedback.step}: ${previousActionFeedback.runnerFeedback}${previousActionFeedback.error ? ` Error: ${renderValue(previousActionFeedback.error)}` : ""}`
+        ]
+      : []),
+    ...(establishedFacts.length
+      ? [
+          "",
+          "# Established Facts",
+          "These are prior observed facts from successful turns. Do not recheck persisted facts unless current evidence or runner feedback contradicts them.",
+          ...establishedFacts.map(renderAssertion)
+        ]
+      : []),
+    ...(knownGaps.length
+      ? [
+          "",
+          "# Known Gaps",
+          "These prior observations are unresolved. Do not return finish while they contradict the scenario objective.",
+          ...knownGaps.map(renderAssertion)
         ]
       : []),
     ...(redactedCompletedWork.length

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import dotenv from "dotenv";
+import { WorkspaceDefaultsSchema } from "../core/config/schemas.js";
+import { inferSingleScenarioProfile, resolveTestConfigPath } from "../commands/scenario/shared.js";
 import { DEFAULT_REPORT_GENERATORS, listReportGenerators } from "../reporting/report-artifacts.mjs";
 
 dotenv.config();
@@ -123,6 +125,23 @@ function resolvePathFromWorkspaceOrCwd(value, workspace) {
   return path.resolve(workspace, value);
 }
 
+function loadTestConfig(workspacePath, scenario) {
+  const configPath = resolveTestConfigPath(workspacePath, scenario);
+  if (!configPath || !fs.existsSync(configPath)) {
+    return { config: {}, configPath: "" };
+  }
+
+  try {
+    return {
+      config: WorkspaceDefaultsSchema.parse(JSON.parse(fs.readFileSync(configPath, "utf8"))),
+      configPath
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid test config at '${configPath}': ${detail}`);
+  }
+}
+
 export function loadScenarioConfig(overrides = {}) {
   const overrideContextRefs = normalizeStringArray(overrides.context);
   const environmentContextRefs = normalizeStringArray(process.env.DUBLO_CONTEXT);
@@ -148,6 +167,14 @@ export function loadScenarioConfig(overrides = {}) {
       throw new Error(`Invalid JSON in workspace defaults '${workspaceConfigPath}': ${detail}`);
     }
   }
+
+  const testProfile = firstDefined(
+    overrides.scenario,
+    process.env.DUBLO_SCENARIO,
+    inferSingleScenarioProfile(workspacePath)
+  );
+  const testConfigResult = loadTestConfig(workspacePath, testProfile);
+  const testConfig = testConfigResult.config;
 
   const workspaceRuntimeConfig = cleanUndefined({
     baseUrl: workspaceConfig.baseUrl,
@@ -199,6 +226,22 @@ export function loadScenarioConfig(overrides = {}) {
     })
   };
 
+  const testRuntimeConfig = cleanUndefined({
+    baseUrl: testConfig.baseUrl,
+    maxSteps: testConfig.maxSteps,
+    settleDelayMs: testConfig.settleDelayMs,
+    settleTimeoutMs: testConfig.settleTimeoutMs,
+    headless: testConfig.headless,
+    observationConfigFile: testConfig.observationConfigFile,
+    screenshots: testConfig.screenshots,
+    ...(testConfig.reports !== undefined ? { reports: normalizeReportGenerators(testConfig.reports) } : {}),
+    debug: testConfig.debug,
+    outputDir: testConfig.outputDir,
+    llmRef: testConfig.llm,
+    persona: testConfig.persona,
+    testContextRefs: normalizeStringArray(testConfig.context)
+  });
+
   const merged = {
     baseUrl: "http://localhost:8080",
     maxSteps: 40,
@@ -227,6 +270,7 @@ export function loadScenarioConfig(overrides = {}) {
     persona: "",
     ...cleanUndefined(envConfig),
     ...workspaceRuntimeConfig,
+    ...testRuntimeConfig,
     ...cleanUndefined({
       workspace: overrides.workspace,
       llmRef: overrides.llm,
@@ -273,6 +317,7 @@ export function loadScenarioConfig(overrides = {}) {
     observationConfigFile: resolvePathFromWorkspaceOrCwd(merged.observationConfigFile, workspacePath),
     workspacePromptFile: fs.existsSync(workspacePromptPath) ? workspacePromptPath : "",
     workspace: workspacePath,
+    testConfigPath: testConfigResult.configPath,
     outputDir: resolvePathFromWorkspaceOrCwd(merged.outputDir, workspacePath),
     llm: {
       ...merged.llm,

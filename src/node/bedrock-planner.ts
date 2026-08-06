@@ -154,6 +154,21 @@ function buildActionPayloadVariant(
 
 function buildActionSchema(): Record<string, unknown> {
   const target = buildTargetSchema();
+  const assertions = {
+    type: "array",
+    maxItems: 3,
+    items: {
+      type: "object",
+      additionalProperties: false,
+      required: ["subject", "observed", "status", "durability"],
+      properties: {
+        subject: { type: "string", minLength: 1, maxLength: 80 },
+        observed: { type: "string", minLength: 1, maxLength: 240 },
+        status: { enum: ["confirmed", "contradicts_objective", "unknown"] },
+        durability: { enum: ["current_view", "persisted"] }
+      }
+    }
+  };
   const observedNodeSelector = {
     type: "object",
     additionalProperties: false,
@@ -186,6 +201,7 @@ function buildActionSchema(): Record<string, unknown> {
     required: ["reason", "payload"],
     properties: {
       reason: { type: "string" },
+      assertions,
       payload: {
         anyOf: [
           buildActionPayloadVariant("click", { target }, ["target"]),

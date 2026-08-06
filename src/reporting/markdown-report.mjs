@@ -44,7 +44,10 @@ export const reportGenerator = {
         const invalidResponsePart = step.plannerResponse
           ? `\n  - Invalid planner response: \`${JSON.stringify(step.plannerResponse)}\``
           : "";
-        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner} -> ${stepUrlPart}${screenshotPart}${htmlPart}${invalidResponsePart}`;
+        const assertionsPart = step.assertions?.length
+          ? `\n  - Assertions: ${step.assertions.map((assertion) => `${assertion.subject}=${assertion.observed} [${assertion.status}, ${assertion.durability}]`).join("; ")}`
+          : "";
+        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner} -> ${stepUrlPart}${screenshotPart}${htmlPart}${invalidResponsePart}${assertionsPart}`;
       }),
       "",
       displayError ? `## Error\n\n\`\`\`text\n${displayError}\n\`\`\`` : "## Result\n\nScenario objective completed.",

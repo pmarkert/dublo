@@ -169,6 +169,9 @@ export const reportGenerator = {
         const plannerActionBlock = step.plannerAction
           ? `<section><h4>Planner Action</h4>${renderJsonHtml(step.plannerAction)}</section>`
           : "";
+        const assertionsBlock = step.assertions?.length
+          ? `<section><h4>Assertions</h4>${renderJsonHtml(step.assertions)}</section>`
+          : "";
         const plannerResponseBlock = step.plannerResponse
           ? `<section><h4>Invalid Planner Response</h4>${renderJsonHtml(step.plannerResponse)}</section>`
           : "";
@@ -183,6 +186,9 @@ export const reportGenerator = {
           : "";
         const stepTabs = renderStepTabs(step.index, [
           { id: "action", label: "Planner Action", content: plannerActionBlock },
+          ...(assertionsBlock
+            ? [{ id: "assertions", label: "Assertions", content: assertionsBlock }]
+            : []),
           ...(plannerResponseBlock
             ? [{ id: "planner-response", label: "Invalid Response", content: plannerResponseBlock }]
             : []),

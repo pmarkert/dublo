@@ -1,0 +1,198 @@
+Improve Bonsai360's regular routine editor so multi-step routines are understandable and accessible without relying on hidden application knowledge.
+
+Context
+
+We observed repeated confusion while creating a routine with three independently configured steps. The failures are not just model-prompt issues: the current UI conflates routine recurrence, step timing, checklist items, and simple-vs-advanced editing state.
+
+Relevant implementation areas likely include:
+
+- src/components/routines/RoutineForm.tsx
+- src/components/routines/SimpleRoutineForm.tsx
+- src/components/routines/RegularRoutineSteps.tsx
+- src/components/routines/RecurrenceFields.tsx
+- src/components/routines/StepDatePicker.tsx
+- src/components/routines/StepTimePicker.tsx
+- src/components/tasks/ChecklistField.tsx
+- src/components/ui/editable-checklist.tsx
+
+Do not change backend data contracts unless absolutely necessary. Preserve existing routine behavior and styling conventions. Make the UI clearer for humans, keyboard users, screen-reader users, and automation.
+
+Primary Goals
+
+1. Make simple single-step routines and multi-step routines visibly distinct.
+2. Clearly distinguish:
+   - when the routine repeats;
+   - when each step occurs;
+   - checklist sub-tasks within a step;
+   - independently scheduled routine steps.
+3. Make routine configuration progress and missing details visible before save.
+4. Avoid silently copying routine-level data into step-level data after converting to multi-step mode.
+5. Improve semantic structure and accessible names while retaining the existing design system.
+
+Required Changes
+
+1. Explicit Mode State
+
+The editor currently begins in simple mode and implicitly transitions into an advanced multi-step mode. Make this transition explicit.
+
+- In simple mode, show a visible compact indicator such as:
+  Single-step routine
+  One task repeats with this routine.
+
+- Replace ambiguous conversion affordances with a clear action:
+  Convert to multi-step routine
+
+- In advanced mode, show a persistent indicator near the top:
+  Multi-step routine
+  Each step has its own title, details, timing, and optional goal.
+
+- Preserve an accessible mode label. The mode indicator should be exposed as text, not only color or an icon.
+
+- If feasible and safe, provide an explicit way to return to single-step mode when the routine is structurally eligible. Do not silently collapse or discard step data.
+
+2. Separate Routine Recurrence From Step Timing
+
+The current UI makes it too easy to interpret routine recurrence times as individual task-step times.
+
+At the routine level, use a semantic fieldset and an explicit legend:
+
+Routine schedule
+When does this routine repeat?
+
+Use terminology such as:
+
+Runs daily at
+Add another routine run time
+
+Do not describe recurrence times as times "when tasks should be created."
+
+At the step level, use a separate semantic fieldset and context such as:
+
+Step timing
+When does this step occur relative to the routine?
+
+Clarify ambiguous labels:
+
+- Same day the routine runs -> Same day as routine execution
+- Day(s) before/after the routine runs -> Days before or after routine execution
+
+Add aria-describedby help text explaining that step timing controls the selected step, while recurrence controls when the whole routine runs.
+
+3. Differentiate Steps From Checklist Items
+
+Checklist items are sub-tasks inside a single routine step; they are not separate independently configured steps.
+
+- Rename the checklist section to:
+  Checklist sub-tasks
+
+- Add explanatory text:
+  Checklist items belong to this step. They do not create separate scheduled steps.
+
+- Use semantic list markup or equivalent role="list" / role="listitem" semantics for checklist items.
+
+- Each checklist item should have an accessible label such as:
+  Checklist item 2 of 3: Check the Lanterns
+
+- Make the distinction clear within each step card:
+
+  Step 2: Check the Lanterns
+    Checklist sub-tasks
+
+4. Remove Unsafe Routine-to-Step Description Synchronization
+
+Currently, simple-mode routine description updates can be copied into the first step description. This creates an incorrect result when a single-step routine becomes a multi-step routine.
+
+- When converting to multi-step mode, retain the routine description at the routine level.
+- Do not silently retain or copy that description into Step 1 as though it were the step's own description.
+- Existing step descriptions should remain only if they were explicitly authored as step descriptions.
+- If preserving copied data requires a decision, present an explicit opt-in action such as:
+  Copy routine description to first step
+
+5. Add a Persistent Configuration Summary
+
+In advanced multi-step mode, provide a compact, continuously updated summary before the footer actions. It should be readable visually and through a semantic region.
+
+Example:
+
+Routine summary
+Runs: Daily at 07:30
+
+Steps: 2 configured
+1. Sweep the Garden Path
+   07:30 - 15 min - Goal: Morning Garden
+2. Check the Lanterns
+   Missing description - Missing schedule - No goal assigned
+
+Requirements:
+
+- Show total step count.
+- Show each step's title, timing, duration, and goal assignment state.
+- Explicitly show missing required or incomplete configuration.
+- Do not claim a step is configured merely because it exists.
+- Include a summary region label such as Routine configuration summary.
+- Update the summary when fields change.
+
+6. Clarify Add Actions and Form Phases
+
+Use unambiguous action labels:
+
+- Add task step instead of Add Step
+- Add routine time block instead of Add Time Block
+- Next: Configure step details
+- Next: Configure routine schedule
+- Create routine
+- Update routine
+
+Avoid generic Next where the next phase is not otherwise visible.
+
+Add a visible, accessible phase indicator when the flow spans multiple phases:
+
+1. Routine details
+2. Steps
+3. Schedule
+4. Review
+
+The active phase should be exposed with text and aria-current="step" or an equivalent accessible pattern.
+
+7. Improve Semantic Structure
+
+Use proper landmarks and heading hierarchy:
+
+- A form-level heading for the routine editor.
+- Semantic fieldsets and legends for:
+  - Routine details
+  - Routine schedule
+  - Steps
+  - Step timing
+  - Step details
+- Each step card should have a real heading, for example:
+  Step 2: Check the Lanterns
+
+Avoid relying only on styled div elements or accordion headers to communicate hierarchy.
+
+8. Deletion Safety
+
+Do not change the business rule that users can delete routines, but make destructive actions clearer.
+
+- Delete confirmation should identify the routine and summarize its current structure:
+  Delete "Morning Garden Check" with 2 steps?
+
+- In routine detail/edit views, visually distinguish:
+  - editing the current routine;
+  - creating a new routine;
+  - deleting the routine.
+
+This should reduce accidental or confused delete/recreate cycles.
+
+Validation
+
+Add or update focused tests for:
+
+- Converting a simple routine to multi-step mode does not silently copy routine description into Step 1.
+- Routine recurrence and per-step timing have distinct accessible labels/help text.
+- Checklist items expose subordinate list semantics and do not appear as routine steps.
+- Advanced summary identifies incomplete step configuration.
+- Multi-step editor exposes the correct mode and phase labels.
+- Add-action accessible names distinguish task steps from routine time blocks.
+
+Keep the implementation scoped. Do not redesign unrelated task or routine flows.

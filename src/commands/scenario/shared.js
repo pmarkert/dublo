@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const BUILTIN_SCENARIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../resources/templates/scenarios");
+const TEST_CONFIG_SUFFIX = ".config.json";
 
 export function resolveWorkspacePath(workspace) {
   const workspaceInput = firstDefined(workspace, process.env.DUBLO_WORKSPACE, "./.dublo");
@@ -13,17 +14,34 @@ export function resolveWorkspacePath(workspace) {
 
 export function listScenarioProfileNames(workspacePath) {
   const scenarioDir = path.join(workspacePath, "scenarios");
-  let entries = [];
-  try {
-    entries = readdirSync(scenarioDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
+  const names = new Set();
 
-  return entries
-    .filter((entry) => entry.isFile() && hasScenarioExtension(entry.name))
-    .map((entry) => stripScenarioExtension(entry.name))
-    .sort((a, b) => a.localeCompare(b));
+  try {
+    for (const entry of readdirSync(scenarioDir, { withFileTypes: true })) {
+      if (entry.isFile() && hasScenarioExtension(entry.name) && !entry.name.endsWith(TEST_CONFIG_SUFFIX)) {
+        names.add(stripScenarioExtension(entry.name));
+      }
+    }
+  } catch {}
+
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+export function defaultScenarioProfilePath(workspacePath, name) {
+  return path.join(workspacePath, "scenarios", `${sanitizeScenarioProfileName(name)}.md`);
+}
+
+export function defaultTestConfigPath(workspacePath, name) {
+  return path.join(workspacePath, "scenarios", `${sanitizeScenarioProfileName(name)}${TEST_CONFIG_SUFFIX}`);
+}
+
+export function resolveTestConfigPath(workspacePath, value) {
+  if (!value) return "";
+  const normalized = String(value || "").trim();
+  if (!normalized || normalized.includes(path.sep) || normalized.includes("/")) return "";
+  return resolveWorkspaceScenarioProfilePath(workspacePath, normalized)
+    ? defaultTestConfigPath(workspacePath, normalized)
+    : "";
 }
 
 export function listBuiltinScenarioTemplateNames() {
@@ -109,10 +127,6 @@ export function resolveBuiltinScenarioTemplatePath(value) {
   return "";
 }
 
-export function defaultScenarioProfilePath(workspacePath, name) {
-  return path.join(workspacePath, "scenarios", `${sanitizeScenarioProfileName(name)}.md`);
-}
-
 export async function readScenarioText(filePath) {
   return readFile(filePath, "utf8");
 }
@@ -131,7 +145,7 @@ function stripScenarioExtension(value) {
 
 function hasScenarioExtension(value) {
   const normalized = String(value || "").toLowerCase();
-  return normalized.endsWith(".md") || normalized.endsWith(".txt");
+  return (normalized.endsWith(".md") || normalized.endsWith(".txt")) && !normalized.endsWith(TEST_CONFIG_SUFFIX);
 }
 
 function tryResolveFile(filePath) {

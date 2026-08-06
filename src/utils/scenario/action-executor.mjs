@@ -146,6 +146,7 @@ export async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
         )
       )
         .filter((element) => {
+          if (element.closest("[aria-hidden='true']")) return false;
           const style = globalThis.window.getComputedStyle(element);
           if (style.display === "none" || style.visibility === "hidden") return false;
           const rect = element.getBoundingClientRect();
@@ -161,6 +162,7 @@ export async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
         })
         .join("|");
       const alerts = Array.from(globalThis.document.querySelectorAll("[role='alert']"))
+        .filter((element) => !element.closest("[aria-hidden='true']"))
         .map((element) => (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80))
         .join("|");
       return `${globalThis.window.location.href}::${globalThis.document.title}::${controls}::${alerts}`;

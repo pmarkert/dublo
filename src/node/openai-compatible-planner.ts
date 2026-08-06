@@ -102,6 +102,21 @@ function buildPlannerActionSchema(): Record<string, unknown> {
     required: ["id"],
     properties: { id: { type: "string", minLength: 1 } }
   };
+  const assertions = {
+    type: "array",
+    maxItems: 3,
+    items: {
+      type: "object",
+      additionalProperties: false,
+      required: ["subject", "observed", "status", "durability"],
+      properties: {
+        subject: { type: "string", minLength: 1, maxLength: 80 },
+        observed: { type: "string", minLength: 1, maxLength: 240 },
+        status: { enum: ["confirmed", "contradicts_objective", "unknown"] },
+        durability: { enum: ["current_view", "persisted"] }
+      }
+    }
+  };
   const variant = (
     action: string,
     properties: Record<string, unknown> = {},
@@ -119,6 +134,7 @@ function buildPlannerActionSchema(): Record<string, unknown> {
     required: ["reason", "payload"],
     properties: {
       reason: { type: "string" },
+      assertions,
       payload: {
         anyOf: [
           variant("click", { target }, ["target"]),

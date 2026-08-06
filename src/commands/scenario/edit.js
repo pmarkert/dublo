@@ -19,13 +19,11 @@ export async function editScenarioCommand(options = {}) {
   }
 
   const workspacePath = resolveWorkspacePath(options.workspace);
-  const scenarioDir = path.join(workspacePath, "scenarios");
-  await mkdir(scenarioDir, { recursive: true });
-
   const workspaceProfilePath = defaultScenarioProfilePath(workspacePath, sanitizeScenarioProfileName(rawName));
   const existingProfilePath = resolveWorkspaceScenarioProfilePath(workspacePath, rawName);
   const builtinTemplatePath = resolveBuiltinScenarioTemplatePath(rawName);
   const profilePath = existingProfilePath || workspaceProfilePath;
+  await mkdir(path.dirname(profilePath), { recursive: true });
 
   if (!process.stdin.isTTY) {
     let body = "";

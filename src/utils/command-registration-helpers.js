@@ -294,7 +294,7 @@ function addProfileCompletionHandlers(completion) {
   for (const commandName of ["persona show", "persona edit"]) {
     setArgumentHandler(getCommand(completion, commandName), persona);
   }
-  for (const commandName of ["test show", "test edit"]) {
+  for (const commandName of ["test show", "test edit", "test config show", "test config edit", "test config validate"]) {
     setArgumentHandler(getCommand(completion, commandName), scenario);
   }
   for (const commandName of ["context show", "context edit", "context validate"]) {

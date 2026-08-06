@@ -137,8 +137,10 @@ export async function runCommand(options) {
     throw new Error("LLM baseUrl is required for openai-compatible. Set it in your llm profile or DUBLO_LLM_BASE_URL.");
   }
 
-  logger.info("Starting dublo run");
-  logger.info(`Target: ${config.baseUrl}`);
+  if (!process.stdout.isTTY) {
+    logger.info("Starting dublo test run");
+    logger.info(`Target: ${config.baseUrl}`);
+  }
 
   try {
     const report = await runScenario(config, {
@@ -161,7 +163,9 @@ export async function runCommand(options) {
     process.off("SIGTERM", onInterrupt);
   }
 
-  logger.info("Run complete");
+  if (!process.stdout.isTTY) {
+    logger.info("Test run complete");
+  }
 }
 
 function inferSingleProfile(workspace, folder, exts) {
@@ -288,7 +292,8 @@ export function resolveContextSelections(config) {
 export function resolveInheritedContextSelections(config) {
   return [
     ...normalizeContextRefs(config.workspaceContextRefs),
-    ...normalizeContextRefs(config.environmentContextRefs)
+    ...normalizeContextRefs(config.environmentContextRefs),
+    ...normalizeContextRefs(config.testContextRefs)
   ];
 }
 

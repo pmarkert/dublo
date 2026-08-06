@@ -1,5 +1,5 @@
 import { checkbox, confirm, input, number, select } from "@inquirer/prompts";
-import { DEFAULT_WORKSPACE_DEFAULTS, resolveWorkspaceConfig } from "../core/config/resolve.js";
+import { resolveWorkspaceConfig } from "../core/config/resolve.js";
 import { ReportGeneratorSchema, ScreenshotModeSchema } from "../core/config/schemas.js";
 import type { ReportGenerator, WorkspaceDefaults } from "../core/config/schemas.js";
 
@@ -48,6 +48,11 @@ export interface ConfigWizardPrompts {
 
 export interface ConfigWizardOptions {
   current: WorkspaceDefaults;
+  baseline?: WorkspaceDefaults;
+  heading?: string;
+  instructions?: string;
+  previewHeading?: string;
+  savePrompt?: string;
   profiles: {
     llm: readonly PromptChoice<string>[];
     persona: readonly PromptChoice<string>[];
@@ -71,9 +76,10 @@ export async function runConfigWizard(
   options: ConfigWizardOptions
 ): Promise<WorkspaceDefaults | undefined> {
   const values = resolveWorkspaceConfig({ workspace: options.current }).values;
-  options.write("\nDublo workspace configuration\n");
+  const baseline = resolveWorkspaceConfig({ workspace: options.baseline ?? {} }).values;
+  options.write(`\n${options.heading ?? "Dublo workspace configuration"}\n`);
   options.write(
-    "Use the displayed defaults, arrow keys, and space to choose workspace behavior.\n\n"
+    `${options.instructions ?? "Use the displayed defaults, arrow keys, and space to choose workspace behavior."}\n\n`
   );
 
   const baseUrl = await options.prompts.input({
@@ -142,7 +148,7 @@ export async function runConfigWizard(
     default: values.observationConfigFile
   });
 
-  const next = omitBuiltInDefaults({
+  const next = omitDefaults({
     baseUrl,
     llm,
     persona,
@@ -156,12 +162,12 @@ export async function runConfigWizard(
     debug,
     outputDir,
     observationConfigFile
-  });
+  }, baseline);
 
-  options.write("\nWorkspace defaults to save:\n");
+  options.write(`\n${options.previewHeading ?? "Workspace defaults to save:"}\n`);
   options.write(`${JSON.stringify(next, null, 2)}\n\n`);
   return (await options.prompts.confirm({
-    message: "Save these workspace defaults",
+    message: options.savePrompt ?? "Save these workspace defaults",
     default: true
   }))
     ? next
@@ -196,12 +202,14 @@ function reportLabel(value: ReportGenerator): string {
   return value === "html" ? "HTML" : "Markdown";
 }
 
-function omitBuiltInDefaults(values: Required<WorkspaceDefaults>): WorkspaceDefaults {
+function omitDefaults(
+  values: Required<WorkspaceDefaults>,
+  baseline: Required<WorkspaceDefaults>
+): WorkspaceDefaults {
   return Object.fromEntries(
     Object.entries(values).filter(([key, value]) => {
-      const defaultValue =
-        DEFAULT_WORKSPACE_DEFAULTS[key as keyof typeof DEFAULT_WORKSPACE_DEFAULTS];
-      return JSON.stringify(value) !== JSON.stringify(defaultValue);
+      const baselineValue = baseline[key as keyof typeof baseline];
+      return JSON.stringify(value) !== JSON.stringify(baselineValue);
     })
   );
 }

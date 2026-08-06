@@ -1,0 +1,14 @@
+{
+  "provider": "bedrock",
+  "region": "us-east-1",
+  "modelId": "us.amazon.nova-2-lite-v1:0",
+  "serviceTier": "flex",
+  "supportsConditionalToolSchemas": true,
+  "inferenceConfig": {
+    "temperature": 0
+  },
+  "inputPrice": 0.165,
+  "outputPrice": 1.375,
+  "currency": "USD",
+  "tokenUnit": 1000000
+}

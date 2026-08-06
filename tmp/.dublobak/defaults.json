@@ -1,0 +1,17 @@
+{
+  "baseUrl": "http://localhost:8080",
+  "llm": "lite",
+  "persona": "",
+  "context": [
+    "gary"
+  ],
+  "maxSteps": 40,
+  "headless": false,
+  "screenshots": "fullpage",
+  "reports": [
+    "markdown",
+    "html"
+  ],
+  "debug": true,
+  "outputDir": "./output/runs"
+}

@@ -81,9 +81,19 @@ export const PlannerActionPayloadSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("finish") }).strict()
 ]);
 
+export const PlannerAssertionSchema = z
+  .object({
+    subject: z.string().trim().min(1).max(80),
+    observed: z.string().trim().min(1).max(240),
+    status: z.enum(["confirmed", "contradicts_objective", "unknown"]),
+    durability: z.enum(["current_view", "persisted"])
+  })
+  .strict();
+
 export const PlannerActionSchema = z
   .object({
     reason: z.string().trim().min(1),
+    assertions: z.array(PlannerAssertionSchema).max(3).optional(),
     payload: PlannerActionPayloadSchema
   })
   .strict();
@@ -153,3 +163,4 @@ export interface Planner {
 }
 
 export type PlannerAction = z.infer<typeof PlannerActionSchema>;
+export type PlannerAssertion = z.infer<typeof PlannerAssertionSchema>;

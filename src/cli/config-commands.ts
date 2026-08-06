@@ -197,7 +197,7 @@ async function runInteractiveWorkspaceConfiguration(
   });
 }
 
-function listWorkspaceProfileChoices(workspace: string): {
+export function listWorkspaceProfileChoices(workspace: string): {
   llm: PromptChoice<string>[];
   persona: PromptChoice<string>[];
   context: PromptChoice<string>[];

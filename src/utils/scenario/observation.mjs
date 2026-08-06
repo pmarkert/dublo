@@ -80,6 +80,10 @@ export const collectObservationInPage = ({ config, turnToken: activeTurnToken })
       };
 
       const isVisible = (el) => {
+        if (el.closest("[aria-hidden='true']")) {
+          return false;
+        }
+
         const style = globalThis.window.getComputedStyle(el);
         if (style.display === "none" || style.visibility === "hidden") {
           return false;
@@ -674,6 +678,7 @@ export const collectObservationInPage = ({ config, turnToken: activeTurnToken })
       }
 
       const alerts = queryAllWithin(scopeRoot, alertSelector)
+        .filter((el) => isVisible(el))
         .map((el) => normalizeText(el.textContent || ""))
         .filter(Boolean)
         .slice(0, maxAlerts);
@@ -711,7 +716,7 @@ export const collectObservationInPage = ({ config, turnToken: activeTurnToken })
           if (el.closest(alertSelector) || el.matches("label") || el.closest("label")) {
             return false;
           }
-          return !el.closest("script, style, noscript, template, [aria-hidden='true']");
+          return !el.closest("script, style, noscript, template");
         });
       const textNodes = [];
       for (const el of textElements) {

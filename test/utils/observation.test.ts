@@ -189,6 +189,51 @@ void test("captures text in the observation tree without hidden content", async 
   }
 });
 
+void test("excludes aria-hidden subtrees from observations", async () => {
+  const browser = await chromium.launch({ headless: true });
+
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <style>
+        #hidden-scroll { height: 60px; overflow-y: auto; }
+        #hidden-scroll-content { height: 180px; }
+      </style>
+      <aside role="dialog" aria-hidden="true" aria-label="Hidden dialog">
+        <h2>Hidden dialog heading</h2>
+        <button>Hidden dialog action</button>
+      </aside>
+      <main>
+        <h1>Visible routine</h1>
+        <button>Visible action</button>
+        <div aria-hidden="true">
+          <p>Hidden implementation detail.</p>
+          <button>Hidden action</button>
+          <div id="hidden-scroll"><div id="hidden-scroll-content"><button>Hidden scroll action</button></div></div>
+          <div role="alert">Hidden alert</div>
+        </div>
+        <div role="alert">Visible alert</div>
+      </main>
+    `);
+
+    const observation = (await collectObservation(page, { maxControls: 10 }, "t1")) as Observation;
+    const nodes = flattenTree(observation.tree);
+
+    assert.equal(observation.activeDialog, undefined);
+    assert.deepEqual(
+      nodes.filter((node) => node.kind === "control").map((node) => node.label),
+      ["Visible action"]
+    );
+    assert.equal(nodes.some((node) => node.kind === "heading" && node.text === "Hidden dialog heading"), false);
+    assert.equal(nodes.some((node) => node.kind === "text" && node.text === "Hidden implementation detail."), false);
+    assert.equal(nodes.some((node) => node.kind === "scroll"), false);
+    assert.equal(nodes.some((node) => node.kind === "alert" && node.text === "Hidden alert"), false);
+    assert.equal(nodes.some((node) => node.kind === "alert" && node.text === "Visible alert"), true);
+  } finally {
+    await browser.close();
+  }
+});
+
 void test("keeps a non-blocking dialog in its own context alongside page content", async () => {
   const browser = await chromium.launch({ headless: true });
 

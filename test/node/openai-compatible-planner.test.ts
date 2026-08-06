@@ -24,6 +24,14 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
                     function: {
                       arguments: JSON.stringify({
                         reason: "Continue the visible flow.",
+                        assertions: [
+                          {
+                            subject: "sign-in.email",
+                            observed: "The email field contains the provided address.",
+                            status: "confirmed",
+                            durability: "current_view"
+                          }
+                        ],
                         payload: { action: "click", target: { id: "button-1" } }
                       })
                     }
@@ -49,6 +57,14 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
 
   assert.deepEqual(response.action, {
     reason: "Continue the visible flow.",
+    assertions: [
+      {
+        subject: "sign-in.email",
+        observed: "The email field contains the provided address.",
+        status: "confirmed",
+        durability: "current_view"
+      }
+    ],
     payload: { action: "click", target: { id: "button-1" } }
   });
   assert.deepEqual(response.tokenUsage, {
@@ -72,6 +88,8 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
     /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id":\{"type":"string","minLength":1\}\}\}/
   );
   assert.match(requestBody, /"ariaLabel":\{"type":"string"/);
+  assert.match(requestBody, /"assertions":\{"type":"array","maxItems":3/);
+  assert.match(requestBody, /"contradicts_objective"/);
 });
 
 void test("OpenAI-compatible planner normalizes compound targets to their ID", async () => {

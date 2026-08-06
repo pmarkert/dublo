@@ -10,8 +10,9 @@ import { createOpenAICompatiblePlanner } from "../node/openai-compatible-planner
 import { PlannerResponseValidationError } from "../ports/planner.js";
 import { createPlaywrightBrowserFactory } from "../node/playwright-browser.js";
 import { createTerminalInteractionProvider } from "../node/terminal-interaction.js";
+import { createLiveTestDisplay } from "./live-test-display.mjs";
 import { loadContextFromOperations, redactSecretValues } from "./scenario/context-operations.mjs";
-import { buildPlannerMessages } from "./scenario/planner-context.mjs";
+import { appendPlannerValidationFeedback, buildPlannerMessages } from "./scenario/planner-context.mjs";
 import { loadObservationConfig, normalizeScreenshotMode } from "./scenario/observation-config.mjs";
 import { collectObservation } from "./scenario/observation.mjs";
 import {
@@ -80,8 +81,13 @@ function clip(value, limit = 180) {
 
 export { rerenderReportArtifacts };
 
-function createRunnerLogger(headed) {
+function createRunnerLogger(headed, liveDisplay) {
   const emit = (level, message) => {
+    if (liveDisplay.enabled) {
+      liveDisplay.status(message);
+      return;
+    }
+
     if (headed) {
       return;
     }
@@ -275,9 +281,6 @@ export async function runScenario(config, options = {}) {
             : {})
         });
 
-  const logger = createRunnerLogger(config.headed);
-  const debugLogger = createDebugLogger(config.debug);
-  const interactionProvider = createTerminalInteractionProvider();
   const formatObservationSummary = (observation) => {
     const counts = { controls: 0, buttons: 0, inputs: 0, alerts: 0 };
     const visit = (nodes) => {
@@ -299,6 +302,18 @@ export async function runScenario(config, options = {}) {
     config.llm.provider === "openai-compatible"
       ? `openai-compatible:${config.llm.modelId}`
       : `bedrock:${config.llm.modelId}`;
+
+  const liveDisplay = createLiveTestDisplay();
+  const logger = createRunnerLogger(config.headed, liveDisplay);
+  const debugLogger = createDebugLogger(config.debug);
+  const interactionProvider = createTerminalInteractionProvider();
+
+  liveDisplay.start({
+    objective: scenario,
+    baseUrl: config.baseUrl,
+    provider: providerLabel,
+    maxSteps: config.maxSteps
+  });
 
   logger.info(`starting run ${runId} using ${providerLabel}`);
 
@@ -442,6 +457,7 @@ export async function runScenario(config, options = {}) {
         screenshot: stepScreenshotRelativePath,
         html: stepHtmlRelativePath,
         plannerAction,
+        assertions: plannerAction?.assertions,
         observation: stepDebugContext?.observation,
         ariaSnapshot: stepDebugContext?.ariaSnapshot,
         knownHumanInputs: stepDebugContext?.knownHumanInputs,
@@ -539,6 +555,7 @@ export async function runScenario(config, options = {}) {
       const observation = await collectObservation(page, observationConfig, turnToken);
       const ariaSnapshot = await captureAriaSnapshot();
       throwIfInterrupted();
+      liveDisplay.observe(observation, i + 1);
       logger.info(`observation ${i + 1}: ${formatObservationSummary(observation)}`);
 
       const screenshotBufferForThisTurn = pendingScreenshotBuffer;
@@ -574,33 +591,49 @@ export async function runScenario(config, options = {}) {
       debugLogger.log("planner_user_end");
 
       let plannerResult;
-      try {
-        plannerResult = await requestPlannerAction({
-          planner,
-          messages,
-          screenshotBuffer: screenshotBufferForThisTurn,
-          signal: plannerAbortController.signal
-        });
-      } catch (error) {
-        if (error instanceof PlannerResponseValidationError) {
+      let plannerMessages = messages;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          plannerResult = await requestPlannerAction({
+            planner,
+            messages: plannerMessages,
+            screenshotBuffer: screenshotBufferForThisTurn,
+            signal: plannerAbortController.signal
+          });
+          break;
+        } catch (error) {
+          if (!(error instanceof PlannerResponseValidationError)) throw error;
+
           addTokenUsageTotals(report.tokenUsage, error.tokenUsage);
-          await captureStep(
-            "invalid_planner_response",
-            undefined,
-            async () => {
-              throw error;
-            },
-            {
-              observation: redactSecretValues(observation, secretValues),
-              ...(ariaSnapshot ? { ariaSnapshot } : {}),
-              knownHumanInputs: knownHumanInputsSnapshot,
-              agentPrompt: { userText: messages.debugUserText },
-              plannerTokenUsage: error.tokenUsage,
-              plannerResponse: redactSecretValues(error.plannerResponse, secretValues)
-            }
+          try {
+            await captureStep(
+              "invalid_planner_response",
+              undefined,
+              async () => {
+                throw error;
+              },
+              {
+                observation: redactSecretValues(observation, secretValues),
+                ...(ariaSnapshot ? { ariaSnapshot } : {}),
+                knownHumanInputs: knownHumanInputsSnapshot,
+                agentPrompt: { userText: plannerMessages.debugUserText },
+                plannerTokenUsage: error.tokenUsage,
+                plannerResponse: redactSecretValues(error.plannerResponse, secretValues)
+              }
+            );
+          } catch (capturedError) {
+            if (capturedError !== error) throw capturedError;
+          }
+
+          if (attempt === 1) throw error;
+
+          logger.warn(`invalid planner response: ${error.message}; retrying once with feedback`);
+          plannerMessages = appendPlannerValidationFeedback(
+            plannerMessages,
+            error.message,
+            redactSecretValues(error.plannerResponse, secretValues)
           );
         }
-        throw error;
       }
 
       throwIfInterrupted();
@@ -612,6 +645,8 @@ export async function runScenario(config, options = {}) {
       }
 
       const plannerPayload = plannerAction.payload;
+
+      liveDisplay.action(plannerAction);
 
       logger.info(
         `planner action ${i + 1}: ${plannerPayload.action}${plannerPayload.action === "click" || plannerPayload.action === "fill" || plannerPayload.action === "select_option" ? ` target=${describeTarget(plannerPayload.target)}` : ""} reason=${clip(plannerAction.reason, 140)}`
@@ -834,6 +869,9 @@ export async function runScenario(config, options = {}) {
         step: stepIndex,
         url: page.url(),
         action: plannerAction,
+        ...(recoverableOutcome || !plannerAction.assertions?.length
+          ? {}
+          : { assertions: plannerAction.assertions }),
         ...(actionTarget ? { target: actionTarget } : {}),
         outcome: recoverableOutcome || "ok",
         runnerFeedback:
@@ -948,6 +986,8 @@ export async function runScenario(config, options = {}) {
         : report.status === "interrupted"
           ? "INTERRUPTED"
           : "FAIL";
+
+            liveDisplay.finish(report.status);
 
     if (report.status === "failed" && report.error) {
       process.stderr.write(`Failure reason: ${report.error}\n`);
