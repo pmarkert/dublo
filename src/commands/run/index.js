@@ -379,6 +379,10 @@ export default function registerRunCommand(program) {
     .option("--persona <value>", "Persona file path or profile name in <workspace>/personas")
     .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios (or use positional [scenario])")
     .option("--adhoc <text>", "Inline ad hoc scenario text to run without a scenario file")
+    .option(
+      "--max-repeated-failures <count>",
+      "Abort after the same action fails this many times in a row (default 3)"
+    )
     .option("--settle-delay-ms <milliseconds>", "Stable UI duration before each LLM observation")
     .option("--settle-timeout-ms <milliseconds>", "Maximum UI settling duration before each LLM observation")
     .option("--headless", "Run browser in headless mode")

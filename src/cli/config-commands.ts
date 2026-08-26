@@ -135,6 +135,7 @@ const SETTING_KEYS = {
   persona: "persona",
   "max-steps": "maxSteps",
   "max-actions-per-turn": "maxActionsPerTurn",
+  "max-repeated-failures": "maxRepeatedFailures",
   "settle-delay-ms": "settleDelayMs",
   "settle-timeout-ms": "settleTimeoutMs",
   headless: "headless",

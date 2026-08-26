@@ -26,6 +26,36 @@ import {
 
 export { classifyRecoverableActionError, isAlternatingScrollLoop, isDocumentTextGone, resolveTargetControl };
 
+/**
+ * Stable identity for "the planner tried this exact thing again".
+ *
+ * Only the action and its target matter -- a `fill` whose value differs but
+ * whose target is identical is still the same doomed attempt when the target is
+ * what cannot be resolved.
+ */
+export function actionSignature(plannerAction) {
+  const payload = plannerAction?.payload ?? {};
+  const target = payload.target ?? payload.containerId ?? payload.selector ?? null;
+  return JSON.stringify([payload.action ?? "", target]);
+}
+
+/**
+ * How many times the tail of `history` repeats `signature` with a failing
+ * outcome. Counting only the tail is deliberate: an action that failed, then
+ * succeeded, then failed again is not a stuck planner.
+ */
+export function trailingFailureRepeats(history, signature) {
+  let count = 0;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (entry.outcome === "ok") break;
+    if (actionSignature(entry.action) !== signature) break;
+    count += 1;
+  }
+  return count;
+}
+
+
 function sanitizeSegment(value) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
@@ -1061,6 +1091,47 @@ export async function runScenario(config, options = {}) {
             if (escalationPlanner) pendingEscalation = true;
             break;
           }
+        }
+      }
+
+      /*
+       * Circuit breaker: give up on an action that cannot succeed.
+       *
+       * Escalation (above) already routes the next turn to the stronger model
+       * on a recoverable failure, which rescues most stuck planners. It cannot
+       * rescue the case where the action itself is impossible -- an observed run
+       * spent 40 of 80 steps filling a target that did not exist. Where
+       * escalation is configured this still lets the stronger model try; the
+       * default threshold of 3 aborts only after it has failed too.
+       *
+       * Aborting also produces a better QA result than exhausting the step
+       * budget: "could not reach control X" names a defect, "max steps reached"
+       * does not.
+       */
+      if (recoverableOutcome) {
+        const signature = actionSignature(plannerAction);
+        const repeats = trailingFailureRepeats(actionHistory, signature);
+
+        if (repeats >= config.maxRepeatedFailures) {
+          report.status = "failed";
+          report.finalUrl = page.url();
+          report.error =
+            `Aborted after the same action failed ${repeats} times in a row ` +
+            `(${plannerPayload.action}${
+              "target" in plannerPayload ? ` on ${describeTarget(plannerPayload.target)}` : ""
+            }, outcome '${recoverableOutcome}'): ${recoverableErrorMessage}`;
+          logger.error(report.error);
+          break;
+        }
+
+        /*
+         * One failure can be a transition; two is the planner working from a
+         * picture of the page it does not have. It must spend a whole turn on
+         * `request_screenshot` to get one, so hand it over unprompted.
+         */
+        if (repeats >= 2 && !pendingScreenshotBuffer && !browserClosed) {
+          pendingScreenshotBuffer = await captureViewportScreenshot();
+          logger.info("attached a screenshot after repeated failures (planner did not have to ask)");
         }
       }
 
