@@ -109,7 +109,16 @@ export function buildPlannerMessages({
       "Use report_finding to record a defect or notable issue (accessibility, usability, functional, performance, or security) without ending the run. It is non-terminal: after reporting, continue toward the objective. Report each distinct issue once; do not repeat a finding already recorded in recentActions.",
     ],
     humanEscalationRules: [
-      "If you need a value not deducible from UI or contextData, such as an OTP code, use request_user_input.",
+      // A registered secret must win over human escalation. Naming OTP codes
+      // here as the example for request_user_input sends the planner to a human
+      // even when the code was supplied as a secret -- which makes an OTP flow
+      // unrunnable headless, and a pinned non-production code pointless.
+      ...(secretValues.size > 0
+        ? [
+            "Before asking a human for a value, check availableSecretPaths. If the value you need is registered there -- an OTP or sign-in code included -- fill it with {{secret:path}} instead of using request_user_input.",
+          ]
+        : []),
+      "If you need a value not deducible from UI, contextData, or a registered secret, such as an OTP code that was not supplied, use request_user_input.",
       "If you are blocked and need the human to do something in the browser, use request_user_interaction.",
       "If the structured observation is insufficient, use request_screenshot. The returned image is annotated with set-of-marks labels (the same control ids, such as a3) drawn on each observed control, so you can match what you see to a control id.",
     ],

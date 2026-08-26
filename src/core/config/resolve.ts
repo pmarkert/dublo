@@ -14,6 +14,8 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
   context: [],
   maxSteps: 40,
   maxActionsPerTurn: 0,
+  maxRepeatedFailures: 3,
+  maxStagnantTurns: 8,
   settleDelayMs: 500,
   settleTimeoutMs: 20000,
   headless: false,
@@ -32,6 +34,8 @@ const ResolvedWorkspaceConfigSchema = z.object({
   context: z.array(z.string()),
   maxSteps: z.number().int().positive(),
   maxActionsPerTurn: z.number().int().nonnegative(),
+  maxRepeatedFailures: z.number().int().positive(),
+  maxStagnantTurns: z.number().int().positive(),
   settleDelayMs: z.number().int().positive(),
   settleTimeoutMs: z.number().int().positive(),
   headless: z.boolean(),
@@ -98,6 +102,8 @@ function parseEnvironment(environment: Environment) {
     context: parseList(environment.DUBLO_CONTEXT),
     maxSteps: parsePositiveInteger(environment.DUBLO_MAX_STEPS),
     maxActionsPerTurn: parsePositiveInteger(environment.DUBLO_MAX_ACTIONS_PER_TURN),
+    maxRepeatedFailures: parsePositiveInteger(environment.DUBLO_MAX_REPEATED_FAILURES),
+    maxStagnantTurns: parsePositiveInteger(environment.DUBLO_MAX_STAGNANT_TURNS),
     settleDelayMs: parsePositiveInteger(environment.DUBLO_SETTLE_DELAY_MS),
     settleTimeoutMs: parsePositiveInteger(environment.DUBLO_SETTLE_TIMEOUT_MS),
     headless: parseBoolean(environment.DUBLO_HEADLESS),
@@ -170,6 +176,18 @@ export function resolveWorkspaceConfig(
     workspace.maxActionsPerTurn,
     DEFAULT_WORKSPACE_DEFAULTS.maxActionsPerTurn
   );
+  const [maxRepeatedFailures, maxRepeatedFailuresSource] = resolveValue(
+    cli.maxRepeatedFailures,
+    environment.maxRepeatedFailures,
+    workspace.maxRepeatedFailures,
+    DEFAULT_WORKSPACE_DEFAULTS.maxRepeatedFailures
+  );
+  const [maxStagnantTurns, maxStagnantTurnsSource] = resolveValue(
+    cli.maxStagnantTurns,
+    environment.maxStagnantTurns,
+    workspace.maxStagnantTurns,
+    DEFAULT_WORKSPACE_DEFAULTS.maxStagnantTurns
+  );
   const [settleDelayMs, settleDelayMsSource] = resolveValue(
     cli.settleDelayMs,
     environment.settleDelayMs,
@@ -228,6 +246,8 @@ export function resolveWorkspaceConfig(
       context,
       maxSteps,
       maxActionsPerTurn,
+      maxRepeatedFailures,
+      maxStagnantTurns,
       settleDelayMs,
       settleTimeoutMs,
       headless,
@@ -245,6 +265,8 @@ export function resolveWorkspaceConfig(
       context: contextSource,
       maxSteps: maxStepsSource,
       maxActionsPerTurn: maxActionsPerTurnSource,
+      maxRepeatedFailures: maxRepeatedFailuresSource,
+      maxStagnantTurns: maxStagnantTurnsSource,
       settleDelayMs: settleDelayMsSource,
       settleTimeoutMs: settleTimeoutMsSource,
       headless: headlessSource,

@@ -22,7 +22,10 @@ void test("accepts a batch of batchable actions", () => {
   assert.equal(result.success, true);
 });
 
-void test("rejects a non-batchable action after the first", () => {
+void test("drops a non-batchable action after the first, keeping the first", () => {
+  // Behaviour change: previously rejected. Keeping only the first action gives
+  // the same safety -- no stale follow-on fires against a changed page -- while
+  // preserving a run that weaker models would otherwise end routinely.
   const result = PlannerTurnSchema.safeParse({
     reason: "Fill then navigate.",
     actions: [
@@ -30,15 +33,19 @@ void test("rejects a non-batchable action after the first", () => {
       { action: "navigate", url: "https://example.test/next" }
     ]
   });
-  assert.equal(result.success, false);
+  assert.equal(result.success, true);
+  assert.equal(result.data?.actions.length, 1);
+  assert.equal(result.data?.actions[0]?.action, "fill");
 });
 
-void test("rejects a non-batchable primary paired with extra actions", () => {
+void test("drops extras after a non-batchable primary, keeping the primary", () => {
   const result = PlannerTurnSchema.safeParse({
     reason: "Finish then click.",
     actions: [{ action: "finish" }, { action: "click", target: { id: "a1" } }]
   });
-  assert.equal(result.success, false);
+  assert.equal(result.success, true);
+  assert.equal(result.data?.actions.length, 1);
+  assert.equal(result.data?.actions[0]?.action, "finish");
 });
 
 void test("rejects an empty actions list", () => {

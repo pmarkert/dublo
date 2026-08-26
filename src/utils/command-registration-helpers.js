@@ -13,6 +13,7 @@ const CONFIG_SETTINGS = [
   "llm",
   "persona",
   "max-steps",
+  "max-repeated-failures",
   "headless",
   "screenshots",
   "debug",

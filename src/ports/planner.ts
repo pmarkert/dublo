@@ -100,21 +100,27 @@ export const PlannerTurnSchema = z
     actions: z.array(PlannerActionPayloadSchema).min(1)
   })
   .strict()
-  .refine(
-    (turn) => {
-      const [first, ...rest] = turn.actions;
-      if (!first) return false;
-      if (rest.length === 0) return true;
-      return (
-        BATCHABLE_ACTION_SET.has(first.action) &&
-        rest.every((action) => BATCHABLE_ACTION_SET.has(action.action))
-      );
-    },
-    {
-      message:
-        "Only click, fill, select_option, hover, and press_key may be batched; any other action must be the only action in the turn."
-    }
-  );
+  /*
+   * Drop an illegal batch tail instead of rejecting the turn.
+   *
+   * The rule exists so a stale follow-on cannot fire against a page the first
+   * action already changed. Keeping only the first action satisfies that in
+   * full, and the next turn re-plans from a fresh observation -- exactly what
+   * rejecting the turn would have forced, minus the discarded run.
+   *
+   * Rejecting cost more than it protected: weaker models batch a
+   * request_screenshot or report_finding routinely, do not learn from being
+   * told, and one such turn used to end a run that had done real work.
+   */
+  .transform((turn) => {
+    const [first, ...rest] = turn.actions;
+    // `actions` is min(1), so `first` is always present; the guard is for the type.
+    if (!first || rest.length === 0) return turn;
+    const legal =
+      BATCHABLE_ACTION_SET.has(first.action) &&
+      rest.every((action) => BATCHABLE_ACTION_SET.has(action.action));
+    return legal ? turn : { ...turn, actions: [first] };
+  });
 
 export interface PlannerMessages {
   systemText: string;

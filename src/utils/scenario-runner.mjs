@@ -26,6 +26,54 @@ import {
 
 export { classifyRecoverableActionError, isAlternatingScrollLoop, isDocumentTextGone, resolveTargetControl };
 
+/**
+ * Stable identity for "the planner tried this exact thing again".
+ *
+ * Only the action and its target matter -- a `fill` whose value differs but
+ * whose target is identical is still the same doomed attempt when the target is
+ * what cannot be resolved.
+ */
+/**
+ * A coarse fingerprint of "what the user is looking at".
+ *
+ * Deliberately ignores which action was taken and whether it succeeded: the
+ * question is only whether the run is getting anywhere. Uses the URL, the
+ * visible document text, and the set of control ids -- enough to notice a
+ * changed screen, stable enough that re-rendering the same screen does not
+ * read as progress.
+ */
+export function progressKey(url, observation) {
+  const text = typeof observation?.documentText === "string" ? observation.documentText : "";
+  const ids = (observation?.controls ?? [])
+    .map((control) => control?.id)
+    .filter(Boolean)
+    .join(",");
+  return `${url}|${text.length}:${text.slice(0, 400)}|${ids}`;
+}
+
+export function actionSignature(plannerAction) {
+  const payload = plannerAction?.payload ?? {};
+  const target = payload.target ?? payload.containerId ?? payload.selector ?? null;
+  return JSON.stringify([payload.action ?? "", target]);
+}
+
+/**
+ * How many times the tail of `history` repeats `signature` with a failing
+ * outcome. Counting only the tail is deliberate: an action that failed, then
+ * succeeded, then failed again is not a stuck planner.
+ */
+export function trailingFailureRepeats(history, signature) {
+  let count = 0;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (entry.outcome === "ok") break;
+    if (actionSignature(entry.action) !== signature) break;
+    count += 1;
+  }
+  return count;
+}
+
+
 function sanitizeSegment(value) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
@@ -358,6 +406,8 @@ export async function runScenario(config, options = {}) {
   let lastUiActionAt = 0;
   let pendingInteractionRequest = null;
   let pendingScreenshotBuffer = null;
+  let lastProgressKey = null;
+  let stagnantTurns = 0;
   let previousTimedOutWait = null;
   let pendingEscalation = false;
 
@@ -411,7 +461,17 @@ export async function runScenario(config, options = {}) {
         stepScreenshotRelativePath = path.relative(runDir, screenshotPath);
       }
 
-      if (config.debug && !browserClosed) {
+      /*
+       * Capture the DOM for any step that failed, even without --debug.
+       *
+       * A failing step is the only one anybody reads, and re-running with debug
+       * to get it is a gamble: identical invocations of the same scenario have
+       * produced wildly different paths, so the second run may fail somewhere
+       * else or not at all. Capturing at the moment of failure costs one
+       * page.content() on a step that already went wrong; capturing every step
+       * costs ~370KB each and 5x the report size.
+       */
+      if ((config.debug || stepError) && !browserClosed) {
         const html = await page.content();
         await writeFile(htmlPath, html, "utf8");
         stepHtmlRelativePath = path.relative(runDir, htmlPath);
@@ -777,6 +837,23 @@ export async function runScenario(config, options = {}) {
           previousTimedOutWait = null;
 
           if (plannerPayload.action === "request_user_input") {
+            /*
+             * A registered secret is the answer to most of these asks, and the
+             * prompt alone does not reliably stop a model reaching for a human
+             * first -- some ignore the instruction entirely. Correct it here
+             * rather than ending the run: naming the available paths turns a
+             * headless dead end into one wasted step.
+             */
+            if (secretValues.size > 0) {
+              recoverableOutcome = "secret_available";
+              recoverableErrorMessage =
+                `Do not ask a human for this. The run has registered secrets: ` +
+                `${[...secretValues.keys()].join(", ")}. Fill the matching field with ` +
+                `{{secret:<path>}} using one of those paths.`;
+              logger.warn(`refused request_user_input: ${recoverableErrorMessage}`);
+              return;
+            }
+
             if (!config.headed) {
               throw new Error("LLM got blocked: requested user input in headless mode.");
             }
@@ -957,7 +1034,11 @@ export async function runScenario(config, options = {}) {
         ...(actionTarget ? { target: actionTarget } : {}),
         outcome: recoverableOutcome || "ok",
         runnerFeedback:
-          recoverableOutcome === "disabled_target"
+          recoverableOutcome === "ambiguous_target"
+            ? "That selector matched more than one visible control. Target exactly one of them by its id (for example {\"id\": \"a5\"}) rather than by text or label. Duplicate names are normal -- the same nav item often appears in both a sidebar and a mobile bar."
+            : recoverableOutcome === "secret_available"
+            ? "The value you asked a human for is registered as a secret. Fill it with {{secret:<path>}} using a path from availableSecretPaths. Do not use request_user_input for it again."
+            : recoverableOutcome === "disabled_target"
             ? "Click was blocked because the target is disabled. Resolve any prerequisite validation or required fields before trying again."
             : recoverableOutcome === "target_disappeared"
               ? "The target disappeared before the action could run, so the UI is transitioning. Inspect the fresh observation instead of repeating the action."
@@ -1061,6 +1142,80 @@ export async function runScenario(config, options = {}) {
             if (escalationPlanner) pendingEscalation = true;
             break;
           }
+        }
+      }
+
+      /*
+       * Circuit breaker: give up on an action that cannot succeed.
+       *
+       * Escalation (above) already routes the next turn to the stronger model
+       * on a recoverable failure, which rescues most stuck planners. It cannot
+       * rescue the case where the action itself is impossible -- an observed run
+       * spent 40 of 80 steps filling a target that did not exist. Where
+       * escalation is configured this still lets the stronger model try; the
+       * default threshold of 3 aborts only after it has failed too.
+       *
+       * Aborting also produces a better QA result than exhausting the step
+       * budget: "could not reach control X" names a defect, "max steps reached"
+       * does not.
+       */
+      /*
+       * No-progress guard.
+       *
+       * The circuit breaker below only catches an action repeated verbatim.
+       * Real stalls rarely look like that: a planner works through a form
+       * trying fill, then click, then wait, each one succeeding and none of
+       * them advancing. Observed stalls burned 68 successful clicks on one
+       * button and an entire step budget on a sign-in screen, and neither
+       * tripped a repeat check.
+       *
+       * So this ignores the actions entirely and asks the only question that
+       * matters: has the screen changed? When it has not for several turns in
+       * a row, no further turn is going to help.
+       */
+      const currentProgressKey = progressKey(page.url(), observation);
+      if (currentProgressKey === lastProgressKey) {
+        stagnantTurns += 1;
+      } else {
+        stagnantTurns = 0;
+        lastProgressKey = currentProgressKey;
+      }
+
+      if (stagnantTurns >= config.maxStagnantTurns) {
+        report.status = "failed";
+        report.finalUrl = page.url();
+        report.error =
+          `Aborted after ${stagnantTurns} consecutive turns with no visible change at ` +
+          `${page.url()} (last action: ${plannerPayload.action}). The run is not making ` +
+          `progress; the screen is identical to where it was ${stagnantTurns} turns ago.`;
+        logger.error(report.error);
+        break;
+      }
+
+      if (recoverableOutcome) {
+        const signature = actionSignature(plannerAction);
+        const repeats = trailingFailureRepeats(actionHistory, signature);
+
+        if (repeats >= config.maxRepeatedFailures) {
+          report.status = "failed";
+          report.finalUrl = page.url();
+          report.error =
+            `Aborted after the same action failed ${repeats} times in a row ` +
+            `(${plannerPayload.action}${
+              "target" in plannerPayload ? ` on ${describeTarget(plannerPayload.target)}` : ""
+            }, outcome '${recoverableOutcome}'): ${recoverableErrorMessage}`;
+          logger.error(report.error);
+          break;
+        }
+
+        /*
+         * One failure can be a transition; two is the planner working from a
+         * picture of the page it does not have. It must spend a whole turn on
+         * `request_screenshot` to get one, so hand it over unprompted.
+         */
+        if (repeats >= 2 && !pendingScreenshotBuffer && !browserClosed) {
+          pendingScreenshotBuffer = await captureViewportScreenshot();
+          logger.info("attached a screenshot after repeated failures (planner did not have to ask)");
         }
       }
 

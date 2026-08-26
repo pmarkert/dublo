@@ -153,6 +153,8 @@ export function loadScenarioConfig(overrides = {}) {
     baseUrl: workspaceConfig.baseUrl,
     maxSteps: parseNumber(workspaceConfig.maxSteps, undefined),
     maxActionsPerTurn: parsePositiveInteger(workspaceConfig.maxActionsPerTurn, undefined),
+    maxRepeatedFailures: parsePositiveInteger(workspaceConfig.maxRepeatedFailures, undefined),
+    maxStagnantTurns: parsePositiveInteger(workspaceConfig.maxStagnantTurns, undefined),
     settleDelayMs: parsePositiveInteger(workspaceConfig.settleDelayMs, undefined),
     settleTimeoutMs: parsePositiveInteger(workspaceConfig.settleTimeoutMs, undefined),
     headless: parseBoolean(workspaceConfig.headless, undefined),
@@ -171,6 +173,8 @@ export function loadScenarioConfig(overrides = {}) {
     baseUrl: firstDefined(process.env.DUBLO_BASE_URL),
     maxSteps: parseNumber(firstDefined(process.env.DUBLO_MAX_STEPS), undefined),
     maxActionsPerTurn: parsePositiveInteger(firstDefined(process.env.DUBLO_MAX_ACTIONS_PER_TURN), undefined),
+    maxRepeatedFailures: parsePositiveInteger(firstDefined(process.env.DUBLO_MAX_REPEATED_FAILURES), undefined),
+    maxStagnantTurns: parsePositiveInteger(firstDefined(process.env.DUBLO_MAX_STAGNANT_TURNS), undefined),
     settleDelayMs: parsePositiveInteger(firstDefined(process.env.DUBLO_SETTLE_DELAY_MS), undefined),
     settleTimeoutMs: parsePositiveInteger(firstDefined(process.env.DUBLO_SETTLE_TIMEOUT_MS), undefined),
     headless: parseBoolean(firstDefined(process.env.DUBLO_HEADLESS), undefined),
@@ -207,6 +211,12 @@ export function loadScenarioConfig(overrides = {}) {
     baseUrl: "http://localhost:8080",
     maxSteps: 40,
     maxActionsPerTurn: 0,
+    // Three identical failures establishes the planner is stuck, and leaves room
+    // for escalation to the stronger model to have had its turn first.
+    maxRepeatedFailures: 3,
+    // Generous: filling several fields in a row can leave visible text and the
+    // control set unchanged, and that is legitimate progress.
+    maxStagnantTurns: 8,
     settleDelayMs: 500,
     settleTimeoutMs: 3000,
     headless: false,
@@ -232,8 +242,13 @@ export function loadScenarioConfig(overrides = {}) {
     setEntries: [],
     jsonEntries: [],
     persona: "",
-    ...cleanUndefined(envConfig),
+    // Precedence is CLI > environment > workspace > built-in default, matching
+    // resolveValue() in src/core/config/resolve.ts. These two layers disagreed:
+    // spreading the workspace last let defaults.json silently beat every DUBLO_*
+    // variable, so an env override appeared to do nothing whenever the workspace
+    // set the same key -- which it usually does.
     ...workspaceRuntimeConfig,
+    ...cleanUndefined(envConfig),
     ...cleanUndefined({
       workspace: overrides.workspace,
       llmRef: overrides.llm,
