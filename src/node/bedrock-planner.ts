@@ -71,6 +71,12 @@ function assertBedrockConverseResponse(value: unknown): Record<string, unknown> 
  * Pull the planner's action payload out of a Converse response: the toolUse
  * input when the model called the tool, otherwise JSON embedded in its text.
  */
+/** True for Bedrock's complaint about the model's own malformed tool-use output. */
+function isMalformedToolUseError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /invalid sequence as part of ToolUse/i.test(message);
+}
+
 function extractRawAction(result: Record<string, unknown>): unknown {
   const output = isRecord(result.output) ? result.output : undefined;
   const message = output && isRecord(output.message) ? output.message : undefined;
@@ -429,17 +435,34 @@ export function createBedrockPlanner(
       let lastSchemaError: unknown;
 
       for (let attempt = 0; attempt <= PLANNER_SCHEMA_RETRIES; attempt += 1) {
-        result = assertBedrockConverseResponse(
-          await sendWithServiceTierFallback(client, config, {
-            system,
-            messages: [{ role: "user", content: [...content, ...corrections] }],
-            inferenceConfig: buildInferenceConfig(config, 4096),
-            ...(config.additionalModelRequestFields
-              ? { additionalModelRequestFields: config.additionalModelRequestFields }
-              : {}),
-            ...buildToolConfig(config)
-          })
-        );
+        try {
+          result = assertBedrockConverseResponse(
+            await sendWithServiceTierFallback(client, config, {
+              system,
+              messages: [{ role: "user", content: [...content, ...corrections] }],
+              inferenceConfig: buildInferenceConfig(config, 4096),
+              ...(config.additionalModelRequestFields
+                ? { additionalModelRequestFields: config.additionalModelRequestFields }
+                : {}),
+              ...buildToolConfig(config)
+            })
+          );
+        } catch (error) {
+          /*
+           * Bedrock rejects the model's own malformed tool-use output with a
+           * ValidationException before we ever see a response. It is
+           * intermittent -- the same model emits valid tool calls for dozens of
+           * turns either side of one bad turn -- so a plain retry recovers,
+           * where failing the run discards everything already paid for.
+           *
+           * `strict: true` would be the principled fix, but Nova rejects the
+           * field outright ("This model doesn't support the strict field"), so
+           * retrying is what is available.
+           */
+          if (!isMalformedToolUseError(error) || attempt === PLANNER_SCHEMA_RETRIES) throw error;
+          lastSchemaError = error;
+          continue;
+        }
 
         try {
           return {
