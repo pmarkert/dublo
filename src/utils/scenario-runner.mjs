@@ -227,6 +227,7 @@ export async function runScenario(config, options = {}) {
       cacheWriteInputTokens: 0,
       plannerCalls: 0,
       escalationCalls: 0,
+      selfHealCalls: 0,
     },
     pricing: null,
     costEstimate: null,
@@ -444,12 +445,110 @@ export async function runScenario(config, options = {}) {
       secretValues,
       settleDelayMs: config.settleDelayMs,
       settleTimeoutMs: config.settleTimeoutMs,
+      baseUrl: config.baseUrl,
       logger,
       throwIfInterrupted,
     });
 
     lastUiActionAt = Date.now();
     pendingInteractionRequest = null;
+  }
+
+  // Re-grounds a recorded step whose target no longer resolves by asking the
+  // planner to pick the equivalent control in the current UI, then executing it.
+  async function healReplayStep(block, action, observation, turnToken) {
+    const payload = action.payload;
+    const objective = [
+      `Reproduce a recorded regression step from block '${block.name}'.`,
+      `Original intent: ${action.reason}`,
+      `Original action: ${payload.action}${payload.action === "fill" ? ` with value "${payload.value}"` : ""}.`,
+      "The recorded control could not be matched exactly in the current UI.",
+      `Choose the single control that best matches the original intent and perform the equivalent ${payload.action}.`,
+    ].join(" ");
+
+    const messages = buildPlannerMessages({
+      testPrompt: objective,
+      personaText,
+      workspacePromptText,
+      contextData,
+      secretValues,
+      observation,
+      actionHistory: [],
+      humanInputs,
+      screenshotRequested: false,
+      strictTargetSelectors: config.llm.supportsStrictToolUse === true,
+    });
+
+    const result = await requestPlannerAction({
+      planner,
+      messages,
+      signal: plannerAbortController.signal,
+    });
+    if (result.tokenUsage) {
+      addTokenUsageTotals(report.tokenUsage, result.tokenUsage);
+    }
+    report.tokenUsage.selfHealCalls += 1;
+
+    const healedPayload = result.action.payload;
+    if (payload.action === "fill" && healedPayload.action !== "fill") {
+      throw new Error(`Self-heal for a recorded fill produced '${healedPayload.action}'.`);
+    }
+    if (payload.action === "click" && !["click", "select_option"].includes(healedPayload.action)) {
+      throw new Error(`Self-heal for a recorded click produced '${healedPayload.action}'.`);
+    }
+
+    // Preserve the recorded fill value so healing only re-grounds the target.
+    const healedAction =
+      payload.action === "fill"
+        ? { reason: result.action.reason, payload: { ...healedPayload, value: payload.value } }
+        : result.action;
+
+    await executeBrowserAction({
+      page,
+      action: healedAction,
+      observation,
+      turnToken,
+      contextData,
+      humanInputs,
+      secretValues,
+      settleDelayMs: config.settleDelayMs,
+      settleTimeoutMs: config.settleTimeoutMs,
+      baseUrl: config.baseUrl,
+      logger,
+      throwIfInterrupted,
+    });
+    lastUiActionAt = Date.now();
+    pendingInteractionRequest = null;
+  }
+
+  async function replayBlockAction(block, action, observation, turnToken) {
+    const payload = action.payload;
+    let healed = false;
+
+    if (payload.action === "wait_until_gone") {
+      await executeDeterministicAction(action, observation, turnToken);
+    } else {
+      try {
+        await executeDeterministicAction(action, observation, turnToken);
+      } catch (error) {
+        const message = errorMessage(error);
+        const canHeal = /not found|ambiguous/i.test(message);
+        if (config.selfHeal === false || !canHeal) {
+          throw error;
+        }
+        logger.warn(`self-healing recorded step in block '${block.name}': ${message}`);
+        await healReplayStep(block, action, observation, turnToken);
+        healed = true;
+      }
+    }
+
+    if (action.expect?.urlIncludes && !page.url().includes(action.expect.urlIncludes)) {
+      throw new Error(
+        `Regression post-condition failed after ${payload.action}: expected URL to include '${action.expect.urlIncludes}', got '${page.url()}'.`
+      );
+    }
+
+    return { healed };
   }
 
   try {
@@ -474,7 +573,7 @@ export async function runScenario(config, options = {}) {
         await captureStep(
           `init_${sanitizeSegment(block.name)}_${action.payload.action}`,
           action,
-          () => executeDeterministicAction(action, observation, turnToken),
+          () => replayBlockAction(block, action, observation, turnToken),
           config.debug ? { observation: redactSecretValues(observation, secretValues) } : undefined,
           { phase: "init", initBlock: block.name, runtimeErrors: observation.runtimeErrors }
         );

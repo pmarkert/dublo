@@ -479,6 +479,22 @@ On each step the planner returns exactly one action:
 - `report_finding` — record a defect or notable issue **without ending the run** (see below).
 - `finish`, `give_up` — terminate the run.
 
+## Regression replay with self-healing
+
+`dublo block import <name>` builds a reusable initialization block from a passed
+run, and `dublo run <scenario> --init <name>` replays it deterministically before
+the planner takes over. Imported blocks record the **descriptive** target of each
+step (label/text/role/type) rather than the ephemeral per-turn id, plus a URL
+post-condition, so they resolve against later runs.
+
+When a recorded step's target no longer resolves (the control moved, was renamed,
+or is now ambiguous), the runner **self-heals**: it asks the planner to pick the
+equivalent control in the current UI and executes that instead, preserving the
+recorded fill value. Self-heal calls are counted in `tokenUsage.selfHealCalls`,
+and a recorded URL post-condition fails the run loudly if a replayed step lands on
+the wrong page. This turns brittle recorded flows into resilient regression checks
+that cost planner tokens only on the steps that actually drifted.
+
 ## Findings and runtime signals
 
 Two features turn a run into a defect report rather than a pass/fail:

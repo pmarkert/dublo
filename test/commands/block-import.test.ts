@@ -90,6 +90,69 @@ void test("imports successful replayable steps after startup from the latest run
   });
 });
 
+void test("imports descriptive targets and a URL post-condition for replay", async (t) => {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "dublo-block-import-desc-"));
+  t.after(async () => rm(workspace, { force: true, recursive: true }));
+
+  const runId = "run-desc";
+  const outputDir = path.join(workspace, "reports");
+  const reportPath = path.join(outputDir, runId, "report.json");
+  await mkdir(path.dirname(reportPath), { recursive: true });
+  await writeFile(
+    path.join(workspace, "defaults.json"),
+    `${JSON.stringify({ outputDir: "./reports" })}\n`
+  );
+  await writeFile(
+    reportPath,
+    `${JSON.stringify({
+      runId,
+      status: "passed",
+      steps: [
+        {
+          index: 1,
+          outcome: "ok",
+          plannerAction: { reason: "Startup.", payload: { action: "finish" } }
+        },
+        {
+          index: 2,
+          outcome: "ok",
+          url: "https://example.com/checkout",
+          plannerAction: {
+            reason: "Continue to checkout.",
+            payload: { action: "click", target: { id: "a5" } }
+          },
+          target: { label: "Continue", text: "Continue", role: "", type: "button" }
+        }
+      ]
+    })}\n`
+  );
+  await writeFile(
+    path.join(outputDir, "latest.json"),
+    `${JSON.stringify({ runId, reportPath })}\n`
+  );
+
+  await importBlockCommand("checkout", undefined, { workspace });
+
+  const block: unknown = JSON.parse(
+    await readFile(path.join(workspace, "blocks", "checkout.json"), "utf8")
+  );
+  assert.deepEqual(block, {
+    version: 1,
+    name: "checkout",
+    source: { runId, steps: [2] },
+    actions: [
+      {
+        reason: "Continue to checkout.",
+        payload: {
+          action: "click",
+          target: { label: "Continue", text: "Continue", type: "button" }
+        },
+        expect: { urlIncludes: "/checkout" }
+      }
+    ]
+  });
+});
+
 void test("allows a block wait to name alternative transient document texts", () => {
   assert.deepEqual(
     BlockActionSchema.parse({

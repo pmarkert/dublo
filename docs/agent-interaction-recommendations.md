@@ -323,5 +323,22 @@ Item 7 is implemented:
 - The observation now also reports `truncated` when the control cap is hit, so
   the planner (and the escalation trigger) know more controls exist.
 
-Item 6 (regression replay with self-healing and short action batches) remains
-open.
+Item 6 is partially implemented:
+
+- **Descriptive replay targets** — `dublo block import` now records the
+  descriptive target (label/text/role/type) captured in the report step instead
+  of the ephemeral per-turn id, plus a URL post-condition (`expect.urlIncludes`),
+  so a block resolves against a later run rather than whatever control happens to
+  sit at that DOM position.
+- **Self-healing replay** — when a recorded block step's target no longer
+  resolves (missing or ambiguous), the runner re-grounds it by asking the planner
+  to pick the equivalent control in the current UI and then executes that,
+  preserving the recorded fill value. Self-heal calls are counted in
+  `tokenUsage.selfHealCalls`, and the URL post-condition fails the run loudly when
+  a replayed step lands on the wrong page.
+
+Still open from item 6: short, validated multi-action batches per turn. This
+changes the one-action-per-turn planner contract (both planner schemas, the zod
+union, and the core loop) and is deferred to keep that contract — and its test
+surface — stable; prompt caching (item 1) already delivers much of the same
+per-step cost saving.
