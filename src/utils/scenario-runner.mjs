@@ -461,7 +461,17 @@ export async function runScenario(config, options = {}) {
         stepScreenshotRelativePath = path.relative(runDir, screenshotPath);
       }
 
-      if (config.debug && !browserClosed) {
+      /*
+       * Capture the DOM for any step that failed, even without --debug.
+       *
+       * A failing step is the only one anybody reads, and re-running with debug
+       * to get it is a gamble: identical invocations of the same scenario have
+       * produced wildly different paths, so the second run may fail somewhere
+       * else or not at all. Capturing at the moment of failure costs one
+       * page.content() on a step that already went wrong; capturing every step
+       * costs ~370KB each and 5x the report size.
+       */
+      if ((config.debug || stepError) && !browserClosed) {
         const html = await page.content();
         await writeFile(htmlPath, html, "utf8");
         stepHtmlRelativePath = path.relative(runDir, htmlPath);
