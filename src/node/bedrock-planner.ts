@@ -66,6 +66,30 @@ function assertBedrockConverseResponse(value: unknown): Record<string, unknown> 
   return value;
 }
 
+
+/**
+ * Pull the planner's action payload out of a Converse response: the toolUse
+ * input when the model called the tool, otherwise JSON embedded in its text.
+ */
+function extractRawAction(result: Record<string, unknown>): unknown {
+  const output = isRecord(result.output) ? result.output : undefined;
+  const message = output && isRecord(output.message) ? output.message : undefined;
+  const contentItems = Array.isArray(message?.content) ? message.content : [];
+  const toolItem = contentItems.find(
+    (item): item is Record<string, unknown> => isRecord(item) && isRecord(item.toolUse)
+  );
+  const toolUse = toolItem && isRecord(toolItem.toolUse) ? toolItem.toolUse : undefined;
+  if (toolUse?.input !== undefined) return toolUse.input;
+
+  const text = contentItems
+    .filter(isRecord)
+    .map((item) => (typeof item.text === "string" ? item.text : ""))
+    .join("\n")
+    .trim();
+  if (!text) throw new Error("Bedrock planner API returned no planner action.");
+  return extractJsonObject(text);
+}
+
 function parsePlannerAction(rawAction: unknown) {
   try {
     return PlannerTurnSchema.parse(rawAction);
@@ -281,6 +305,22 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
   };
 }
 
+/**
+ * Output budget for the preflight probe. Must fit any preamble a model emits
+ * before its tool call, not just the tool call itself.
+ */
+const PREFLIGHT_MAX_TOKENS = 512;
+
+/**
+ * How many times to re-ask the planner after its turn fails schema validation.
+ *
+ * A malformed turn is the most recoverable error there is -- the model is told
+ * exactly which rule it broke and asked again. Failing the whole run instead
+ * throws away every step already paid for, and weaker models trip these rules
+ * routinely (batching a non-batchable action, omitting a required field).
+ */
+const PLANNER_SCHEMA_RETRIES = 2;
+
 function buildInferenceConfig(
   config: BedrockPlannerConfig,
   maxTokens: number
@@ -337,7 +377,12 @@ export function createBedrockPlanner(
               ]
             }
           ],
-          inferenceConfig: buildInferenceConfig(config, 20),
+          // Enough room for a model that narrates before it acts. Nova Pro emits a
+          // <thinking> preamble ahead of the tool call, which alone exceeds a
+          // 20-token budget -- the response then truncates before any toolUse
+          // block and the model is wrongly reported as incompatible with the
+          // tool schema. Preflight runs once per run, so the headroom is free.
+          inferenceConfig: buildInferenceConfig(config, PREFLIGHT_MAX_TOKENS),
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
             : {}),
@@ -376,41 +421,46 @@ export function createBedrockPlanner(
         content.push({ image: { format: "png", source: { bytes: request.screenshot } } });
       }
 
-      const result = assertBedrockConverseResponse(
-        await sendWithServiceTierFallback(client, config, {
-          system,
-          messages: [{ role: "user", content }],
-          inferenceConfig: buildInferenceConfig(config, 4096),
-          ...(config.additionalModelRequestFields
-            ? { additionalModelRequestFields: config.additionalModelRequestFields }
-            : {}),
-          ...buildToolConfig(config)
-        })
-      );
-      const output = isRecord(result.output) ? result.output : undefined;
-      const message = output && isRecord(output.message) ? output.message : undefined;
-      const contentItems = Array.isArray(message?.content) ? message.content : [];
-      const toolItem = contentItems.find(
-        (item): item is Record<string, unknown> => isRecord(item) && isRecord(item.toolUse)
-      );
-      const toolUse = toolItem && isRecord(toolItem.toolUse) ? toolItem.toolUse : undefined;
-      const rawAction = toolUse?.input;
-      if (rawAction === undefined) {
-        const text = contentItems
-          .filter(isRecord)
-          .map((item) => (typeof item.text === "string" ? item.text : ""))
-          .join("\n")
-          .trim();
-        if (!text) throw new Error("Bedrock planner API returned no planner action.");
-        return {
-          action: parsePlannerAction(extractJsonObject(text)),
-          tokenUsage: normalizeTokenUsage(result.usage)
-        };
+      // Re-ask on a schema violation, quoting the rule that was broken. The
+      // correction rides as an extra user turn so the model sees its own
+      // mistake rather than repeating it blind.
+      const corrections: Array<Record<string, unknown>> = [];
+      let result!: Record<string, unknown>;
+      let lastSchemaError: unknown;
+
+      for (let attempt = 0; attempt <= PLANNER_SCHEMA_RETRIES; attempt += 1) {
+        result = assertBedrockConverseResponse(
+          await sendWithServiceTierFallback(client, config, {
+            system,
+            messages: [{ role: "user", content: [...content, ...corrections] }],
+            inferenceConfig: buildInferenceConfig(config, 4096),
+            ...(config.additionalModelRequestFields
+              ? { additionalModelRequestFields: config.additionalModelRequestFields }
+              : {}),
+            ...buildToolConfig(config)
+          })
+        );
+
+        try {
+          return {
+            action: parsePlannerAction(extractRawAction(result)),
+            tokenUsage: normalizeTokenUsage(result.usage)
+          };
+        } catch (error) {
+          lastSchemaError = error;
+          if (attempt === PLANNER_SCHEMA_RETRIES) break;
+          corrections.push({
+            text:
+              "Your previous turn was rejected: " +
+              (error instanceof Error ? error.message : String(error)) +
+              " Return one corrected planner_action turn that satisfies the schema."
+          });
+        }
       }
-      return {
-        action: parsePlannerAction(rawAction),
-        tokenUsage: normalizeTokenUsage(result.usage)
-      };
+
+      throw lastSchemaError instanceof Error
+        ? lastSchemaError
+        : new Error(String(lastSchemaError));
     }
   };
 }

@@ -383,6 +383,10 @@ export default function registerRunCommand(program) {
       "--max-repeated-failures <count>",
       "Abort after the same action fails this many times in a row (default 3)"
     )
+    .option(
+      "--max-stagnant-turns <count>",
+      "Abort after this many consecutive turns with no visible change (default 8)"
+    )
     .option("--settle-delay-ms <milliseconds>", "Stable UI duration before each LLM observation")
     .option("--settle-timeout-ms <milliseconds>", "Maximum UI settling duration before each LLM observation")
     .option("--headless", "Run browser in headless mode")

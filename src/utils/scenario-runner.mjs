@@ -33,6 +33,24 @@ export { classifyRecoverableActionError, isAlternatingScrollLoop, isDocumentText
  * whose target is identical is still the same doomed attempt when the target is
  * what cannot be resolved.
  */
+/**
+ * A coarse fingerprint of "what the user is looking at".
+ *
+ * Deliberately ignores which action was taken and whether it succeeded: the
+ * question is only whether the run is getting anywhere. Uses the URL, the
+ * visible document text, and the set of control ids -- enough to notice a
+ * changed screen, stable enough that re-rendering the same screen does not
+ * read as progress.
+ */
+export function progressKey(url, observation) {
+  const text = typeof observation?.documentText === "string" ? observation.documentText : "";
+  const ids = (observation?.controls ?? [])
+    .map((control) => control?.id)
+    .filter(Boolean)
+    .join(",");
+  return `${url}|${text.length}:${text.slice(0, 400)}|${ids}`;
+}
+
 export function actionSignature(plannerAction) {
   const payload = plannerAction?.payload ?? {};
   const target = payload.target ?? payload.containerId ?? payload.selector ?? null;
@@ -388,6 +406,8 @@ export async function runScenario(config, options = {}) {
   let lastUiActionAt = 0;
   let pendingInteractionRequest = null;
   let pendingScreenshotBuffer = null;
+  let lastProgressKey = null;
+  let stagnantTurns = 0;
   let previousTimedOutWait = null;
   let pendingEscalation = false;
 
@@ -807,6 +827,23 @@ export async function runScenario(config, options = {}) {
           previousTimedOutWait = null;
 
           if (plannerPayload.action === "request_user_input") {
+            /*
+             * A registered secret is the answer to most of these asks, and the
+             * prompt alone does not reliably stop a model reaching for a human
+             * first -- some ignore the instruction entirely. Correct it here
+             * rather than ending the run: naming the available paths turns a
+             * headless dead end into one wasted step.
+             */
+            if (secretValues.size > 0) {
+              recoverableOutcome = "secret_available";
+              recoverableErrorMessage =
+                `Do not ask a human for this. The run has registered secrets: ` +
+                `${[...secretValues.keys()].join(", ")}. Fill the matching field with ` +
+                `{{secret:<path>}} using one of those paths.`;
+              logger.warn(`refused request_user_input: ${recoverableErrorMessage}`);
+              return;
+            }
+
             if (!config.headed) {
               throw new Error("LLM got blocked: requested user input in headless mode.");
             }
@@ -987,7 +1024,9 @@ export async function runScenario(config, options = {}) {
         ...(actionTarget ? { target: actionTarget } : {}),
         outcome: recoverableOutcome || "ok",
         runnerFeedback:
-          recoverableOutcome === "disabled_target"
+          recoverableOutcome === "secret_available"
+            ? "The value you asked a human for is registered as a secret. Fill it with {{secret:<path>}} using a path from availableSecretPaths. Do not use request_user_input for it again."
+            : recoverableOutcome === "disabled_target"
             ? "Click was blocked because the target is disabled. Resolve any prerequisite validation or required fields before trying again."
             : recoverableOutcome === "target_disappeared"
               ? "The target disappeared before the action could run, so the UI is transitioning. Inspect the fresh observation instead of repeating the action."
@@ -1108,6 +1147,39 @@ export async function runScenario(config, options = {}) {
        * budget: "could not reach control X" names a defect, "max steps reached"
        * does not.
        */
+      /*
+       * No-progress guard.
+       *
+       * The circuit breaker below only catches an action repeated verbatim.
+       * Real stalls rarely look like that: a planner works through a form
+       * trying fill, then click, then wait, each one succeeding and none of
+       * them advancing. Observed stalls burned 68 successful clicks on one
+       * button and an entire step budget on a sign-in screen, and neither
+       * tripped a repeat check.
+       *
+       * So this ignores the actions entirely and asks the only question that
+       * matters: has the screen changed? When it has not for several turns in
+       * a row, no further turn is going to help.
+       */
+      const currentProgressKey = progressKey(page.url(), observation);
+      if (currentProgressKey === lastProgressKey) {
+        stagnantTurns += 1;
+      } else {
+        stagnantTurns = 0;
+        lastProgressKey = currentProgressKey;
+      }
+
+      if (stagnantTurns >= config.maxStagnantTurns) {
+        report.status = "failed";
+        report.finalUrl = page.url();
+        report.error =
+          `Aborted after ${stagnantTurns} consecutive turns with no visible change at ` +
+          `${page.url()} (last action: ${plannerPayload.action}). The run is not making ` +
+          `progress; the screen is identical to where it was ${stagnantTurns} turns ago.`;
+        logger.error(report.error);
+        break;
+      }
+
       if (recoverableOutcome) {
         const signature = actionSignature(plannerAction);
         const repeats = trailingFailureRepeats(actionHistory, signature);

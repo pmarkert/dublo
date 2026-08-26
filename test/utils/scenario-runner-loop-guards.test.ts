@@ -107,3 +107,24 @@ void test("a registered secret outranks human escalation for OTP codes", async (
   assert.doesNotMatch(withoutSecret.staticContextText, /check availableSecretPaths/i);
   assert.match(withoutSecret.staticContextText, /request_user_input/i);
 });
+
+void test("progress key ignores actions and tracks what is on screen", async () => {
+  const { progressKey } = await import("../../src/utils/scenario-runner.mjs");
+  const screen = (url: string, text: string, ids: string[]) =>
+    progressKey(url, { documentText: text, controls: ids.map((id) => ({ id })) });
+
+  // Same screen, regardless of what was attempted on it.
+  assert.equal(screen("/login", "Check your email", ["a1", "a2"]), screen("/login", "Check your email", ["a1", "a2"]));
+
+  // Any of the three dimensions changing counts as progress.
+  assert.notEqual(screen("/login", "Check your email", ["a1"]), screen("/myday", "Check your email", ["a1"]));
+  assert.notEqual(screen("/login", "Check your email", ["a1"]), screen("/login", "Invalid or expired code", ["a1"]));
+  assert.notEqual(screen("/login", "Check your email", ["a1"]), screen("/login", "Check your email", ["a1", "a2"]));
+});
+
+void test("progress key tolerates a missing or malformed observation", async () => {
+  const { progressKey } = await import("../../src/utils/scenario-runner.mjs");
+  assert.equal(typeof progressKey("/x", undefined), "string");
+  assert.equal(typeof progressKey("/x", {}), "string");
+  assert.equal(typeof progressKey("/x", { controls: [{}, null] }), "string");
+});

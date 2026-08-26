@@ -147,6 +147,7 @@ export async function runConfigWizard(
     llm,
     escalationLlm: values.escalationLlm,
     maxRepeatedFailures: values.maxRepeatedFailures,
+    maxStagnantTurns: values.maxStagnantTurns,
     persona,
     context,
     maxSteps,
