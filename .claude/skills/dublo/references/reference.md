@@ -16,6 +16,11 @@ Global option on almost every command: `--workspace <path>` (default
   workspace: `defaults.json` + folders `llm/ personas/ scenarios/ context/
   blocks/`. Refuses to overwrite existing defaults without `--force`.
 - `dublo completion <bash|zsh|fish>` — print a shell completion script.
+- `dublo skill install [--target <dir>] [--user] [--force]` — copy this bundled
+  skill into a Claude Code skills directory (default `./.claude/skills`;
+  `--user` → `~/.claude/skills`). Refuses to overwrite an existing install
+  without `--force`; re-run with `--force` to update after upgrading dublo.
+- `dublo skill show` — print this skill's `SKILL.md` to stdout.
 
 ### Running
 

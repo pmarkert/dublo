@@ -1,5 +1,6 @@
 node_modules/
 dist/
+resources/skills/
 .env
 .DS_Store
 .dublo

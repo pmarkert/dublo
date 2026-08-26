@@ -12,8 +12,18 @@ The TypeScript migration, library API, CLI redesign, and quality roadmap are doc
 
 ## Install
 
+From a source checkout (for developing Dublo):
+
 ```bash
-npm install
+npm install && npm run build
+```
+
+To use the `dublo` CLI in another project, install it globally (it builds on
+install via the `prepare` script):
+
+```bash
+npm install -g dublo                     # once published to npm
+npm install -g github:pmarkert/dublo     # or straight from GitHub
 ```
 
 Install Playwright browser binaries (one-time per machine):
@@ -27,6 +37,26 @@ If your system is missing native browser dependencies, install them with:
 ```bash
 npx playwright install-deps chromium
 ```
+
+### Testing an app in another repository
+
+Dublo is a standalone test runner that drives your app over HTTP; the app's repo
+does not depend on it. To test another project:
+
+```bash
+cd /path/to/your-app
+dublo init --workspace ./.dublo --base-url http://localhost:3000   # commit ./.dublo with the app
+dublo llm config --workspace ./.dublo                              # configure the model
+dublo skill install                                                # add the Dublo skill for Claude Code
+# start your app, then:
+dublo run --workspace ./.dublo --adhoc "Sign in and confirm the dashboard loads."
+```
+
+`dublo skill install` copies the bundled agent skill into `./.claude/skills/dublo`
+(use `--user` for `~/.claude/skills`, `--force` to update after upgrading), so an
+agent working in that repo becomes a Dublo expert. `dublo skill show` prints the
+skill to stdout. Keep `./.dublo/` (scenarios, personas, context) in the app repo
+so tests live with the app.
 
 ## Quick start
 
@@ -161,6 +191,8 @@ dublo report list [options]
 dublo report show [run-id] [options]
 dublo report open [run-id] [options]
 dublo report render [run-id] [options]
+dublo skill install [--target <dir>] [--user] [--force]
+dublo skill show
 
 Options:
   --workspace <path>    Workspace directory containing defaults.json and llm/personas/scenarios/context folders
