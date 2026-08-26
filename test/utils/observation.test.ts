@@ -69,3 +69,71 @@ void test("observes blocking modal controls, active overlay options, and scroll 
     await browser.close();
   }
 });
+
+type RobustControl = {
+  id: string;
+  label: string;
+  tag: string;
+  nameSource: string;
+  confidence: string;
+  inferred?: boolean;
+};
+
+void test("pierces shadow DOM, resolves non-ARIA names, and infers non-semantic clickables", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <button id="icon" title="Delete item"><svg aria-hidden="true"></svg></button>
+      <button id="imgbtn"><img alt="Save file" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></button>
+      <div id="card" onclick="void 0" style="cursor:pointer">Open dashboard</div>
+      <span id="ignored" style="cursor:pointer">${"x".repeat(80)}</span>
+      <my-widget></my-widget>
+      <script>
+        const host = document.getElementById('my-widget') || document.querySelector('my-widget');
+        const root = host.attachShadow({ mode: 'open' });
+        root.innerHTML = '<button id="shadow-btn">Inside shadow</button>';
+      </script>
+    `);
+
+    const observation = (await collectObservation(page, {}, "t1")) as unknown as {
+      controls: RobustControl[];
+    };
+    const byLabel = (label: string) =>
+      observation.controls.find((control) => control.label === label);
+
+    // Icon-only button with no text falls back to the title attribute.
+    const iconButton = byLabel("Delete item");
+    assert.ok(iconButton, "expected the title-named icon button");
+    assert.equal(iconButton?.nameSource, "title");
+    assert.equal(iconButton?.confidence, "low");
+
+    // A button whose only content is an image falls back to the image alt text.
+    const imageButton = byLabel("Save file");
+    assert.ok(imageButton, "expected the image-alt named button");
+    assert.equal(imageButton?.nameSource, "alt");
+
+    // A <div onclick> with a pointer cursor is surfaced as an inferred control.
+    const card = byLabel("Open dashboard");
+    assert.ok(card, "expected the inferred clickable div");
+    assert.equal(card?.inferred, true);
+
+    // Long-text cursor:pointer elements with no explicit signal are not inferred.
+    assert.equal(
+      observation.controls.some((control) => control.id === "ignored"),
+      false
+    );
+
+    // A control inside an open shadow root is visible to the walker.
+    const shadowButton = byLabel("Inside shadow");
+    assert.ok(shadowButton, "expected the shadow-DOM button");
+    assert.equal(shadowButton?.tag, "button");
+
+    // A locator can still reach the shadow control for interaction.
+    const located = page.locator(`[data-agentic-id="${shadowButton?.id}"]`);
+    assert.equal(await located.count(), 1);
+    assert.equal(await located.innerText(), "Inside shadow");
+  } finally {
+    await browser.close();
+  }
+});

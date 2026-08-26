@@ -287,6 +287,24 @@ Items 1–4 are implemented:
   and `go_back`, plus focus state on the observation (`observation.focus` and a
   per-control `focused` flag).
 
-Items 5–7 (observation blind spots / `ariaSnapshot`, regression replay with
-self-healing and action batches, set-of-marks screenshots and two-tier routing)
-remain open.
+Item 5 is partially implemented:
+
+- **Shadow DOM** — the observation walker (`queryAllWithin`) now pierces open
+  shadow roots, and clickability probing (`isLayerClickable`) accounts for
+  shadow-host retargeting. Playwright locators already pierce open shadow DOM,
+  so the `data-agentic-id` targets stay clickable.
+- **Inferred clickables** — non-semantic clickables (`[onclick]`, `[tabindex]`,
+  and short-text `cursor: pointer` elements) are captured and marked
+  `inferred: true`, gated by `includeInferredControls` / `maxInferredControls`.
+- **Non-ARIA names + confidence** — accessible-name resolution falls back to
+  `title`, control `value`, image `alt`, inline SVG `<title>`, and `placeholder`,
+  and every control now carries `nameSource` and `confidence` (an unnamed
+  interactive control is thus visible as a low/none-confidence finding for the
+  accessibility persona).
+
+Still open from item 5: cross-frame (iframe) observation and interaction, which
+needs frame-scoped locator addressing, and adopting Playwright `ariaSnapshot`
+as an alternative observation mode.
+
+Items 6–7 (regression replay with self-healing and action batches; set-of-marks
+screenshots and two-tier routing) remain open.

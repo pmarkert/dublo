@@ -16,6 +16,9 @@ const DEFAULT_OBSERVATION_CONFIG = {
   documentTextScopeSelectors: ["main", "[role='main']"],
   documentTextExcludeSelectors: ["button[aria-label='Open Tanstack query devtools']"],
   documentTextMaxChars: 2400,
+  pierceShadow: true,
+  includeInferredControls: true,
+  maxInferredControls: 20,
 };
 
 function mergeObservationConfig(defaultConfig, overrideConfig) {

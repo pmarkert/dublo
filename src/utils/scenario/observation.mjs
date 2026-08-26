@@ -50,12 +50,49 @@ export async function collectObservation(page, observationConfig, turnToken) {
         .filter(Boolean)
         .join(" · ");
 
+    const pierceShadow = cfg.pierceShadow !== false;
+
     const queryAllWithin = (root, selector) => {
-      try {
-        return Array.from(root.querySelectorAll(selector));
-      } catch {
-        return [];
+      if (!pierceShadow) {
+        try {
+          return Array.from(root.querySelectorAll(selector));
+        } catch {
+          return [];
+        }
       }
+
+      // Descend into open shadow roots so web-component UIs (which are invisible
+      // to a plain querySelectorAll) still surface their controls. Playwright's
+      // locator engine pierces open shadow DOM too, so the data-agentic-id
+      // targets set below remain clickable.
+      const results = [];
+      const seen = new Set();
+      const visit = (node) => {
+        let matches = [];
+        try {
+          matches = Array.from(node.querySelectorAll(selector));
+        } catch {
+          matches = [];
+        }
+        for (const el of matches) {
+          if (!seen.has(el)) {
+            seen.add(el);
+            results.push(el);
+          }
+        }
+
+        let descendants = [];
+        try {
+          descendants = node.querySelectorAll ? Array.from(node.querySelectorAll("*")) : [];
+        } catch {
+          descendants = [];
+        }
+        for (const el of descendants) {
+          if (el.shadowRoot) visit(el.shadowRoot);
+        }
+      };
+      visit(root);
+      return results;
     };
 
     const isVisible = (el) => {
@@ -84,27 +121,76 @@ export async function collectObservation(page, observationConfig, turnToken) {
       return [...new Set(segments)];
     };
 
-    const resolveControlName = (el, textSegments) => {
+    // Resolves an accessible-ish name plus the source it came from. Beyond the
+    // ARIA/label chain, it falls back to title, control value, embedded image
+    // alt text, and inline SVG <title>, so icon-only and lightly-authored
+    // controls still get a usable name. nameSource lets callers judge how much
+    // to trust it (an unnamed interactive control is itself an a11y finding).
+    const resolveControlNameWithSource = (el, textSegments) => {
       const labelledBy = resolveReferencedText(el.getAttribute("aria-labelledby") || "");
-      if (labelledBy) return labelledBy;
+      if (labelledBy) return { name: labelledBy, source: "aria-labelledby" };
 
       const ariaLabel = normalizeText(el.getAttribute("aria-label") || "");
-      if (ariaLabel) return ariaLabel;
+      if (ariaLabel) return { name: ariaLabel, source: "aria-label" };
 
       if ("labels" in el && el.labels?.length) {
         const labels = Array.from(el.labels)
           .map((label) => normalizeText(label.innerText || label.textContent || ""))
           .filter(Boolean)
           .join(" · ");
-        if (labels) return labels;
+        if (labels) return { name: labels, source: "label" };
       }
 
       const id = el.getAttribute("id") || "";
       const associatedLabel = id
         ? normalizeText(globalThis.document.querySelector(`label[for='${globalThis.CSS.escape(id)}']`)?.innerText || "")
         : "";
-      return associatedLabel || textSegments[0] || normalizeText(el.innerText || el.textContent || "");
+      if (associatedLabel) return { name: associatedLabel, source: "label" };
+
+      if (textSegments[0]) return { name: textSegments[0], source: "text" };
+
+      const ownText = normalizeText(el.innerText || el.textContent || "");
+      if (ownText) return { name: ownText, source: "text" };
+
+      const title = normalizeText(el.getAttribute("title") || "");
+      if (title) return { name: title, source: "title" };
+
+      const tag = el.tagName.toLowerCase();
+      if (tag === "input" || tag === "button") {
+        const value = normalizeText(el.getAttribute("value") || "");
+        if (value) return { name: value, source: "value" };
+      }
+
+      const imageAlt = queryAllWithin(el, "img[alt]")
+        .map((img) => normalizeText(img.getAttribute("alt") || ""))
+        .find(Boolean);
+      if (imageAlt) return { name: imageAlt, source: "alt" };
+
+      const svgTitle = queryAllWithin(el, "svg title")
+        .map((node) => normalizeText(node.textContent || ""))
+        .find(Boolean);
+      if (svgTitle) return { name: svgTitle, source: "svg-title" };
+
+      const placeholder = normalizeText(el.getAttribute("placeholder") || "");
+      if (placeholder) return { name: placeholder, source: "placeholder" };
+
+      return { name: "", source: "none" };
     };
+
+    const NAME_CONFIDENCE = {
+      "aria-labelledby": "high",
+      "aria-label": "high",
+      label: "high",
+      text: "medium",
+      title: "low",
+      value: "low",
+      alt: "low",
+      "svg-title": "low",
+      placeholder: "low",
+      none: "none",
+    };
+
+    const resolveControlName = (el, textSegments) => resolveControlNameWithSource(el, textSegments).name;
 
     const resolveContextPath = (el, scopeRoot) => {
       const parts = [];
@@ -227,18 +313,33 @@ export async function collectObservation(page, observationConfig, turnToken) {
 
       const cx = (rect.left + rect.right) / 2;
       const cy = (rect.top + rect.bottom) / 2;
-      const topEl = globalThis.document.elementFromPoint(cx, cy);
-      if (!topEl) {
-        return false;
+      // For elements inside an open shadow root, document.elementFromPoint
+      // retargets to the shadow host, so also probe within the element's own
+      // root and treat a hit anywhere in its shadow subtree as clickable.
+      const rootNode = el.getRootNode();
+      const pointRoots = [globalThis.document];
+      if (rootNode && rootNode !== globalThis.document && typeof rootNode.elementFromPoint === "function") {
+        pointRoots.push(rootNode);
       }
 
-      if (topEl === el || el.contains(topEl)) {
-        return true;
-      }
+      for (const pointRoot of pointRoots) {
+        const topEl = pointRoot.elementFromPoint(cx, cy);
+        if (!topEl) continue;
 
-      const topLabel = topEl.closest("label");
-      if (topLabel && "control" in topLabel && topLabel.control === el) {
-        return true;
+        if (topEl === el || el.contains(topEl)) {
+          return true;
+        }
+
+        // A shadow host sitting over the element counts when the element lives
+        // in that host's shadow tree.
+        if (topEl.shadowRoot && topEl.shadowRoot.contains(el)) {
+          return true;
+        }
+
+        const topLabel = typeof topEl.closest === "function" ? topEl.closest("label") : null;
+        if (topLabel && "control" in topLabel && topLabel.control === el) {
+          return true;
+        }
       }
 
       return false;
@@ -347,6 +448,65 @@ export async function collectObservation(page, observationConfig, turnToken) {
       selectedElements.push({ el, priority: false });
     }
 
+    // Non-semantic clickables: elements that behave like controls but carry no
+    // role/tag the selector above would catch (a <div onclick>, a keyboard-
+    // focusable card, a cursor:pointer tile). These are common on lightly
+    // authored apps where the agent would otherwise be stuck. They are marked
+    // inferred so downstream can treat their names as low-confidence and flag
+    // them as accessibility issues.
+    const includeInferredControls = cfg.includeInferredControls !== false;
+    const maxInferredControls = Number.isFinite(cfg.maxInferredControls)
+      ? Math.max(0, Number(cfg.maxInferredControls))
+      : 20;
+    if (includeInferredControls && maxInferredControls > 0) {
+      let inferredCount = 0;
+      const isNativeControl = (el) => {
+        try {
+          return el.matches(controlsSelector);
+        } catch {
+          return false;
+        }
+      };
+      const wrapsAControl = (el) =>
+        queryAllWithin(el, controlsSelector).some((child) => isVisible(child));
+      const considerInferred = (el, hasExplicitSignal) => {
+        if (selectedElements.length >= maxControls) return;
+        if (inferredCount >= maxInferredControls) return;
+        if (seenElements.has(el)) return;
+        if (!isVisible(el)) return;
+        if (isNativeControl(el)) return;
+        if (!isActiveOverlayControl(el) && !isLayerClickable(el)) return;
+        if (shouldIgnoreControl(el)) return;
+        if (wrapsAControl(el)) return;
+        if (!hasExplicitSignal) {
+          // Cursor-based candidates are noisier, so require short, direct text.
+          const text = normalizeText(el.innerText || el.textContent || "");
+          if (!text || text.length > 60) return;
+        }
+        seenElements.add(el);
+        selectedElements.push({ el, priority: false, inferred: true });
+        inferredCount += 1;
+      };
+
+      for (const el of queryAllInteractionRoots("[onclick], [tabindex]")) {
+        const tabindex = el.getAttribute("tabindex");
+        if (tabindex !== null && Number(tabindex) < 0 && !el.hasAttribute("onclick")) continue;
+        considerInferred(el, true);
+      }
+      for (const el of queryAllInteractionRoots("*")) {
+        if (inferredCount >= maxInferredControls || selectedElements.length >= maxControls) break;
+        if (seenElements.has(el)) continue;
+        let cursor = "";
+        try {
+          cursor = globalThis.window.getComputedStyle(el).cursor;
+        } catch {
+          cursor = "";
+        }
+        if (cursor !== "pointer") continue;
+        considerInferred(el, false);
+      }
+    }
+
     for (const el of queryAllWithin(globalThis.document, "[data-agentic-id], [data-agentic-turn], [data-agentic-scroll-id]")) {
       el.removeAttribute("data-agentic-id");
       el.removeAttribute("data-agentic-turn");
@@ -375,7 +535,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
     });
 
     let sequence = 0;
-    const visibleControls = selectedElements.map(({ el, priority }) => {
+    const visibleControls = selectedElements.map(({ el, priority, inferred }) => {
       sequence += 1;
       const agenticId = `a${sequence}`;
       el.setAttribute("data-agentic-id", agenticId);
@@ -388,7 +548,8 @@ export async function collectObservation(page, observationConfig, turnToken) {
       const role = el.getAttribute("role") || "";
       const tag = el.tagName.toLowerCase();
       const type = el.getAttribute("type") || "";
-      const label = resolveControlName(el, textSegments);
+      const { name: label, source: nameSource } = resolveControlNameWithSource(el, textSegments);
+      const confidence = NAME_CONFIDENCE[nameSource] || "none";
       const description = resolveReferencedText(el.getAttribute("aria-describedby") || "");
       const disabled =
         ("disabled" in el && Boolean(el.disabled)) || el.getAttribute("aria-disabled") === "true" || false;
@@ -439,9 +600,12 @@ export async function collectObservation(page, observationConfig, turnToken) {
         role,
         type,
         priority,
+        ...(inferred ? { inferred: true } : {}),
         text,
         ariaLabel,
         label,
+        nameSource,
+        confidence,
         ...(description ? { description } : {}),
         contextPath: resolveContextPath(el, scopeRoot),
         placeholder,
