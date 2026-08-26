@@ -15,7 +15,7 @@ import { registerReportCommands } from "./cli/report-commands.js";
 import { registerSkillCommands } from "./cli/skill-commands.js";
 
 const program = new Command();
-program.name("dublo").description("Agentic LLM web testing with Playwright").version("0.1.0", "--version");
+program.name("dublo").description("Agentic LLM web testing with Playwright").version("0.2.0", "--version");
 
 registerConfigCommands(program);
 registerRunCommand(program);
