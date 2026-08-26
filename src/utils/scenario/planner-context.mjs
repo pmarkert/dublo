@@ -46,6 +46,7 @@ export function buildPlannerMessages({
     invalid: Boolean(control.invalid),
     disabled: Boolean(control.disabled),
     ...(control.focused ? { focused: true } : {}),
+    ...(control.offscreen ? { offscreen: true } : {}),
   }));
 
   const completedWork = actionHistory
@@ -83,6 +84,7 @@ export function buildPlannerMessages({
       "When an observed scroll container has canScrollDown or canScrollUp, use scroll with its containerId and direction to reveal more content before escalating.",
       "Use press_key for keyboard interaction (for example Tab, Shift+Tab, Enter, Escape, ArrowDown). It acts on the currently focused element or the page; click a control first when you need to focus it before typing a key. observation.focus and each control's focused flag show what currently has focus.",
       "Use hover to reveal menus or content that only appear on pointer hover.",
+      "A control marked offscreen is rendered but scrolled out of view. You may target it directly; the runner scrolls it into view before acting. Prefer controls already in view when either works.",
       "If observation.truncated is true, more controls exist than are shown; scroll or interact to reveal the rest instead of assuming the visible list is complete.",
       "A control with low or none confidence (or inferred:true) has a weak or missing accessible name; identify it by contextPath and position, and treat a missing name on an interactive control as an accessibility issue worth a finding.",
       "Use navigate with a same-origin url to follow a known deep link, and go_back to return to the previous page (for example to verify state survives browser back).",

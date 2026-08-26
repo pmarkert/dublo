@@ -26,6 +26,12 @@ const DEFAULT_OBSERVATION_CONFIG = {
   pierceShadow: true,
   includeInferredControls: true,
   maxInferredControls: 20,
+  // "viewport" (default) surfaces only controls currently in view, mirroring
+  // what a human can reach; "document" also surfaces rendered-but-off-viewport
+  // controls (flagged offscreen), which the agent can target directly because
+  // Playwright scrolls them into view on click/fill. Keep "viewport" for
+  // usability/accessibility runs, where scroll reachability is under test.
+  interactionScope: "viewport",
 };
 
 function mergeObservationConfig(defaultConfig, overrideConfig) {

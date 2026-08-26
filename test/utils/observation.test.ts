@@ -182,6 +182,48 @@ void test("ranks relevance-keyword matches ahead of others under the cap", async
   }
 });
 
+void test("document interaction scope surfaces and reaches off-viewport controls", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <button id="top">Top</button>
+      <div style="height: 2000px"></div>
+      <button id="bottom" onclick="this.textContent='clicked'">Bottom</button>
+    `);
+
+    type Ctl = { label: string; id: string; offscreen?: boolean };
+
+    // viewport scope: the below-the-fold button is not surfaced.
+    const viewport = (await collectObservation(page, {}, "t1")) as unknown as { controls: Ctl[] };
+    assert.ok(viewport.controls.some((control) => control.label === "Top"));
+    assert.equal(
+      viewport.controls.some((control) => control.label === "Bottom"),
+      false
+    );
+
+    // document scope: it appears, flagged offscreen, while the in-view one is not.
+    const doc = (await collectObservation(
+      page,
+      { interactionScope: "document" },
+      "t2"
+    )) as unknown as {
+      controls: Ctl[];
+    };
+    const bottom = doc.controls.find((control) => control.label === "Bottom");
+    assert.ok(bottom, "expected the off-viewport control in document scope");
+    assert.equal(bottom?.offscreen, true);
+    assert.equal(doc.controls.find((control) => control.label === "Top")?.offscreen, undefined);
+
+    // Playwright scrolls the off-viewport control into view on click.
+    const located = page.locator(`[data-agentic-id="${bottom?.id}"]`);
+    await located.click();
+    assert.equal(await located.innerText(), "clicked");
+  } finally {
+    await browser.close();
+  }
+});
+
 void test("maxControls of 0 surfaces every control with no truncation", async () => {
   const browser = await chromium.launch({ headless: true });
   try {

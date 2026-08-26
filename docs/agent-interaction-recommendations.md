@@ -363,14 +363,18 @@ Item 6 is partially implemented:
   ranking becomes fully meaningful once off-viewport (`document`) interaction
   scope lands.
 
-All seven recommendation areas now have an implementation; remaining follow-ups:
+- **Off-viewport (`document`) interaction scope** — the observation config now
+  takes `interactionScope: "viewport" | "document"` (default `"viewport"`). In
+  `document` scope, controls that are rendered but scrolled out of view are
+  surfaced and flagged `offscreen: true`; the agent may target them directly
+  because Playwright auto-scrolls them into view on click/fill. Genuinely hidden
+  elements (`display:none`, `aria-hidden`, `inert`, `pointer-events:none`, 1px
+  clip) are still excluded. Keep `"viewport"` for usability/accessibility runs,
+  where scroll reachability is itself under test. This pairs with the relevance
+  ranking so document scope doesn't flood the list (off-viewport controls rank
+  below in-view ones).
 
-- **Off-viewport interaction scope** — an `interactionScope: "viewport" |
-  "document"` option so automation-flavored personas can target controls that
-  are rendered but scrolled out of view (Playwright auto-scrolls on
-  click/fill), while usability/accessibility personas stay viewport-scoped.
-  Requires the relevance ranking above (now in place) so document scope does not
-  flood the control list.
+All seven recommendation areas now have an implementation; remaining follow-ups:
 - **Bulk-selector action (sketch)** — for true bulk work (check every row whose
   name matches X, then "Delete selected"), enumerating hundreds of individual
   clicks is expensive on both the observation (control cap) and the output

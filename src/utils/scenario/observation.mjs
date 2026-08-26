@@ -352,6 +352,35 @@ export async function collectObservation(page, observationConfig, turnToken) {
       return false;
     };
 
+    // interactionScope decides whether controls that are rendered but scrolled
+    // out of the viewport are surfaced. "viewport" (default) mirrors what a user
+    // can currently reach; "document" also includes reachable off-viewport
+    // controls (Playwright auto-scrolls them into view on click/fill).
+    const interactionScope = cfg.interactionScope === "document" ? "document" : "viewport";
+
+    const isReachableOffscreen = (el) => {
+      // Only relevant for elements not currently in the viewport; in-viewport
+      // elements are judged by isLayerClickable (which also detects occlusion).
+      if (getVisibleClientRect(el)) return false;
+      if (!isVisible(el)) return false;
+      try {
+        if (el.closest('[aria-hidden="true"], [inert]')) return false;
+      } catch {
+        // ignore malformed selectors / detached nodes
+      }
+      const style = globalThis.window.getComputedStyle(el);
+      if (style.pointerEvents === "none") return false;
+      const rect = el.getBoundingClientRect();
+      // Exclude 1px "visually hidden" screen-reader-only text.
+      if (rect.width < 2 && rect.height < 2) return false;
+      return true;
+    };
+
+    const isSelectableControl = (el) =>
+      isActiveOverlayControl(el) ||
+      isLayerClickable(el) ||
+      (interactionScope === "document" && isReachableOffscreen(el));
+
     const allVisibleControls = queryAllWithin(globalThis.document, controlsSelector).filter((el) => isVisible(el));
     const visibleOutsideModalControls = activeModal
       ? allVisibleControls.filter((el) => !activeModal.contains(el))
@@ -469,7 +498,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
       for (const el of queryAllInteractionRoots(selector)) {
         if (seenElements.has(el)) continue;
         if (!isVisible(el)) continue;
-        if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
+        if (!isSelectableControl(el)) continue;
         if (shouldIgnoreControl(el)) continue;
         seenElements.add(el);
         priorityElements.push({ el, priority: true });
@@ -480,7 +509,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
     for (const el of queryAllInteractionRoots(controlsSelector)) {
       if (seenElements.has(el)) continue;
       if (!isVisible(el)) continue;
-      if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
+      if (!isSelectableControl(el)) continue;
       if (shouldIgnoreControl(el)) continue;
       seenElements.add(el);
       generalCandidates.push(el);
@@ -509,7 +538,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
         if (seenElements.has(el)) return;
         if (!isVisible(el)) return;
         if (isNativeControl(el)) return;
-        if (!isActiveOverlayControl(el) && !isLayerClickable(el)) return;
+        if (!isSelectableControl(el)) return;
         if (shouldIgnoreControl(el)) return;
         if (wrapsAControl(el)) return;
         if (!hasExplicitSignal) {
@@ -599,6 +628,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
       const agenticId = `a${sequence}`;
       el.setAttribute("data-agentic-id", agenticId);
       el.setAttribute("data-agentic-turn", activeTurnToken);
+      const offscreen = !getVisibleClientRect(el);
 
       const textSegments = leafTextSegments(el);
       const text = textSegments.join(" · ") || normalizeText(el.innerText || el.textContent || "");
@@ -680,6 +710,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
         ...(el.getAttribute("aria-invalid") === "true" ? { invalid: true } : {}),
         ...(disabled ? { disabled: true } : {}),
         ...(el === globalThis.document.activeElement ? { focused: true } : {}),
+        ...(offscreen ? { offscreen: true } : {}),
       };
     });
 
