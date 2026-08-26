@@ -328,6 +328,9 @@ void test("Bedrock planner preflight sends the planner tool definition", async (
   assert.match(requestJson, /"planner_action"/);
   assert.match(requestJson, /"strict":true/);
   assert.match(requestJson, /"required":\["reason","actions"\]/);
+  // The preflight must leave room for the whole forced tool call; too tight a
+  // budget truncates it mid-sequence and Nova rejects the invalid ToolUse.
+  assert.match(requestJson, /"maxTokens":256/);
 });
 
 void test("Bedrock planner rejects resolved error responses", async () => {

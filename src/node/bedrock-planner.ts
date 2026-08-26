@@ -337,7 +337,13 @@ export function createBedrockPlanner(
               ]
             }
           ],
-          inferenceConfig: buildInferenceConfig(config, 20),
+          // The forced planner_action tool call returns { reason, actions: [...] },
+          // which needs ~40-50 output tokens. A tighter cap truncates the tool
+          // use mid-sequence: Anthropic models return an empty toolUse that still
+          // passes the shape check, but Nova rejects the invalid sequence
+          // ("Model produced invalid sequence as part of ToolUse"). Give the
+          // preflight room to emit the whole (tiny) call.
+          inferenceConfig: buildInferenceConfig(config, 256),
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
             : {}),
