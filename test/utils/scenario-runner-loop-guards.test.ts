@@ -69,3 +69,41 @@ void test("the observed 40-attempt loop trips the default threshold of 3", () =>
   }));
   assert.ok(trailingFailureRepeats(history.slice(0, 3), signature) >= 3);
 });
+
+void test("a registered secret outranks human escalation for OTP codes", async () => {
+  const { buildPlannerMessages } = await import("../../src/utils/scenario/planner-context.mjs");
+
+  const build = (secretValues: Map<string, string>) =>
+    buildPlannerMessages({
+      testPrompt: "Sign in.",
+      personaText: "",
+      workspacePromptText: "",
+      contextData: {},
+      secretValues,
+      observation: {
+        url: "https://example.test",
+        title: "Sign in",
+        modal: {},
+        headings: [],
+        alerts: [],
+        documentText: "",
+        controls: []
+      },
+      actionHistory: [],
+      humanInputs: new Map(),
+      screenshotRequested: false
+    });
+
+  const withSecret = build(new Map([["auth.otpCode", "123456"]]));
+  const withoutSecret = build(new Map());
+
+  // Naming OTP codes as the request_user_input example sends the planner to a
+  // human even when the code was registered as a secret, which makes an OTP
+  // sign-in unrunnable headless and a pinned non-production code pointless.
+  assert.match(withSecret.staticContextText, /check availableSecretPaths/i);
+  assert.match(withSecret.staticContextText, /OTP or sign-in code included/i);
+
+  // Without a registered secret the plain escalation guidance still stands.
+  assert.doesNotMatch(withoutSecret.staticContextText, /check availableSecretPaths/i);
+  assert.match(withoutSecret.staticContextText, /request_user_input/i);
+});
