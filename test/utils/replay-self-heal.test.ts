@@ -29,9 +29,9 @@ function startFakeServer(): Promise<{ server: Server; baseUrl: string }> {
       const action = isHeal
         ? {
             reason: "Re-grounded the recorded click.",
-            payload: { action: "click", target: { text: "Click me" } }
+            actions: [{ action: "click", target: { text: "Click me" } }]
           }
-        : { reason: "Objective satisfied.", payload: { action: "finish" } };
+        : { reason: "Objective satisfied.", actions: [{ action: "finish" }] };
       const payload = {
         choices: [
           {

@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
-import { PlannerActionSchema } from "../ports/planner.js";
+import { MAX_ACTIONS_PER_TURN, PlannerTurnSchema } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface BedrockPlannerConfig {
@@ -68,18 +68,17 @@ function assertBedrockConverseResponse(value: unknown): Record<string, unknown> 
 
 function parsePlannerAction(rawAction: unknown) {
   try {
-    return PlannerActionSchema.parse(rawAction);
+    return PlannerTurnSchema.parse(rawAction);
   } catch (error) {
-    const action =
-      isRecord(rawAction) &&
-      isRecord(rawAction.payload) &&
-      typeof rawAction.payload.action === "string"
-        ? rawAction.payload.action
-        : "unknown";
+    const firstAction =
+      isRecord(rawAction) && Array.isArray(rawAction.actions) && isRecord(rawAction.actions[0])
+        ? rawAction.actions[0]
+        : undefined;
+    const action = typeof firstAction?.action === "string" ? firstAction.action : "unknown";
     const fields = isRecord(rawAction) ? Object.keys(rawAction).sort().join(", ") : "non-object";
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Bedrock planner returned an invalid '${action}' action with fields [${fields}]: ${detail}`,
+      `Bedrock planner returned an invalid '${action}' turn with fields [${fields}]: ${detail}`,
       { cause: error }
     );
   }
@@ -182,60 +181,65 @@ function buildActionSchema(strict: boolean): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["reason", "payload"],
+    required: ["reason", "actions"],
     properties: {
       reason: { type: "string" },
-      payload: {
-        anyOf: [
-          buildActionPayloadVariant("click", { target }, ["target"]),
-          buildActionPayloadVariant("fill", { target, value: { type: "string" } }, [
-            "target",
-            "value"
-          ]),
-          buildActionPayloadVariant("select_option", { target, value: { type: "string" } }, [
-            "target",
-            "value"
-          ]),
-          buildActionPayloadVariant(
-            "scroll",
-            { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
-            ["containerId", "direction"]
-          ),
-          buildActionPayloadVariant("press_key", { key: { type: "string" } }, ["key"]),
-          buildActionPayloadVariant("hover", { target }, ["target"]),
-          buildActionPayloadVariant("navigate", { url: { type: "string" } }, ["url"]),
-          buildActionPayloadVariant("go_back"),
-          buildActionPayloadVariant("wait_until_gone", { expectGone }, ["expectGone"]),
-          buildActionPayloadVariant(
-            "request_user_input",
-            { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
-            ["inputKey", "inputPrompt"]
-          ),
-          buildActionPayloadVariant(
-            "request_user_interaction",
-            { interactionPrompt: { type: "string" } },
-            ["interactionPrompt"]
-          ),
-          buildActionPayloadVariant(
-            "request_screenshot",
-            { screenshotPrompt: { type: "string" } },
-            ["screenshotPrompt"]
-          ),
-          buildActionPayloadVariant(
-            "report_finding",
-            {
-              severity: { enum: ["info", "minor", "major", "critical"] },
-              category: {
-                enum: ["accessibility", "usability", "functional", "performance", "security"]
+      actions: {
+        type: "array",
+        minItems: 1,
+        maxItems: MAX_ACTIONS_PER_TURN,
+        items: {
+          anyOf: [
+            buildActionPayloadVariant("click", { target }, ["target"]),
+            buildActionPayloadVariant("fill", { target, value: { type: "string" } }, [
+              "target",
+              "value"
+            ]),
+            buildActionPayloadVariant("select_option", { target, value: { type: "string" } }, [
+              "target",
+              "value"
+            ]),
+            buildActionPayloadVariant(
+              "scroll",
+              { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
+              ["containerId", "direction"]
+            ),
+            buildActionPayloadVariant("press_key", { key: { type: "string" } }, ["key"]),
+            buildActionPayloadVariant("hover", { target }, ["target"]),
+            buildActionPayloadVariant("navigate", { url: { type: "string" } }, ["url"]),
+            buildActionPayloadVariant("go_back"),
+            buildActionPayloadVariant("wait_until_gone", { expectGone }, ["expectGone"]),
+            buildActionPayloadVariant(
+              "request_user_input",
+              { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
+              ["inputKey", "inputPrompt"]
+            ),
+            buildActionPayloadVariant(
+              "request_user_interaction",
+              { interactionPrompt: { type: "string" } },
+              ["interactionPrompt"]
+            ),
+            buildActionPayloadVariant(
+              "request_screenshot",
+              { screenshotPrompt: { type: "string" } },
+              ["screenshotPrompt"]
+            ),
+            buildActionPayloadVariant(
+              "report_finding",
+              {
+                severity: { enum: ["info", "minor", "major", "critical"] },
+                category: {
+                  enum: ["accessibility", "usability", "functional", "performance", "security"]
+                },
+                summary: { type: "string" },
+                evidence: { type: "string" }
               },
-              summary: { type: "string" },
-              evidence: { type: "string" }
-            },
-            ["severity", "category", "summary"]
-          ),
-          buildActionPayloadVariant("give_up"),
-          buildActionPayloadVariant("finish")
-        ]
+              ["severity", "category", "summary"]
+            ),
+            buildActionPayloadVariant("give_up"),
+            buildActionPayloadVariant("finish")
+          ]
+        }
       }
     }
   };
@@ -249,7 +253,8 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
           {
             toolSpec: {
               name: "planner_action",
-              description: "Return the next UI automation action as structured JSON input.",
+              description:
+                "Return the next UI automation action, or a short batch of actions, as structured JSON input.",
               strict: true,
               inputSchema: { json: buildActionSchema(true) }
             }
@@ -266,7 +271,8 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
         {
           toolSpec: {
             name: "planner_action",
-            description: "Return the next UI automation action as structured JSON input.",
+            description:
+              "Return the next UI automation action, or a short batch of actions, as structured JSON input.",
             inputSchema: { json: buildActionSchema(false) }
           }
         }
@@ -327,7 +333,7 @@ export function createBedrockPlanner(
               role: "user",
               content: [
                 {
-                  text: "Call the planner_action tool with reason 'Preflight.' and payload action 'finish'."
+                  text: "Call the planner_action tool with reason 'Preflight.' and actions set to a single entry with action 'finish'."
                 }
               ]
             }

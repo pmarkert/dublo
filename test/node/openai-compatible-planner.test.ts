@@ -24,7 +24,7 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
                     function: {
                       arguments: JSON.stringify({
                         reason: "Continue the visible flow.",
-                        payload: { action: "click", target: { id: "button-1" } }
+                        actions: [{ action: "click", target: { id: "button-1" } }]
                       })
                     }
                   }
@@ -49,7 +49,7 @@ void test("OpenAI-compatible planner validates a tool-call action and token usag
 
   assert.deepEqual(response.action, {
     reason: "Continue the visible flow.",
-    payload: { action: "click", target: { id: "button-1" } }
+    actions: [{ action: "click", target: { id: "button-1" } }]
   });
   assert.deepEqual(response.tokenUsage, {
     inputTokens: 12,
@@ -79,10 +79,12 @@ void test("OpenAI-compatible planner accepts a structured wait-until-gone action
                     function: {
                       arguments: JSON.stringify({
                         reason: "Authentication is still loading.",
-                        payload: {
-                          action: "wait_until_gone",
-                          expectGone: { documentText: "Checking your account..." }
-                        }
+                        actions: [
+                          {
+                            action: "wait_until_gone",
+                            expectGone: { documentText: "Checking your account..." }
+                          }
+                        ]
                       })
                     }
                   }
@@ -103,7 +105,9 @@ void test("OpenAI-compatible planner accepts a structured wait-until-gone action
 
   assert.deepEqual(response.action, {
     reason: "Authentication is still loading.",
-    payload: { action: "wait_until_gone", expectGone: { documentText: "Checking your account..." } }
+    actions: [
+      { action: "wait_until_gone", expectGone: { documentText: "Checking your account..." } }
+    ]
   });
 });
 
@@ -121,7 +125,7 @@ void test("OpenAI-compatible planner accepts a give-up action", async () => {
                       arguments: JSON.stringify({
                         reason:
                           "The required control is not visible and no safe action can reveal it.",
-                        payload: { action: "give_up" }
+                        actions: [{ action: "give_up" }]
                       })
                     }
                   }
@@ -142,7 +146,7 @@ void test("OpenAI-compatible planner accepts a give-up action", async () => {
 
   assert.deepEqual(response.action, {
     reason: "The required control is not visible and no safe action can reveal it.",
-    payload: { action: "give_up" }
+    actions: [{ action: "give_up" }]
   });
 });
 
@@ -159,7 +163,7 @@ void test("OpenAI-compatible planner accepts a scroll action", async () => {
                     function: {
                       arguments: JSON.stringify({
                         reason: "More routine options are below the visible form area.",
-                        payload: { action: "scroll", containerId: "s1", direction: "down" }
+                        actions: [{ action: "scroll", containerId: "s1", direction: "down" }]
                       })
                     }
                   }
@@ -180,7 +184,7 @@ void test("OpenAI-compatible planner accepts a scroll action", async () => {
 
   assert.deepEqual(response.action, {
     reason: "More routine options are below the visible form area.",
-    payload: { action: "scroll", containerId: "s1", direction: "down" }
+    actions: [{ action: "scroll", containerId: "s1", direction: "down" }]
   });
 });
 
@@ -197,11 +201,13 @@ void test("OpenAI-compatible planner accepts a select-option action", async () =
                     function: {
                       arguments: JSON.stringify({
                         reason: "Set the routine frequency from the observed choices.",
-                        payload: {
-                          action: "select_option",
-                          target: { id: "a4" },
-                          value: "weekdays"
-                        }
+                        actions: [
+                          {
+                            action: "select_option",
+                            target: { id: "a4" },
+                            value: "weekdays"
+                          }
+                        ]
                       })
                     }
                   }
@@ -222,7 +228,7 @@ void test("OpenAI-compatible planner accepts a select-option action", async () =
 
   assert.deepEqual(response.action, {
     reason: "Set the routine frequency from the observed choices.",
-    payload: { action: "select_option", target: { id: "a4" }, value: "weekdays" }
+    actions: [{ action: "select_option", target: { id: "a4" }, value: "weekdays" }]
   });
 });
 
@@ -239,7 +245,7 @@ void test("OpenAI-compatible planner rejects an invalid action before browser ex
                     function: {
                       arguments: JSON.stringify({
                         reason: "Click it.",
-                        payload: { action: "click" }
+                        actions: [{ action: "click" }]
                       })
                     }
                   }

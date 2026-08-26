@@ -95,6 +95,8 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
       return WorkspaceDefaultsPatchSchema.parse({ persona: value });
     case "max-steps":
       return WorkspaceDefaultsPatchSchema.parse({ maxSteps: parsePositiveInteger(value) });
+    case "max-actions-per-turn":
+      return WorkspaceDefaultsPatchSchema.parse({ maxActionsPerTurn: parsePositiveInteger(value) });
     case "settle-delay-ms":
       return WorkspaceDefaultsPatchSchema.parse({ settleDelayMs: parsePositiveInteger(value) });
     case "settle-timeout-ms":
@@ -111,7 +113,7 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
       return WorkspaceDefaultsPatchSchema.parse({ observationConfigFile: value });
     default:
       throw new Error(
-        `Unknown setting '${setting}'. Available settings: base-url, llm, escalation-llm, persona, max-steps, settle-delay-ms, settle-timeout-ms, headless, screenshots, debug, output-dir, observation-config.`
+        `Unknown setting '${setting}'. Available settings: base-url, llm, escalation-llm, persona, max-steps, max-actions-per-turn, settle-delay-ms, settle-timeout-ms, headless, screenshots, debug, output-dir, observation-config.`
       );
   }
 }
@@ -122,6 +124,7 @@ const SETTING_KEYS = {
   "escalation-llm": "escalationLlm",
   persona: "persona",
   "max-steps": "maxSteps",
+  "max-actions-per-turn": "maxActionsPerTurn",
   "settle-delay-ms": "settleDelayMs",
   "settle-timeout-ms": "settleTimeoutMs",
   headless: "headless",

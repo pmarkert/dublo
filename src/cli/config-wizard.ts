@@ -149,6 +149,7 @@ export async function runConfigWizard(
     persona,
     context,
     maxSteps,
+    maxActionsPerTurn: values.maxActionsPerTurn,
     settleDelayMs: values.settleDelayMs,
     settleTimeoutMs: values.settleTimeoutMs,
     headless,

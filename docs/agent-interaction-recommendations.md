@@ -337,8 +337,16 @@ Item 6 is partially implemented:
   `tokenUsage.selfHealCalls`, and the URL post-condition fails the run loudly when
   a replayed step lands on the wrong page.
 
-Still open from item 6: short, validated multi-action batches per turn. This
-changes the one-action-per-turn planner contract (both planner schemas, the zod
-union, and the core loop) and is deferred to keep that contract — and its test
-surface — stable; prompt caching (item 1) already delivers much of the same
-per-step cost saving.
+- **Multi-action batches** — the planner turn is now a list of actions
+  (`{reason, actions: [...]}`). The runner executes the first, then runs any
+  batched follow-ons without another model call, re-collecting the observation
+  and re-validating each action's target before running it and aborting the
+  batch on the first mismatch or recoverable failure. Only click/fill/
+  select_option/hover/press_key may follow the first action; everything else
+  must stand alone. `maxActionsPerTurn` (default 4, set 1 to disable) caps the
+  batch. This cuts planner calls on form-heavy flows and compounds with prompt
+  caching.
+
+All seven recommendation areas now have an implementation; remaining follow-ups
+are the two noted under item 5 (cross-frame/iframe observation and an
+`ariaSnapshot` mode).

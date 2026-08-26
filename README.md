@@ -177,7 +177,7 @@ Options:
 
 `dublo init` creates a new workspace and refuses to overwrite existing defaults without `--force`.
 
-`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `escalation-llm`, `persona`, `max-steps`, `settle-delay-ms`, `settle-timeout-ms`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`. The settle settings control the runner's UI stability debounce before LLM observations; defaults are `500ms` stable time and a `20000ms` maximum polling window.
+`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `escalation-llm`, `persona`, `max-steps`, `max-actions-per-turn`, `settle-delay-ms`, `settle-timeout-ms`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`. The settle settings control the runner's UI stability debounce before LLM observations; defaults are `500ms` stable time and a `20000ms` maximum polling window.
 
 `dublo report list` shows saved reports. `dublo report show`, `open`, and `render` default to the report named by `latest.json` when no run ID is provided.
 
@@ -467,7 +467,7 @@ The run command writes a manifest file at `output-dir/latest.json` for easy acce
 
 ## Agent actions
 
-On each step the planner returns exactly one action:
+On each turn the planner returns one action, or a **short batch** of actions to run in sequence:
 
 - `click`, `fill`, `select_option` — interact with an observed control.
 - `hover` — reveal menus or content shown only on pointer hover.
@@ -478,6 +478,12 @@ On each step the planner returns exactly one action:
 - `request_user_input`, `request_user_interaction`, `request_screenshot` — escalate to the human or ask for a screenshot (headed mode).
 - `report_finding` — record a defect or notable issue **without ending the run** (see below).
 - `finish`, `give_up` — terminate the run.
+
+### Action batches
+
+When the next few steps are high-confidence and local (for example filling several form fields and clicking submit), the planner may return them as a single batch instead of one action per model call. The runner executes the batch in order, **re-collecting the observation and re-validating each action's target before running it**, and aborts the rest of the batch on the first mismatch or recoverable failure — so a stale action can never march into the wrong control; the next turn simply re-plans from the current state. Only `click`, `fill`, `select_option`, `hover`, and `press_key` may follow the first action in a batch; anything that navigates, waits, finishes, gives up, reports a finding, or escalates must stand alone. Each executed action is still its own step in the report (batched follow-ons are tagged `phase: "batch"`).
+
+`maxActionsPerTurn` (default `4`) caps the batch size; set it to `1` to disable batching entirely. Configure it via `dublo config set max-actions-per-turn <n>`, the workspace default `maxActionsPerTurn`, or `DUBLO_MAX_ACTIONS_PER_TURN`. Batching is the main lever for cutting planner calls on form-heavy flows; it compounds with prompt caching (which cuts the cost of each call).
 
 ## Regression replay with self-healing
 

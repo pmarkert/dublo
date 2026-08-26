@@ -152,6 +152,7 @@ export function loadScenarioConfig(overrides = {}) {
   const workspaceRuntimeConfig = cleanUndefined({
     baseUrl: workspaceConfig.baseUrl,
     maxSteps: parseNumber(workspaceConfig.maxSteps, undefined),
+    maxActionsPerTurn: parsePositiveInteger(workspaceConfig.maxActionsPerTurn, undefined),
     settleDelayMs: parsePositiveInteger(workspaceConfig.settleDelayMs, undefined),
     settleTimeoutMs: parsePositiveInteger(workspaceConfig.settleTimeoutMs, undefined),
     headless: parseBoolean(workspaceConfig.headless, undefined),
@@ -169,6 +170,7 @@ export function loadScenarioConfig(overrides = {}) {
   const envConfig = {
     baseUrl: firstDefined(process.env.DUBLO_BASE_URL),
     maxSteps: parseNumber(firstDefined(process.env.DUBLO_MAX_STEPS), undefined),
+    maxActionsPerTurn: parsePositiveInteger(firstDefined(process.env.DUBLO_MAX_ACTIONS_PER_TURN), undefined),
     settleDelayMs: parsePositiveInteger(firstDefined(process.env.DUBLO_SETTLE_DELAY_MS), undefined),
     settleTimeoutMs: parsePositiveInteger(firstDefined(process.env.DUBLO_SETTLE_TIMEOUT_MS), undefined),
     headless: parseBoolean(firstDefined(process.env.DUBLO_HEADLESS), undefined),
@@ -204,6 +206,7 @@ export function loadScenarioConfig(overrides = {}) {
   const merged = {
     baseUrl: "http://localhost:8080",
     maxSteps: 40,
+    maxActionsPerTurn: 4,
     settleDelayMs: 500,
     settleTimeoutMs: 3000,
     headless: false,

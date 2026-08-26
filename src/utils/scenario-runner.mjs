@@ -489,7 +489,9 @@ export async function runScenario(config, options = {}) {
     }
     report.tokenUsage.selfHealCalls += 1;
 
-    const healedPayload = result.action.payload;
+    // Self-heal re-grounds a single step, so only the first action of the
+    // returned turn is used.
+    const healedPayload = result.action.actions[0];
     if (payload.action === "fill" && healedPayload.action !== "fill") {
       throw new Error(`Self-heal for a recorded fill produced '${healedPayload.action}'.`);
     }
@@ -501,7 +503,7 @@ export async function runScenario(config, options = {}) {
     const healedAction =
       payload.action === "fill"
         ? { reason: result.action.reason, payload: { ...healedPayload, value: payload.value } }
-        : result.action;
+        : { reason: result.action.reason, payload: healedPayload };
 
     await executeBrowserAction({
       page,
@@ -646,7 +648,7 @@ export async function runScenario(config, options = {}) {
       if (
         escalationPlanner &&
         !usedEscalation &&
-        plannerResult.action.payload.action === "give_up"
+        plannerResult.action.actions[0].action === "give_up"
       ) {
         logger.info(`primary planner gave up; retrying with ${config.escalationLlm.modelId}`);
         throwIfInterrupted();
@@ -657,9 +659,20 @@ export async function runScenario(config, options = {}) {
 
       throwIfInterrupted();
 
-      const { tokenUsage: plannerTokenUsage, action: plannerAction } = plannerResult;
+      const { tokenUsage: plannerTokenUsage, action: plannerTurn } = plannerResult;
 
+      // A turn is one or more actions. Execute the first here as the step's
+      // primary action; any batched follow-ons run below without another
+      // planner call. maxActionsPerTurn caps the batch (1 disables batching).
+      const maxActionsPerTurn = Number.isFinite(config.maxActionsPerTurn)
+        ? Math.max(1, Number(config.maxActionsPerTurn))
+        : plannerTurn.actions.length;
+      const batchActions = plannerTurn.actions.slice(0, maxActionsPerTurn);
+      const plannerAction = { reason: plannerTurn.reason, payload: batchActions[0] };
       const plannerPayload = plannerAction.payload;
+      if (batchActions.length > 1) {
+        logger.info(`planner proposed a batch of ${batchActions.length} actions`);
+      }
 
       logger.info(
         `planner action ${i + 1}: ${plannerPayload.action}${plannerPayload.action === "click" || plannerPayload.action === "fill" || plannerPayload.action === "select_option" ? ` target=${describeTarget(plannerPayload.target)}` : ""} reason=${clip(plannerAction.reason, 140)}`
@@ -940,6 +953,99 @@ export async function runScenario(config, options = {}) {
       // turn to the stronger model when one is configured.
       if (recoverableOutcome && escalationPlanner) {
         pendingEscalation = true;
+      }
+
+      // Multi-action batch: run the remaining planned actions without another
+      // planner call. Each is re-validated against a fresh observation, and the
+      // batch aborts on the first mismatch or recoverable failure so stale
+      // actions never march into the wrong controls.
+      const batchable = new Set(["click", "fill", "select_option", "hover", "press_key"]);
+      if (
+        report.status === "running" &&
+        !recoverableOutcome &&
+        batchActions.length > 1 &&
+        batchable.has(plannerPayload.action)
+      ) {
+        for (let b = 1; b < batchActions.length; b += 1) {
+          const followPayload = batchActions[b];
+          if (!batchable.has(followPayload.action)) break;
+          throwIfInterrupted();
+          await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+          observationTurn += 1;
+          const followTurnToken = `t${observationTurn}`;
+          const followObservation = await collectObservation(page, observationConfig, followTurnToken);
+          followObservation.runtimeErrors = drainRuntimeErrors();
+
+          if ("target" in followPayload) {
+            try {
+              resolveTargetControl(followObservation.controls, followPayload.target);
+            } catch (error) {
+              logger.info(`batch stopped before action ${b + 1}: ${errorMessage(error)}`);
+              break;
+            }
+          }
+
+          const followAction = { reason: plannerTurn.reason, payload: followPayload };
+          const followActionName = `batch_${followPayload.action}_${b + 1}`;
+          let followOutcome = null;
+          let followErrorMessage = "";
+          let followTarget;
+
+          try {
+            await captureStep(
+              followActionName,
+              followAction,
+              async () => {
+                const result = await executeBrowserAction({
+                  page,
+                  action: followAction,
+                  observation: followObservation,
+                  turnToken: followTurnToken,
+                  actionHistory,
+                  contextData,
+                  humanInputs,
+                  secretValues,
+                  settleDelayMs: config.settleDelayMs,
+                  settleTimeoutMs: config.settleTimeoutMs,
+                  baseUrl: config.baseUrl,
+                  logger,
+                  throwIfInterrupted,
+                });
+                followTarget = result.target;
+                lastUiActionAt = Date.now();
+                pendingInteractionRequest = null;
+              },
+              config.debug
+                ? { observation: redactSecretValues(followObservation, secretValues) }
+                : undefined,
+              { phase: "batch", runtimeErrors: followObservation.runtimeErrors }
+            );
+          } catch (error) {
+            const kind = classifyRecoverableActionError(error);
+            if (!kind) throw error;
+            followOutcome = kind;
+            followErrorMessage = errorMessage(error);
+            logger.warn(`batch action recoverable failure (${kind}): ${followErrorMessage}`);
+            await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+          }
+
+          actionHistory.push({
+            step: stepIndex,
+            url: page.url(),
+            action: followAction,
+            ...(followTarget ? { target: followTarget } : {}),
+            outcome: followOutcome || "ok",
+            batched: true,
+            error: followErrorMessage || undefined,
+          });
+
+          // Any recoverable failure ends the batch; the next planner turn
+          // re-observes and re-plans from the current state.
+          if (followOutcome) {
+            if (escalationPlanner) pendingEscalation = true;
+            break;
+          }
+        }
       }
 
       if (report.status !== "running") {

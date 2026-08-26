@@ -72,7 +72,9 @@ export function buildPlannerMessages({
       strictTargetSelectors
         ? "Use only the visible control ID as the target selector, for example { id: 'a3' }."
         : "The lightweight selector { id: 'a3' } is acceptable and preferred by default. You may combine any visible control fields when needed to identify one control.",
-      "Put action and action-specific fields in payload; keep reason at the root.",
+      "Return actions as a list. Each entry holds one action and its action-specific fields; keep a single reason at the root.",
+      "Prefer one action per turn. You may return a short batch only when the next few steps are high-confidence and local (for example fill several fields then click submit). The runner executes the batch in order, re-checking each action against a fresh observation and stopping the batch if anything no longer matches, so batch only when confident.",
+      "Only click, fill, select_option, hover, and press_key may follow the first action in a batch. Any action that navigates, waits, finishes, gives up, reports a finding, or escalates to the human must be the only action in the list.",
       "Never emit click or fill without target.",
       "For fill actions, also provide a value.",
       "Treat checked, selected, and pressed as current control state. Do not click a control that is already in the state required by the objective.",
@@ -136,7 +138,7 @@ export function buildPlannerMessages({
 
   const systemText = [
     "You are an autonomous UX test agent driving a browser.",
-    "Decide one next action at a time using only visible elements from the observation.",
+    "Decide the next action, or a short batch of high-confidence follow-on actions, using only visible elements from the observation.",
     "Favor intuitive user behavior and avoid hidden shortcuts.",
     "Use the planner_action tool on every turn instead of replying with free text.",
     ...(workspacePromptText

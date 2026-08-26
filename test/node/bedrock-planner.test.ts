@@ -26,7 +26,7 @@ void test("Bedrock planner validates tool-use actions through an injected client
                       name: "planner_action",
                       input: {
                         reason: "Success criteria are visible.",
-                        payload: { action: "finish" }
+                        actions: [{ action: "finish" }]
                       }
                     }
                   }
@@ -43,7 +43,7 @@ void test("Bedrock planner validates tool-use actions through an injected client
 
   assert.deepEqual(response.action, {
     reason: "Success criteria are visible.",
-    payload: { action: "finish" }
+    actions: [{ action: "finish" }]
   });
   assert.deepEqual(response.tokenUsage, {
     inputTokens: 8,
@@ -81,7 +81,7 @@ void test("Bedrock planner enables strict tool validation when the model support
                       name: "planner_action",
                       input: {
                         reason: "Success criteria are visible.",
-                        payload: { action: "finish" }
+                        actions: [{ action: "finish" }]
                       }
                     }
                   }
@@ -100,9 +100,12 @@ void test("Bedrock planner enables strict tool validation when the model support
   assert.match(requestJson, /"strict":true/);
   assert.match(
     requestJson,
-    /"json":\{"type":"object","additionalProperties":false,"required":\["reason","payload"\]/
+    /"json":\{"type":"object","additionalProperties":false,"required":\["reason","actions"\]/
   );
-  assert.match(requestJson, /"payload":\{"anyOf"/);
+  assert.match(
+    requestJson,
+    /"actions":\{"type":"array","minItems":1,"maxItems":5,"items":\{"anyOf"/
+  );
   assert.match(
     requestJson,
     /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id"/
@@ -141,10 +144,12 @@ void test("Bedrock planner preserves strict action payloads", async () => {
                       name: "planner_action",
                       input: {
                         reason: "The structured observation is insufficient.",
-                        payload: {
-                          action: "request_screenshot",
-                          screenshotPrompt: "Show the open menu."
-                        }
+                        actions: [
+                          {
+                            action: "request_screenshot",
+                            screenshotPrompt: "Show the open menu."
+                          }
+                        ]
                       }
                     }
                   }
@@ -161,7 +166,7 @@ void test("Bedrock planner preserves strict action payloads", async () => {
 
   assert.deepEqual(response.action, {
     reason: "The structured observation is insufficient.",
-    payload: { action: "request_screenshot", screenshotPrompt: "Show the open menu." }
+    actions: [{ action: "request_screenshot", screenshotPrompt: "Show the open menu." }]
   });
 });
 
@@ -182,12 +187,14 @@ void test("Bedrock planner accepts a report_finding action", async () => {
                       name: "planner_action",
                       input: {
                         reason: "The control cannot be identified by assistive tech.",
-                        payload: {
-                          action: "report_finding",
-                          severity: "major",
-                          category: "accessibility",
-                          summary: "Icon-only button has no accessible name."
-                        }
+                        actions: [
+                          {
+                            action: "report_finding",
+                            severity: "major",
+                            category: "accessibility",
+                            summary: "Icon-only button has no accessible name."
+                          }
+                        ]
                       }
                     }
                   }
@@ -204,12 +211,14 @@ void test("Bedrock planner accepts a report_finding action", async () => {
 
   assert.deepEqual(response.action, {
     reason: "The control cannot be identified by assistive tech.",
-    payload: {
-      action: "report_finding",
-      severity: "major",
-      category: "accessibility",
-      summary: "Icon-only button has no accessible name."
-    }
+    actions: [
+      {
+        action: "report_finding",
+        severity: "major",
+        category: "accessibility",
+        summary: "Icon-only button has no accessible name."
+      }
+    ]
   });
   assert.match(JSON.stringify(requests[0]), /"const":"report_finding"/);
 });
@@ -229,7 +238,7 @@ void test("Bedrock planner inserts cache points when prompt caching is enabled",
                   {
                     toolUse: {
                       name: "planner_action",
-                      input: { reason: "Done.", payload: { action: "finish" } }
+                      input: { reason: "Done.", actions: [{ action: "finish" }] }
                     }
                   }
                 ]
@@ -272,7 +281,7 @@ void test("Bedrock planner omits cache points by default", async () => {
                   {
                     toolUse: {
                       name: "planner_action",
-                      input: { reason: "Done.", payload: { action: "finish" } }
+                      input: { reason: "Done.", actions: [{ action: "finish" }] }
                     }
                   }
                 ]
@@ -304,7 +313,7 @@ void test("Bedrock planner preflight sends the planner tool definition", async (
                   {
                     toolUse: {
                       name: "planner_action",
-                      input: { reason: "Preflight.", payload: { action: "finish" } }
+                      input: { reason: "Preflight.", actions: [{ action: "finish" }] }
                     }
                   }
                 ]
@@ -321,7 +330,7 @@ void test("Bedrock planner preflight sends the planner tool definition", async (
   const requestJson = JSON.stringify(requests[0]);
   assert.match(requestJson, /"planner_action"/);
   assert.match(requestJson, /"strict":true/);
-  assert.match(requestJson, /"required":\["reason","payload"\]/);
+  assert.match(requestJson, /"required":\["reason","actions"\]/);
 });
 
 void test("Bedrock planner rejects resolved error responses", async () => {
@@ -361,7 +370,9 @@ void test("Bedrock planner identifies malformed actions without exposing their v
                       name: "planner_action",
                       input: {
                         reason: "Click the control.",
-                        payload: { action: "click", target: { id: "new-routine" }, value: "secret" }
+                        actions: [
+                          { action: "click", target: { id: "new-routine" }, value: "secret" }
+                        ]
                       }
                     }
                   }
@@ -376,6 +387,6 @@ void test("Bedrock planner identifies malformed actions without exposing their v
 
   await assert.rejects(
     () => planner.nextAction({ messages }),
-    /invalid 'click' action with fields \[payload, reason\][\s\S]*value/
+    /invalid 'click' turn with fields \[actions, reason\][\s\S]*value/
   );
 });

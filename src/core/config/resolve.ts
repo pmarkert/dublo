@@ -13,6 +13,7 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
   persona: "",
   context: [],
   maxSteps: 40,
+  maxActionsPerTurn: 4,
   settleDelayMs: 500,
   settleTimeoutMs: 20000,
   headless: false,
@@ -30,6 +31,7 @@ const ResolvedWorkspaceConfigSchema = z.object({
   persona: z.string(),
   context: z.array(z.string()),
   maxSteps: z.number().int().positive(),
+  maxActionsPerTurn: z.number().int().positive(),
   settleDelayMs: z.number().int().positive(),
   settleTimeoutMs: z.number().int().positive(),
   headless: z.boolean(),
@@ -95,6 +97,7 @@ function parseEnvironment(environment: Environment) {
     persona: environment.DUBLO_PERSONA,
     context: parseList(environment.DUBLO_CONTEXT),
     maxSteps: parsePositiveInteger(environment.DUBLO_MAX_STEPS),
+    maxActionsPerTurn: parsePositiveInteger(environment.DUBLO_MAX_ACTIONS_PER_TURN),
     settleDelayMs: parsePositiveInteger(environment.DUBLO_SETTLE_DELAY_MS),
     settleTimeoutMs: parsePositiveInteger(environment.DUBLO_SETTLE_TIMEOUT_MS),
     headless: parseBoolean(environment.DUBLO_HEADLESS),
@@ -131,7 +134,12 @@ export function resolveWorkspaceConfig(
     workspace.baseUrl,
     DEFAULT_WORKSPACE_DEFAULTS.baseUrl
   );
-  const [llm, llmSource] = resolveValue(cli.llm, environment.llm, workspace.llm, DEFAULT_WORKSPACE_DEFAULTS.llm);
+  const [llm, llmSource] = resolveValue(
+    cli.llm,
+    environment.llm,
+    workspace.llm,
+    DEFAULT_WORKSPACE_DEFAULTS.llm
+  );
   const [escalationLlm, escalationLlmSource] = resolveValue(
     cli.escalationLlm,
     environment.escalationLlm,
@@ -155,6 +163,12 @@ export function resolveWorkspaceConfig(
     environment.maxSteps,
     workspace.maxSteps,
     DEFAULT_WORKSPACE_DEFAULTS.maxSteps
+  );
+  const [maxActionsPerTurn, maxActionsPerTurnSource] = resolveValue(
+    cli.maxActionsPerTurn,
+    environment.maxActionsPerTurn,
+    workspace.maxActionsPerTurn,
+    DEFAULT_WORKSPACE_DEFAULTS.maxActionsPerTurn
   );
   const [settleDelayMs, settleDelayMsSource] = resolveValue(
     cli.settleDelayMs,
@@ -213,6 +227,7 @@ export function resolveWorkspaceConfig(
       persona,
       context,
       maxSteps,
+      maxActionsPerTurn,
       settleDelayMs,
       settleTimeoutMs,
       headless,
@@ -229,6 +244,7 @@ export function resolveWorkspaceConfig(
       persona: personaSource,
       context: contextSource,
       maxSteps: maxStepsSource,
+      maxActionsPerTurn: maxActionsPerTurnSource,
       settleDelayMs: settleDelayMsSource,
       settleTimeoutMs: settleTimeoutMsSource,
       headless: headlessSource,

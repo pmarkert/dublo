@@ -81,6 +81,39 @@ export const PlannerActionSchema = z
   })
   .strict();
 
+// Action types that may follow the first action in a batch. They are local UI
+// mutations the runner can re-validate against a fresh observation before each
+// one; everything else (navigation, waiting, escalation, termination) must be
+// the sole action in the turn.
+export const BATCHABLE_ACTIONS = ["click", "fill", "select_option", "hover", "press_key"] as const;
+const BATCHABLE_ACTION_SET = new Set<string>(BATCHABLE_ACTIONS);
+
+export const MAX_ACTIONS_PER_TURN = 5;
+
+// A planner turn is one or more actions. The first may be any action; any action
+// after it must be batchable, and a non-batchable first action must stand alone.
+export const PlannerTurnSchema = z
+  .object({
+    reason: z.string().trim().min(1),
+    actions: z.array(PlannerActionPayloadSchema).min(1).max(MAX_ACTIONS_PER_TURN)
+  })
+  .strict()
+  .refine(
+    (turn) => {
+      const [first, ...rest] = turn.actions;
+      if (!first) return false;
+      if (rest.length === 0) return true;
+      return (
+        BATCHABLE_ACTION_SET.has(first.action) &&
+        rest.every((action) => BATCHABLE_ACTION_SET.has(action.action))
+      );
+    },
+    {
+      message:
+        "Only click, fill, select_option, hover, and press_key may be batched; any other action must be the only action in the turn."
+    }
+  );
+
 export interface PlannerMessages {
   systemText: string;
   staticContextText: string;
@@ -102,7 +135,7 @@ export interface PlannerRequest {
 }
 
 export interface PlannerResponse {
-  action: PlannerAction;
+  action: PlannerTurn;
   tokenUsage: TokenUsage;
 }
 
@@ -111,4 +144,6 @@ export interface Planner {
   nextAction(request: PlannerRequest): Promise<PlannerResponse>;
 }
 
+export type PlannerActionPayload = z.infer<typeof PlannerActionPayloadSchema>;
 export type PlannerAction = z.infer<typeof PlannerActionSchema>;
+export type PlannerTurn = z.infer<typeof PlannerTurnSchema>;

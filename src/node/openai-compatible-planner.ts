@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { PlannerActionSchema } from "../ports/planner.js";
+import { MAX_ACTIONS_PER_TURN, PlannerTurnSchema } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface OpenAICompatiblePlannerConfig {
@@ -128,61 +128,66 @@ function buildPlannerActionSchema(): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["reason", "payload"],
+    required: ["reason", "actions"],
     properties: {
       reason: { type: "string" },
-      payload: {
-        anyOf: [
-          variant("click", { target }, ["target"]),
-          variant("fill", { target, value: { type: "string" } }, ["target", "value"]),
-          variant("select_option", { target, value: { type: "string" } }, ["target", "value"]),
-          variant(
-            "scroll",
-            { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
-            ["containerId", "direction"]
-          ),
-          variant("press_key", { key: { type: "string" } }, ["key"]),
-          variant("hover", { target }, ["target"]),
-          variant("navigate", { url: { type: "string" } }, ["url"]),
-          variant("go_back"),
-          variant(
-            "wait_until_gone",
-            {
-              expectGone: {
-                type: "object",
-                additionalProperties: false,
-                required: ["documentText"],
-                properties: { documentText: { type: "string" } }
-              }
-            },
-            ["expectGone"]
-          ),
-          variant(
-            "request_user_input",
-            { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
-            ["inputKey", "inputPrompt"]
-          ),
-          variant("request_user_interaction", { interactionPrompt: { type: "string" } }, [
-            "interactionPrompt"
-          ]),
-          variant("request_screenshot", { screenshotPrompt: { type: "string" } }, [
-            "screenshotPrompt"
-          ]),
-          variant(
-            "report_finding",
-            {
-              severity: { enum: ["info", "minor", "major", "critical"] },
-              category: {
-                enum: ["accessibility", "usability", "functional", "performance", "security"]
+      actions: {
+        type: "array",
+        minItems: 1,
+        maxItems: MAX_ACTIONS_PER_TURN,
+        items: {
+          anyOf: [
+            variant("click", { target }, ["target"]),
+            variant("fill", { target, value: { type: "string" } }, ["target", "value"]),
+            variant("select_option", { target, value: { type: "string" } }, ["target", "value"]),
+            variant(
+              "scroll",
+              { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
+              ["containerId", "direction"]
+            ),
+            variant("press_key", { key: { type: "string" } }, ["key"]),
+            variant("hover", { target }, ["target"]),
+            variant("navigate", { url: { type: "string" } }, ["url"]),
+            variant("go_back"),
+            variant(
+              "wait_until_gone",
+              {
+                expectGone: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["documentText"],
+                  properties: { documentText: { type: "string" } }
+                }
               },
-              summary: { type: "string" },
-              evidence: { type: "string" }
-            },
-            ["severity", "category", "summary"]
-          ),
-          variant("give_up"),
-          variant("finish")
-        ]
+              ["expectGone"]
+            ),
+            variant(
+              "request_user_input",
+              { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
+              ["inputKey", "inputPrompt"]
+            ),
+            variant("request_user_interaction", { interactionPrompt: { type: "string" } }, [
+              "interactionPrompt"
+            ]),
+            variant("request_screenshot", { screenshotPrompt: { type: "string" } }, [
+              "screenshotPrompt"
+            ]),
+            variant(
+              "report_finding",
+              {
+                severity: { enum: ["info", "minor", "major", "critical"] },
+                category: {
+                  enum: ["accessibility", "usability", "functional", "performance", "security"]
+                },
+                summary: { type: "string" },
+                evidence: { type: "string" }
+              },
+              ["severity", "category", "summary"]
+            ),
+            variant("give_up"),
+            variant("finish")
+          ]
+        }
       }
     }
   };
@@ -243,7 +248,8 @@ export function createOpenAICompatiblePlanner(
               type: "function",
               function: {
                 name: "planner_action",
-                description: "Return the next UI automation action as structured JSON input.",
+                description:
+                  "Return the next UI automation action, or a short batch of actions, as structured JSON input.",
                 parameters: buildPlannerActionSchema()
               }
             }
@@ -282,7 +288,7 @@ export function createOpenAICompatiblePlanner(
         throw new Error("OpenAI-compatible planner API returned no planner action.");
 
       return {
-        action: PlannerActionSchema.parse(rawAction),
+        action: PlannerTurnSchema.parse(rawAction),
         tokenUsage: normalizeTokenUsage(result.usage)
       };
     }

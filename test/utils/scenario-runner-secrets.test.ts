@@ -203,7 +203,10 @@ void test("strict planner messages require ID-only target selectors", () => {
   });
 
   assert.match(messages.staticContextText, /Use only the visible control ID/);
-  assert.match(messages.staticContextText, /action and action-specific fields in payload/);
+  assert.match(
+    messages.staticContextText,
+    /Each entry holds one action and its action-specific fields/
+  );
   assert.match(messages.staticContextText, /use scroll with its containerId and direction/);
   assert.match(messages.dynamicContextText, /"scrollContainers"/);
   assert.doesNotMatch(messages.staticContextText, /You may combine any visible control fields/);
