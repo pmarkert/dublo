@@ -177,7 +177,7 @@ Options:
 
 `dublo init` creates a new workspace and refuses to overwrite existing defaults without `--force`.
 
-`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `persona`, `max-steps`, `settle-delay-ms`, `settle-timeout-ms`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`. The settle settings control the runner's UI stability debounce before LLM observations; defaults are `500ms` stable time and a `20000ms` maximum polling window.
+`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `escalation-llm`, `persona`, `max-steps`, `settle-delay-ms`, `settle-timeout-ms`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`. The settle settings control the runner's UI stability debounce before LLM observations; defaults are `500ms` stable time and a `20000ms` maximum polling window.
 
 `dublo report list` shows saved reports. `dublo report show`, `open`, and `render` default to the report named by `latest.json` when no run ID is provided.
 
@@ -290,6 +290,7 @@ Workspace runtime config (`<workspace>/defaults.json`) structure:
 {
   "baseUrl": "https://example.com",
   "llm": "default",
+  "escalationLlm": "strong",
   "persona": "qa-strict",
   "context": ["shared", "qa-user"],
   "maxSteps": 40,
@@ -320,6 +321,29 @@ LLM profile (`<workspace>/llm/<name>.json`) structure:
   "promptCaching": true
 }
 ```
+
+### Two-tier model routing (escalation)
+
+Set an optional `escalationLlm` — a second LLM profile name — to run most steps
+on a cheap model and switch to a stronger one only when needed:
+
+```bash
+dublo config set escalation-llm strong --workspace ./.dublo
+# or per run:
+dublo run checkout --llm cheap --escalation-llm strong --workspace ./.dublo
+```
+
+The escalation model is used for a turn when the primary model hits a recoverable
+failure or the observation was truncated, and it rescues a `give_up` by retrying
+the turn once with the stronger model. Resolution order mirrors `--llm`:
+`--escalation-llm` > `DUBLO_ESCALATION_LLM` > workspace `escalationLlm`. Escalation
+calls are counted in the report's `tokenUsage.escalationCalls`; cost is estimated
+at the primary model's rates.
+
+When the planner calls `request_screenshot`, the captured image is annotated with
+**set-of-marks** labels — the same control ids (`a1`, `a2`, …) drawn on each
+observed control — so vision models can target controls by id even when the DOM
+is hostile. This is on by default.
 
 `promptCaching` (Bedrock only, default `false`) inserts cache points after the
 system prompt and the static planner context so the large, run-stable prefix

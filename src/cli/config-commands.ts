@@ -89,6 +89,8 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
       return WorkspaceDefaultsPatchSchema.parse({ baseUrl: value });
     case "llm":
       return WorkspaceDefaultsPatchSchema.parse({ llm: value });
+    case "escalation-llm":
+      return WorkspaceDefaultsPatchSchema.parse({ escalationLlm: value });
     case "persona":
       return WorkspaceDefaultsPatchSchema.parse({ persona: value });
     case "max-steps":
@@ -109,7 +111,7 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
       return WorkspaceDefaultsPatchSchema.parse({ observationConfigFile: value });
     default:
       throw new Error(
-        `Unknown setting '${setting}'. Available settings: base-url, llm, persona, max-steps, settle-delay-ms, settle-timeout-ms, headless, screenshots, debug, output-dir, observation-config.`
+        `Unknown setting '${setting}'. Available settings: base-url, llm, escalation-llm, persona, max-steps, settle-delay-ms, settle-timeout-ms, headless, screenshots, debug, output-dir, observation-config.`
       );
   }
 }
@@ -117,6 +119,7 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
 const SETTING_KEYS = {
   "base-url": "baseUrl",
   llm: "llm",
+  "escalation-llm": "escalationLlm",
   persona: "persona",
   "max-steps": "maxSteps",
   "settle-delay-ms": "settleDelayMs",

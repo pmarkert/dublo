@@ -137,3 +137,25 @@ void test("pierces shadow DOM, resolves non-ARIA names, and infers non-semantic 
     await browser.close();
   }
 });
+
+void test("flags truncation when more controls exist than the cap", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(
+      Array.from({ length: 5 }, (_, index) => `<button>Item ${index + 1}</button>`).join("")
+    );
+
+    const observation = (await collectObservation(page, { maxControls: 2 }, "t1")) as unknown as {
+      controls: unknown[];
+      truncated?: boolean;
+      maxControls?: number;
+    };
+
+    assert.equal(observation.controls.length, 2);
+    assert.equal(observation.truncated, true);
+    assert.equal(observation.maxControls, 2);
+  } finally {
+    await browser.close();
+  }
+});

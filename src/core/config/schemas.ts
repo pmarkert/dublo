@@ -29,6 +29,7 @@ export const WorkspaceDefaultsSchema = z
   .object({
     baseUrl: z.string().url().optional(),
     llm: z.string().trim().min(1).optional(),
+    escalationLlm: z.string().trim().min(1).optional(),
     persona: z.string().trim().min(1).optional(),
     context: z.array(z.string().trim().min(1)).optional(),
     maxSteps: z.number().int().positive().optional(),

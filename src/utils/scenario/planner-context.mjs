@@ -80,6 +80,8 @@ export function buildPlannerMessages({
       "When an observed scroll container has canScrollDown or canScrollUp, use scroll with its containerId and direction to reveal more content before escalating.",
       "Use press_key for keyboard interaction (for example Tab, Shift+Tab, Enter, Escape, ArrowDown). It acts on the currently focused element or the page; click a control first when you need to focus it before typing a key. observation.focus and each control's focused flag show what currently has focus.",
       "Use hover to reveal menus or content that only appear on pointer hover.",
+      "If observation.truncated is true, more controls exist than are shown; scroll or interact to reveal the rest instead of assuming the visible list is complete.",
+      "A control with low or none confidence (or inferred:true) has a weak or missing accessible name; identify it by contextPath and position, and treat a missing name on an interactive control as an accessibility issue worth a finding.",
       "Use navigate with a same-origin url to follow a known deep link, and go_back to return to the previous page (for example to verify state survives browser back).",
       "completedWork is a durable record of successful work from this run. Do not scroll only to re-verify completed work; use the current observation and completedWork to decide what remains.",
       "A successful submit or save followed by visible confirmation of the saved item is sufficient persistence evidence. Do not reopen a saved item merely to inspect settings already recorded in completedWork unless the objective explicitly requires post-save verification or visible evidence contradicts it.",
@@ -104,7 +106,7 @@ export function buildPlannerMessages({
     humanEscalationRules: [
       "If you need a value not deducible from UI or contextData, such as an OTP code, use request_user_input.",
       "If you are blocked and need the human to do something in the browser, use request_user_interaction.",
-      "If the structured observation is insufficient, use request_screenshot.",
+      "If the structured observation is insufficient, use request_screenshot. The returned image is annotated with set-of-marks labels (the same control ids, such as a3) drawn on each observed control, so you can match what you see to a control id.",
     ],
   };
 
@@ -119,6 +121,9 @@ export function buildPlannerMessages({
       alerts: redactedObservation.alerts,
       documentText: clip(redactedObservation.documentText, 1600),
       scrollContainers: redactedObservation.scrollContainers || [],
+      ...(redactedObservation.truncated
+        ? { truncated: true, shownControls: compactControls.length, maxControls: redactedObservation.maxControls }
+        : {}),
       ...(redactedObservation.runtimeErrors?.length
         ? { runtimeErrors: redactedObservation.runtimeErrors }
         : {}),

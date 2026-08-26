@@ -145,6 +145,7 @@ export async function runConfigWizard(
   const next = omitBuiltInDefaults({
     baseUrl,
     llm,
+    escalationLlm: values.escalationLlm,
     persona,
     context,
     maxSteps,

@@ -8,6 +8,7 @@ import { createPlaywrightBrowserFactory } from "../node/playwright-browser.js";
 import { createTerminalInteractionProvider } from "../node/terminal-interaction.js";
 import { loadContextFromOperations, redactSecretValues, scrubSecretsFromText } from "./scenario/context-operations.mjs";
 import { createRuntimeErrorTracker } from "./scenario/runtime-errors.mjs";
+import { drawSetOfMarks, clearSetOfMarks } from "./scenario/set-of-marks.mjs";
 import { buildPlannerMessages } from "./scenario/planner-context.mjs";
 import { loadObservationConfig, normalizeScreenshotMode } from "./scenario/observation-config.mjs";
 import { collectObservation } from "./scenario/observation.mjs";
@@ -225,6 +226,7 @@ export async function runScenario(config, options = {}) {
       cacheReadInputTokens: 0,
       cacheWriteInputTokens: 0,
       plannerCalls: 0,
+      escalationCalls: 0,
     },
     pricing: null,
     costEstimate: null,
@@ -233,31 +235,34 @@ export async function runScenario(config, options = {}) {
     artifactsDir: runDir,
   };
 
-  const planner =
-    config.llm.provider === "openai-compatible"
+  const createPlannerForLlm = (llmConfig) =>
+    llmConfig.provider === "openai-compatible"
       ? createOpenAICompatiblePlanner({
-          baseUrl: config.llm.baseUrl,
-          modelId: config.llm.modelId,
-          ...(config.llm.apiKey ? { apiKey: config.llm.apiKey } : {}),
+          baseUrl: llmConfig.baseUrl,
+          modelId: llmConfig.modelId,
+          ...(llmConfig.apiKey ? { apiKey: llmConfig.apiKey } : {}),
         })
       : createBedrockPlanner({
-          modelId: config.llm.modelId,
-          region: config.llm.region,
-          ...(config.llm.inferenceConfig ? { inferenceConfig: config.llm.inferenceConfig } : {}),
-          ...(config.llm.additionalModelRequestFields
-            ? { additionalModelRequestFields: config.llm.additionalModelRequestFields }
+          modelId: llmConfig.modelId,
+          region: llmConfig.region,
+          ...(llmConfig.inferenceConfig ? { inferenceConfig: llmConfig.inferenceConfig } : {}),
+          ...(llmConfig.additionalModelRequestFields
+            ? { additionalModelRequestFields: llmConfig.additionalModelRequestFields }
             : {}),
-          ...(config.llm.serviceTier ? { serviceTier: config.llm.serviceTier } : {}),
-          ...(config.llm.promptCaching !== undefined
-            ? { promptCaching: config.llm.promptCaching }
+          ...(llmConfig.serviceTier ? { serviceTier: llmConfig.serviceTier } : {}),
+          ...(llmConfig.promptCaching !== undefined ? { promptCaching: llmConfig.promptCaching } : {}),
+          ...(llmConfig.supportsConditionalToolSchemas !== undefined
+            ? { supportsConditionalToolSchemas: llmConfig.supportsConditionalToolSchemas }
             : {}),
-          ...(config.llm.supportsConditionalToolSchemas !== undefined
-            ? { supportsConditionalToolSchemas: config.llm.supportsConditionalToolSchemas }
-            : {}),
-          ...(config.llm.supportsStrictToolUse !== undefined
-            ? { supportsStrictToolUse: config.llm.supportsStrictToolUse }
+          ...(llmConfig.supportsStrictToolUse !== undefined
+            ? { supportsStrictToolUse: llmConfig.supportsStrictToolUse }
             : {}),
         });
+
+  const planner = createPlannerForLlm(config.llm);
+  const escalationPlanner = config.escalationLlm?.modelId
+    ? createPlannerForLlm(config.escalationLlm)
+    : null;
 
   const logger = createRunnerLogger(config.headed);
   const debugLogger = createDebugLogger(config.debug);
@@ -284,6 +289,14 @@ export async function runScenario(config, options = {}) {
   }
   await planner.preflight();
   logger.info(`${config.llm.provider} preflight succeeded`);
+
+  if (escalationPlanner) {
+    logger.info(
+      `running escalation preflight against model ${config.escalationLlm.modelId} (${config.escalationLlm.provider})`
+    );
+    await escalationPlanner.preflight();
+    logger.info("escalation preflight succeeded");
+  }
 
   if (shouldInterrupt()) {
     return {
@@ -321,6 +334,7 @@ export async function runScenario(config, options = {}) {
   let pendingInteractionRequest = null;
   let pendingScreenshotBuffer = null;
   let previousTimedOutWait = null;
+  let pendingEscalation = false;
 
   const captureViewportScreenshot = async (options = {}) => {
     throwIfInterrupted();
@@ -504,20 +518,47 @@ export async function runScenario(config, options = {}) {
       debugLogger.log(messages.debugUserText);
       debugLogger.log("planner_user_end");
 
-      const plannerResult = await requestPlannerAction({
-        planner,
-        messages,
-        screenshotBuffer: screenshotBufferForThisTurn,
-        signal: plannerAbortController.signal,
-      });
+      const callPlanner = async (activePlanner) => {
+        const result = await requestPlannerAction({
+          planner: activePlanner,
+          messages,
+          screenshotBuffer: screenshotBufferForThisTurn,
+          signal: plannerAbortController.signal,
+        });
+        if (result.tokenUsage) {
+          addTokenUsageTotals(report.tokenUsage, result.tokenUsage);
+        }
+        return result;
+      };
+
+      // Two-tier routing: escalate to the stronger model when the previous turn
+      // hit a recoverable failure or the observation was truncated, and rescue a
+      // give_up from the cheap model by retrying once with the escalation model.
+      const escalateThisTurn =
+        Boolean(escalationPlanner) && (pendingEscalation || Boolean(observation.truncated));
+      let plannerResult = await callPlanner(escalateThisTurn ? escalationPlanner : planner);
+      let usedEscalation = escalateThisTurn;
+      if (escalateThisTurn) {
+        report.tokenUsage.escalationCalls += 1;
+        logger.info(`escalated planning to ${config.escalationLlm.modelId}`);
+      }
+      pendingEscalation = false;
+
+      if (
+        escalationPlanner &&
+        !usedEscalation &&
+        plannerResult.action.payload.action === "give_up"
+      ) {
+        logger.info(`primary planner gave up; retrying with ${config.escalationLlm.modelId}`);
+        throwIfInterrupted();
+        plannerResult = await callPlanner(escalationPlanner);
+        usedEscalation = true;
+        report.tokenUsage.escalationCalls += 1;
+      }
 
       throwIfInterrupted();
 
       const { tokenUsage: plannerTokenUsage, action: plannerAction } = plannerResult;
-
-      if (plannerTokenUsage) {
-        addTokenUsageTotals(report.tokenUsage, plannerTokenUsage);
-      }
 
       const plannerPayload = plannerAction.payload;
 
@@ -683,8 +724,24 @@ export async function runScenario(config, options = {}) {
             );
 
             // Capture immediately from the current viewport so transient popups
-            // (menus, sheets) are preserved for the next planner turn.
-            pendingScreenshotBuffer = await captureViewportScreenshot();
+            // (menus, sheets) are preserved for the next planner turn. Overlay
+            // set-of-marks so the vision model can target the same ids it sees
+            // in the structured observation.
+            const useSetOfMarks = config.setOfMarks !== false;
+            let markCount = 0;
+            if (useSetOfMarks) {
+              markCount = await drawSetOfMarks(page, turnToken);
+            }
+            try {
+              pendingScreenshotBuffer = await captureViewportScreenshot();
+            } finally {
+              if (useSetOfMarks) {
+                await clearSetOfMarks(page);
+              }
+            }
+            if (useSetOfMarks) {
+              logger.info(`captured screenshot with ${markCount} set-of-marks labels`);
+            }
 
             return;
           }
@@ -779,6 +836,12 @@ export async function runScenario(config, options = {}) {
             : undefined,
         error: recoverableErrorMessage || undefined,
       });
+
+      // A recoverable failure means the current model is stuck; route the next
+      // turn to the stronger model when one is configured.
+      if (recoverableOutcome && escalationPlanner) {
+        pendingEscalation = true;
+      }
 
       if (report.status !== "running") {
         break;

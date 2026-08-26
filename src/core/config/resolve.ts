@@ -9,6 +9,7 @@ import {
 export const DEFAULT_WORKSPACE_DEFAULTS = {
   baseUrl: "http://localhost:8080",
   llm: "",
+  escalationLlm: "",
   persona: "",
   context: [],
   maxSteps: 40,
@@ -25,6 +26,7 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
 const ResolvedWorkspaceConfigSchema = z.object({
   baseUrl: z.string().url(),
   llm: z.string(),
+  escalationLlm: z.string(),
   persona: z.string(),
   context: z.array(z.string()),
   maxSteps: z.number().int().positive(),
@@ -89,6 +91,7 @@ function parseEnvironment(environment: Environment) {
   return WorkspaceDefaultsPatchSchema.parse({
     baseUrl: environment.DUBLO_BASE_URL,
     llm: environment.DUBLO_LLM,
+    escalationLlm: environment.DUBLO_ESCALATION_LLM,
     persona: environment.DUBLO_PERSONA,
     context: parseList(environment.DUBLO_CONTEXT),
     maxSteps: parsePositiveInteger(environment.DUBLO_MAX_STEPS),
@@ -129,6 +132,12 @@ export function resolveWorkspaceConfig(
     DEFAULT_WORKSPACE_DEFAULTS.baseUrl
   );
   const [llm, llmSource] = resolveValue(cli.llm, environment.llm, workspace.llm, DEFAULT_WORKSPACE_DEFAULTS.llm);
+  const [escalationLlm, escalationLlmSource] = resolveValue(
+    cli.escalationLlm,
+    environment.escalationLlm,
+    workspace.escalationLlm,
+    DEFAULT_WORKSPACE_DEFAULTS.escalationLlm
+  );
   const [persona, personaSource] = resolveValue(
     cli.persona,
     environment.persona,
@@ -200,6 +209,7 @@ export function resolveWorkspaceConfig(
     values: ResolvedWorkspaceConfigSchema.parse({
       baseUrl,
       llm,
+      escalationLlm,
       persona,
       context,
       maxSteps,
@@ -215,6 +225,7 @@ export function resolveWorkspaceConfig(
     sources: {
       baseUrl: baseUrlSource,
       llm: llmSource,
+      escalationLlm: escalationLlmSource,
       persona: personaSource,
       context: contextSource,
       maxSteps: maxStepsSource,

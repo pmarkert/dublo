@@ -413,6 +413,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
 
     const selectedElements = [];
     const seenElements = new Set();
+    let controlsTruncated = false;
 
     for (const el of overlayControls) {
       if (selectedElements.length >= maxControls) break;
@@ -439,7 +440,10 @@ export async function collectObservation(page, observationConfig, turnToken) {
     generalNodes = queryAllInteractionRoots(controlsSelector);
 
     for (const el of generalNodes) {
-      if (selectedElements.length >= maxControls) break;
+      if (selectedElements.length >= maxControls) {
+        controlsTruncated = true;
+        break;
+      }
       if (seenElements.has(el)) continue;
       if (!isVisible(el)) continue;
       if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
@@ -688,6 +692,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
       documentText,
       scrollContainers,
       controls: visibleControls,
+      ...(controlsTruncated ? { truncated: true, maxControls } : {}),
     };
   }, { config: observationConfig, turnToken });
 }

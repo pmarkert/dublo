@@ -161,6 +161,7 @@ export function loadScenarioConfig(overrides = {}) {
     debug: parseBoolean(workspaceConfig.debug, undefined),
     outputDir: workspaceConfig.outputDir,
     workspaceLlmRef: firstDefined(workspaceConfig.llm),
+    workspaceEscalationLlmRef: firstDefined(workspaceConfig.escalationLlm),
     workspacePersonaRef: firstDefined(workspaceConfig.persona),
     workspaceContextRefs: normalizeStringArray(workspaceConfig.context)
   });
@@ -180,6 +181,7 @@ export function loadScenarioConfig(overrides = {}) {
     debug: parseBoolean(firstDefined(process.env.DUBLO_DEBUG), undefined),
     outputDir: firstDefined(process.env.DUBLO_OUTPUT_DIR),
     llmRef: firstDefined(process.env.DUBLO_LLM),
+    escalationLlmRef: firstDefined(process.env.DUBLO_ESCALATION_LLM),
     persona: firstDefined(process.env.DUBLO_PERSONA),
     scenario: firstDefined(process.env.DUBLO_SCENARIO),
     contextRefs: environmentContextRefs,
@@ -216,6 +218,8 @@ export function loadScenarioConfig(overrides = {}) {
     outputDir: "./reports",
     llmRef: "",
     workspaceLlmRef: "",
+    escalationLlmRef: "",
+    workspaceEscalationLlmRef: "",
     workspacePersonaRef: "",
     contextRefs: [],
     cliContextRefs: [],
@@ -230,6 +234,7 @@ export function loadScenarioConfig(overrides = {}) {
     ...cleanUndefined({
       workspace: overrides.workspace,
       llmRef: overrides.llm,
+      escalationLlmRef: overrides.escalationLlm,
       settleDelayMs: parsePositiveInteger(overrides.settleDelayMs, undefined),
       settleTimeoutMs: parsePositiveInteger(overrides.settleTimeoutMs, undefined),
       headless: overrides.headless ? true : undefined,

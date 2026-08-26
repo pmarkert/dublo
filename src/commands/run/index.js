@@ -44,6 +44,20 @@ export async function runCommand(options) {
 
   config.llm = normalizeLlmConfig(config.llm);
 
+  const escalationSelection = firstDefined(config.escalationLlmRef, config.workspaceEscalationLlmRef);
+  if (escalationSelection) {
+    const escalationPath = resolveReference({
+      value: escalationSelection,
+      workspace: config.workspace,
+      folder: "llm",
+      exts: [".json"],
+      required: true,
+      kind: "llm"
+    });
+    const escalationFromFile = readJson(escalationPath, "escalation llm profile");
+    config.escalationLlm = normalizeLlmConfig({ ...(config.escalationLlm || {}), ...escalationFromFile });
+  }
+
   const personaSelection = firstDefined(
     config.persona,
     config.workspacePersonaRef,
@@ -358,6 +372,10 @@ export default function registerRunCommand(program) {
     .description("Run using workspace config and selectors")
     .option("--workspace <path>", "Workspace directory (contains defaults.json and llm/personas/scenarios/context)")
     .option("--llm <value>", "LLM config file path or profile name in <workspace>/llm")
+    .option(
+      "--escalation-llm <value>",
+      "Stronger LLM profile to switch to on repeated failure, truncated observations, or give_up"
+    )
     .option("--persona <value>", "Persona file path or profile name in <workspace>/personas")
     .option("--scenario <value>", "Scenario file path or profile name in <workspace>/scenarios (or use positional [scenario])")
     .option("--adhoc <text>", "Inline ad hoc scenario text to run without a scenario file")

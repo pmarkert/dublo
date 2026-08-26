@@ -306,5 +306,22 @@ Still open from item 5: cross-frame (iframe) observation and interaction, which
 needs frame-scoped locator addressing, and adopting Playwright `ariaSnapshot`
 as an alternative observation mode.
 
-Items 6–7 (regression replay with self-healing and action batches; set-of-marks
-screenshots and two-tier routing) remain open.
+Item 7 is implemented:
+
+- **Set-of-marks screenshots** — planner-facing screenshots
+  (`request_screenshot`) are overlaid with numbered marks that reuse each
+  control's `data-agentic-id` (`src/utils/scenario/set-of-marks.mjs`), so a
+  vision model targets the same ids it sees in the structured observation. The
+  overlay pierces shadow DOM and is removed after capture.
+- **Two-tier routing** — an optional `escalationLlm` profile (CLI
+  `--escalation-llm`, workspace default `escalationLlm`, env
+  `DUBLO_ESCALATION_LLM`) is used when the primary model hits a recoverable
+  failure or a truncated observation, and rescues a `give_up` by retrying the
+  turn once with the stronger model. Escalation calls are counted in the
+  report's token usage (`escalationCalls`); cost is still estimated at the
+  primary model's rates.
+- The observation now also reports `truncated` when the control cap is hit, so
+  the planner (and the escalation trigger) know more controls exist.
+
+Item 6 (regression replay with self-healing and short action batches) remains
+open.
