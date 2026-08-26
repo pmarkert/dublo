@@ -109,6 +109,25 @@ function errorMessage(error) {
   return stripAnsi(error instanceof Error ? error.message : String(error));
 }
 
+const RELEVANCE_STOPWORDS = new Set([
+  "the", "and", "that", "with", "this", "from", "into", "your", "then", "than",
+  "have", "will", "should", "must", "when", "where", "which", "while", "verify",
+  "check", "ensure", "make", "sure", "click", "open", "page", "test", "user",
+  "using", "able", "does", "onto", "over", "under", "each", "some", "them",
+  "they", "there", "their", "about", "after", "before", "again",
+]);
+
+// Extracts distinctive lowercased words from the scenario to bias control
+// ranking toward the objective. Deliberately simple: split on non-word
+// characters, drop short/stop words, dedupe, and cap the list.
+function deriveRelevanceKeywords(scenario) {
+  const words = String(scenario || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 4 && !RELEVANCE_STOPWORDS.has(word));
+  return [...new Set(words)].slice(0, 24);
+}
+
 async function loadPersonaText(personaFile) {
   if (!personaFile) {
     return "Default persona: pragmatic user with average technical comfort, prefers obvious and intuitive UI paths.";
@@ -185,6 +204,11 @@ export async function runScenario(config, options = {}) {
   const workspacePromptText = await loadWorkspacePromptText(config.workspacePromptFile);
   const scenario = await resolveScenarioText(config);
   const observationConfig = await loadObservationConfig(config.observationConfigFile);
+  // Seed relevance keywords from the scenario so control ranking favors controls
+  // related to the objective. An explicit config value takes precedence.
+  if (!Array.isArray(observationConfig.relevanceKeywords) || observationConfig.relevanceKeywords.length === 0) {
+    observationConfig.relevanceKeywords = deriveRelevanceKeywords(scenario);
+  }
   const screenshots = normalizeScreenshotMode(config.screenshots);
 
   const runLabel = resolveRunLabel(config);

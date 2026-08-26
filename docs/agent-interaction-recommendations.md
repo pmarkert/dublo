@@ -352,6 +352,37 @@ Item 6 is partially implemented:
   batching, N ≥ 2 caps at N). This cuts planner calls on form- and list-heavy
   flows and compounds with prompt caching.
 
-All seven recommendation areas now have an implementation; remaining follow-ups
-are the two noted under item 5 (cross-frame/iframe observation and an
-`ariaSnapshot` mode).
+- **Relevance-ranked, tunable control budget** — the observation no longer
+  truncates controls in DOM order. Candidates are ranked (in-viewport first,
+  then nearest off-viewport, with a boost for controls matching keywords the
+  runner derives from the scenario) before the `maxControls` cap is applied, so
+  truncation drops the least relevant controls. The cap is tunable and can be
+  removed entirely: `maxControls: 0` surfaces every eligible control (at higher
+  token cost), and the default was raised to 150. Truncation is already surfaced
+  to the planner via `truncated`. The viewport-proximity dimension of the
+  ranking becomes fully meaningful once off-viewport (`document`) interaction
+  scope lands.
+
+All seven recommendation areas now have an implementation; remaining follow-ups:
+
+- **Off-viewport interaction scope** — an `interactionScope: "viewport" |
+  "document"` option so automation-flavored personas can target controls that
+  are rendered but scrolled out of view (Playwright auto-scrolls on
+  click/fill), while usability/accessibility personas stay viewport-scoped.
+  Requires the relevance ranking above (now in place) so document scope does not
+  flood the control list.
+- **Bulk-selector action (sketch)** — for true bulk work (check every row whose
+  name matches X, then "Delete selected"), enumerating hundreds of individual
+  clicks is expensive on both the observation (control cap) and the output
+  (token budget). A better primitive is a single deterministic action the runner
+  expands in-page, e.g. `bulk_select` / `bulk_click` with a container target and
+  a predicate: `{ action: "bulk_click", within: <containerTarget>, match:
+  "role=checkbox", where: { textIncludes: "Acme" }, limit: 200 }`. The runner
+  resolves the container by stamp, queries the matching descendants (piercing
+  shadow DOM as the walker does), clicks/toggles each, waits for settle, and
+  reports a single step with a count. This sidesteps both caps, is far cheaper
+  than per-row planning, and stays safe because it acts only within one
+  observed, re-validated container. It should be persona-gated like the batch
+  actions, and skipped for virtualized lists (rows not in the DOM can't be
+  matched — those still require scrolling to materialize).
+- Cross-frame/iframe observation and an `ariaSnapshot` mode (from item 5).

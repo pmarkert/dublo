@@ -6,7 +6,14 @@ export async function collectObservation(page, observationConfig, turnToken) {
       typeof cfg.controlsSelector === "string" && cfg.controlsSelector.trim().length > 0
         ? cfg.controlsSelector
         : "button, a, input, textarea, select, [role='button'], [role='link'], [role='option'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [contenteditable='true']";
-    const maxControls = Number.isFinite(cfg.maxControls) ? Math.max(1, Number(cfg.maxControls)) : 80;
+    // 0 (or negative) means no limit; otherwise a positive cap. Controls are
+    // ranked by relevance before this cap is applied, so the most useful ones
+    // survive truncation.
+    const maxControls = Number.isFinite(cfg.maxControls)
+      ? Number(cfg.maxControls) <= 0
+        ? Infinity
+        : Number(cfg.maxControls)
+      : 150;
     const headingSelector =
       typeof cfg.headingSelector === "string" && cfg.headingSelector.trim().length > 0
         ? cfg.headingSelector
@@ -411,59 +418,84 @@ export async function collectObservation(page, observationConfig, turnToken) {
       });
     };
 
-    const selectedElements = [];
+    // Relevance scoring so the maxControls budget keeps the useful controls
+    // instead of whatever comes first in the DOM: in-viewport controls rank
+    // highest, then the nearest off-viewport ones, with a boost for controls
+    // whose text matches the run's relevance keywords.
+    const relevanceKeywords = Array.isArray(cfg.relevanceKeywords)
+      ? cfg.relevanceKeywords
+          .filter((keyword) => typeof keyword === "string" && keyword.trim().length > 0)
+          .map((keyword) => keyword.toLowerCase())
+      : [];
+    const viewportHeight = globalThis.window.innerHeight || 0;
+    const viewportWidth = globalThis.window.innerWidth || 0;
+    const controlRelevanceScore = (el) => {
+      const rect = el.getBoundingClientRect();
+      let score = 0;
+      const inViewport =
+        rect.bottom > 0 && rect.right > 0 && rect.top < viewportHeight && rect.left < viewportWidth;
+      if (inViewport) score += 1_000_000;
+      const distanceY =
+        rect.top >= viewportHeight
+          ? rect.top - viewportHeight
+          : rect.bottom <= 0
+            ? -rect.bottom
+            : 0;
+      score -= Math.min(Math.max(distanceY, 0), 900_000);
+      if (relevanceKeywords.length > 0) {
+        const haystack = normalizeText(
+          `${el.textContent || ""} ${el.getAttribute("aria-label") || ""} ${el.getAttribute("placeholder") || ""} ${el.getAttribute("title") || ""}`
+        ).toLowerCase();
+        if (relevanceKeywords.some((keyword) => haystack.includes(keyword))) score += 500_000;
+      }
+      return score;
+    };
+
+    const priorityElements = [];
+    const generalCandidates = [];
+    const inferredCandidates = [];
     const seenElements = new Set();
     let controlsTruncated = false;
 
+    // Tier 1: active overlay controls and priority selectors are always kept.
     for (const el of overlayControls) {
-      if (selectedElements.length >= maxControls) break;
+      if (seenElements.has(el)) continue;
       if (!isVisible(el)) continue;
       if (shouldIgnoreControl(el)) continue;
       seenElements.add(el);
-      selectedElements.push({ el, priority: true });
+      priorityElements.push({ el, priority: true });
     }
-
     for (const selector of priorityControlSelectors) {
-      const nodes = queryAllInteractionRoots(selector);
-
-      for (const el of nodes) {
+      for (const el of queryAllInteractionRoots(selector)) {
         if (seenElements.has(el)) continue;
         if (!isVisible(el)) continue;
         if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
         if (shouldIgnoreControl(el)) continue;
         seenElements.add(el);
-        selectedElements.push({ el, priority: true });
+        priorityElements.push({ el, priority: true });
       }
     }
 
-    let generalNodes = [];
-    generalNodes = queryAllInteractionRoots(controlsSelector);
-
-    for (const el of generalNodes) {
-      if (selectedElements.length >= maxControls) {
-        controlsTruncated = true;
-        break;
-      }
+    // Tier 2: general controls — collect every eligible one, rank below.
+    for (const el of queryAllInteractionRoots(controlsSelector)) {
       if (seenElements.has(el)) continue;
       if (!isVisible(el)) continue;
       if (!isActiveOverlayControl(el) && !isLayerClickable(el)) continue;
       if (shouldIgnoreControl(el)) continue;
       seenElements.add(el);
-      selectedElements.push({ el, priority: false });
+      generalCandidates.push(el);
     }
 
-    // Non-semantic clickables: elements that behave like controls but carry no
-    // role/tag the selector above would catch (a <div onclick>, a keyboard-
-    // focusable card, a cursor:pointer tile). These are common on lightly
-    // authored apps where the agent would otherwise be stuck. They are marked
-    // inferred so downstream can treat their names as low-confidence and flag
-    // them as accessibility issues.
+    // Tier 3: non-semantic clickables that carry no role/tag the selector above
+    // would catch (a <div onclick>, a keyboard-focusable card, a cursor:pointer
+    // tile). Common on lightly authored apps where the agent would otherwise be
+    // stuck. Marked inferred so downstream can treat their names as low
+    // confidence and flag them as accessibility issues.
     const includeInferredControls = cfg.includeInferredControls !== false;
     const maxInferredControls = Number.isFinite(cfg.maxInferredControls)
       ? Math.max(0, Number(cfg.maxInferredControls))
       : 20;
     if (includeInferredControls && maxInferredControls > 0) {
-      let inferredCount = 0;
       const isNativeControl = (el) => {
         try {
           return el.matches(controlsSelector);
@@ -474,8 +506,6 @@ export async function collectObservation(page, observationConfig, turnToken) {
       const wrapsAControl = (el) =>
         queryAllWithin(el, controlsSelector).some((child) => isVisible(child));
       const considerInferred = (el, hasExplicitSignal) => {
-        if (selectedElements.length >= maxControls) return;
-        if (inferredCount >= maxInferredControls) return;
         if (seenElements.has(el)) return;
         if (!isVisible(el)) return;
         if (isNativeControl(el)) return;
@@ -488,8 +518,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
           if (!text || text.length > 60) return;
         }
         seenElements.add(el);
-        selectedElements.push({ el, priority: false, inferred: true });
-        inferredCount += 1;
+        inferredCandidates.push(el);
       };
 
       for (const el of queryAllInteractionRoots("[onclick], [tabindex]")) {
@@ -498,7 +527,6 @@ export async function collectObservation(page, observationConfig, turnToken) {
         considerInferred(el, true);
       }
       for (const el of queryAllInteractionRoots("*")) {
-        if (inferredCount >= maxInferredControls || selectedElements.length >= maxControls) break;
         if (seenElements.has(el)) continue;
         let cursor = "";
         try {
@@ -509,6 +537,33 @@ export async function collectObservation(page, observationConfig, turnToken) {
         if (cursor !== "pointer") continue;
         considerInferred(el, false);
       }
+    }
+
+    // Rank the general and inferred tiers, then apply the budget. Priority
+    // controls are always kept; the remaining budget is filled with the most
+    // relevant general controls, then the most relevant inferred ones (capped).
+    const rankedGeneral = generalCandidates
+      .map((el) => ({ el, score: controlRelevanceScore(el) }))
+      .sort((left, right) => right.score - left.score);
+    const rankedInferred = inferredCandidates
+      .map((el) => ({ el, score: controlRelevanceScore(el) }))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, maxInferredControls);
+
+    const selectedElements = [...priorityElements];
+    for (const { el } of rankedGeneral) {
+      if (selectedElements.length >= maxControls) {
+        controlsTruncated = true;
+        break;
+      }
+      selectedElements.push({ el, priority: false });
+    }
+    for (const { el } of rankedInferred) {
+      if (selectedElements.length >= maxControls) {
+        controlsTruncated = true;
+        break;
+      }
+      selectedElements.push({ el, priority: false, inferred: true });
     }
 
     for (const el of queryAllWithin(globalThis.document, "[data-agentic-id], [data-agentic-turn], [data-agentic-scroll-id]")) {

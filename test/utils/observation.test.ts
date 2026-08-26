@@ -159,3 +159,45 @@ void test("flags truncation when more controls exist than the cap", async () => 
     await browser.close();
   }
 });
+
+void test("ranks relevance-keyword matches ahead of others under the cap", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    // "Cancel" comes first in the DOM but does not match the keyword; the
+    // relevant control should survive a cap of one.
+    await page.setContent(`<button>Cancel</button><button>Submit Order</button>`);
+
+    const observation = (await collectObservation(
+      page,
+      { maxControls: 1, relevanceKeywords: ["order"] },
+      "t1"
+    )) as unknown as { controls: Array<{ label: string }>; truncated?: boolean };
+
+    assert.equal(observation.controls.length, 1);
+    assert.equal(observation.controls[0].label, "Submit Order");
+    assert.equal(observation.truncated, true);
+  } finally {
+    await browser.close();
+  }
+});
+
+void test("maxControls of 0 surfaces every control with no truncation", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(
+      Array.from({ length: 6 }, (_, index) => `<button>Item ${index + 1}</button>`).join("")
+    );
+
+    const observation = (await collectObservation(page, { maxControls: 0 }, "t1")) as unknown as {
+      controls: unknown[];
+      truncated?: boolean;
+    };
+
+    assert.equal(observation.controls.length, 6);
+    assert.equal(observation.truncated, undefined);
+  } finally {
+    await browser.close();
+  }
+});
