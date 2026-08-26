@@ -102,10 +102,7 @@ void test("Bedrock planner enables strict tool validation when the model support
     requestJson,
     /"json":\{"type":"object","additionalProperties":false,"required":\["reason","actions"\]/
   );
-  assert.match(
-    requestJson,
-    /"actions":\{"type":"array","minItems":1,"maxItems":50,"items":\{"anyOf"/
-  );
+  assert.match(requestJson, /"actions":\{"type":"array","minItems":1,"items":\{"anyOf"/);
   assert.match(
     requestJson,
     /"target":\{"type":"object","additionalProperties":false,"required":\["id"\],"properties":\{"id"/

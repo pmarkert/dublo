@@ -345,11 +345,12 @@ Item 6 is partially implemented:
   of the batch and the next turn re-plans. Independent bulk work (filling a whole
   form, toggling many rows) therefore runs in one turn, while any real UI change
   stops the batch. Only click/fill/select_option/hover/press_key may follow the
-  first action; everything else must stand alone. Batching is uncapped by
-  default (bounded in practice by the observation's visible-control cap and the
-  model's output-token budget, with a hard ceiling of 50); `maxActionsPerTurn`
-  lowers it (1 disables batching). This cuts planner calls on form- and
-  list-heavy flows and compounds with prompt caching.
+  first action; everything else must stand alone. Batching is uncapped — there is
+  no fixed ceiling on actions per turn (bounded in practice only by the
+  observation's visible-control cap and the model's output-token budget).
+  `maxActionsPerTurn` optionally caps it (0 = unlimited default, 1 disables
+  batching, N ≥ 2 caps at N). This cuts planner calls on form- and list-heavy
+  flows and compounds with prompt caching.
 
 All seven recommendation areas now have an implementation; remaining follow-ups
 are the two noted under item 5 (cross-frame/iframe observation and an

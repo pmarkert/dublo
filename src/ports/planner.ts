@@ -88,19 +88,16 @@ export const PlannerActionSchema = z
 export const BATCHABLE_ACTIONS = ["click", "fill", "select_option", "hover", "press_key"] as const;
 const BATCHABLE_ACTION_SET = new Set<string>(BATCHABLE_ACTIONS);
 
-// A generous hard ceiling on batch size. It exists only to bound a degenerate
-// response, not to shape behavior: the runner re-validates each action, and in
-// practice a batch is limited first by the observation's visible-control cap and
-// the model's output-token budget. Independent bulk work (filling many fields,
-// toggling many rows) can fill this in one turn.
-export const MAX_ACTIONS_PER_TURN = 50;
-
-// A planner turn is one or more actions. The first may be any action; any action
-// after it must be batchable, and a non-batchable first action must stand alone.
+// A planner turn is one or more actions with no upper bound. The first may be
+// any action; any action after it must be batchable, and a non-batchable first
+// action must stand alone. Batch size is not capped here: the runner
+// re-validates each action, and a batch is limited in practice only by the
+// observation's visible-control cap and the model's output-token budget. A run
+// may still impose a cap via maxActionsPerTurn.
 export const PlannerTurnSchema = z
   .object({
     reason: z.string().trim().min(1),
-    actions: z.array(PlannerActionPayloadSchema).min(1).max(MAX_ACTIONS_PER_TURN)
+    actions: z.array(PlannerActionPayloadSchema).min(1)
   })
   .strict()
   .refine(

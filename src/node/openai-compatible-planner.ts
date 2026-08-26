@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { MAX_ACTIONS_PER_TURN, PlannerTurnSchema } from "../ports/planner.js";
+import { PlannerTurnSchema } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface OpenAICompatiblePlannerConfig {
@@ -134,7 +134,6 @@ function buildPlannerActionSchema(): Record<string, unknown> {
       actions: {
         type: "array",
         minItems: 1,
-        maxItems: MAX_ACTIONS_PER_TURN,
         items: {
           anyOf: [
             variant("click", { target }, ["target"]),

@@ -83,6 +83,14 @@ function parsePositiveInteger(value: string): number {
   return parsed;
 }
 
+function parseNonNegativeInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Expected a non-negative integer, received '${value}'.`);
+  }
+  return parsed;
+}
+
 function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
   switch (setting) {
     case "base-url":
@@ -96,7 +104,9 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
     case "max-steps":
       return WorkspaceDefaultsPatchSchema.parse({ maxSteps: parsePositiveInteger(value) });
     case "max-actions-per-turn":
-      return WorkspaceDefaultsPatchSchema.parse({ maxActionsPerTurn: parsePositiveInteger(value) });
+      return WorkspaceDefaultsPatchSchema.parse({
+        maxActionsPerTurn: parseNonNegativeInteger(value)
+      });
     case "settle-delay-ms":
       return WorkspaceDefaultsPatchSchema.parse({ settleDelayMs: parsePositiveInteger(value) });
     case "settle-timeout-ms":

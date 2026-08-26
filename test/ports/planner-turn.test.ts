@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PlannerTurnSchema, MAX_ACTIONS_PER_TURN } from "../../src/ports/planner.js";
+import { PlannerTurnSchema } from "../../src/ports/planner.js";
 
 void test("accepts a single non-batchable action", () => {
   const result = PlannerTurnSchema.safeParse({
@@ -41,11 +41,14 @@ void test("rejects a non-batchable primary paired with extra actions", () => {
   assert.equal(result.success, false);
 });
 
-void test("rejects an empty or over-long actions list", () => {
+void test("rejects an empty actions list", () => {
   assert.equal(PlannerTurnSchema.safeParse({ reason: "x", actions: [] }).success, false);
-  const tooMany = Array.from({ length: MAX_ACTIONS_PER_TURN + 1 }, () => ({
+});
+
+void test("accepts an arbitrarily large batch (no upper bound)", () => {
+  const many = Array.from({ length: 200 }, (_, index) => ({
     action: "click" as const,
-    target: { id: "a1" }
+    target: { id: `a${index}` }
   }));
-  assert.equal(PlannerTurnSchema.safeParse({ reason: "x", actions: tooMany }).success, false);
+  assert.equal(PlannerTurnSchema.safeParse({ reason: "x", actions: many }).success, true);
 });

@@ -662,12 +662,14 @@ export async function runScenario(config, options = {}) {
       const { tokenUsage: plannerTokenUsage, action: plannerTurn } = plannerResult;
 
       // A turn is one or more actions. Execute the first here as the step's
-      // primary action; any batched follow-ons run below without another
-      // planner call. maxActionsPerTurn caps the batch (1 disables batching).
-      const maxActionsPerTurn = Number.isFinite(config.maxActionsPerTurn)
-        ? Math.max(1, Number(config.maxActionsPerTurn))
-        : plannerTurn.actions.length;
-      const batchActions = plannerTurn.actions.slice(0, maxActionsPerTurn);
+      // primary action; any batched follow-ons run below without another planner
+      // call. Batches are unlimited by default; maxActionsPerTurn caps them only
+      // when set to a positive number (1 disables batching, 0/unset means no
+      // cap).
+      const actionCap = Number(config.maxActionsPerTurn);
+      const actionLimit =
+        Number.isFinite(actionCap) && actionCap >= 1 ? actionCap : plannerTurn.actions.length;
+      const batchActions = plannerTurn.actions.slice(0, actionLimit);
       const plannerAction = { reason: plannerTurn.reason, payload: batchActions[0] };
       const plannerPayload = plannerAction.payload;
       if (batchActions.length > 1) {

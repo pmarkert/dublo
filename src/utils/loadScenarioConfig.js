@@ -206,7 +206,7 @@ export function loadScenarioConfig(overrides = {}) {
   const merged = {
     baseUrl: "http://localhost:8080",
     maxSteps: 40,
-    maxActionsPerTurn: 50,
+    maxActionsPerTurn: 0,
     settleDelayMs: 500,
     settleTimeoutMs: 3000,
     headless: false,

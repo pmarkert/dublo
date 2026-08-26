@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
-import { MAX_ACTIONS_PER_TURN, PlannerTurnSchema } from "../ports/planner.js";
+import { PlannerTurnSchema } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface BedrockPlannerConfig {
@@ -187,7 +187,6 @@ function buildActionSchema(strict: boolean): Record<string, unknown> {
       actions: {
         type: "array",
         minItems: 1,
-        maxItems: MAX_ACTIONS_PER_TURN,
         items: {
           anyOf: [
             buildActionPayloadVariant("click", { target }, ["target"]),
