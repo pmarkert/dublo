@@ -43,13 +43,16 @@ npx playwright install-deps chromium
 Dublo is a standalone test runner that drives your app over HTTP; the app's repo
 does not depend on it. To test another project:
 
+The workspace defaults to `./.dublo` (override with `--workspace` or
+`DUBLO_WORKSPACE`), so these commands can omit it:
+
 ```bash
 cd /path/to/your-app
-dublo init --workspace ./.dublo --base-url http://localhost:3000   # commit ./.dublo with the app
-dublo llm config --workspace ./.dublo                              # configure the model
-dublo skill install                                                # add the Dublo skill for Claude Code
+dublo init --base-url http://localhost:3000   # creates ./.dublo — commit it with the app
+dublo llm config                              # configure the model
+dublo skill install                           # add the Dublo skill for Claude Code
 # start your app, then:
-dublo run --workspace ./.dublo --adhoc "Sign in and confirm the dashboard loads."
+dublo run --adhoc "Sign in and confirm the dashboard loads."
 ```
 
 `dublo skill install` copies the bundled agent skill into `./.claude/skills/dublo`
