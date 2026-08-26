@@ -55,6 +55,15 @@ export function classifyRecoverableActionError(error) {
   ) {
     return "disabled_target";
   }
+  /*
+   * An ambiguous selector is maximally recoverable: the error already names how
+   * many controls matched, and the planner can simply target one by id. Failing
+   * the run instead discards every step already paid for, and duplicate
+   * accessible names are ordinary in real apps -- the same nav item rendered in
+   * a desktop sidebar and a mobile bottom bar produces two, and neither is a
+   * defect.
+   */
+  if (message.includes("selector is ambiguous")) return "ambiguous_target";
   if (message.includes("planner target not found")) return "target_disappeared";
   if (message.includes("planner select_option target is not a native select")) return "invalid_selection";
   if (message.includes("alternating scroll loop")) return "scroll_loop";

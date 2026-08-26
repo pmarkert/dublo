@@ -1034,7 +1034,9 @@ export async function runScenario(config, options = {}) {
         ...(actionTarget ? { target: actionTarget } : {}),
         outcome: recoverableOutcome || "ok",
         runnerFeedback:
-          recoverableOutcome === "secret_available"
+          recoverableOutcome === "ambiguous_target"
+            ? "That selector matched more than one visible control. Target exactly one of them by its id (for example {\"id\": \"a5\"}) rather than by text or label. Duplicate names are normal -- the same nav item often appears in both a sidebar and a mobile bar."
+            : recoverableOutcome === "secret_available"
             ? "The value you asked a human for is registered as a secret. Fill it with {{secret:<path>}} using a path from availableSecretPaths. Do not use request_user_input for it again."
             : recoverableOutcome === "disabled_target"
             ? "Click was blocked because the target is disabled. Resolve any prerequisite validation or required fields before trying again."
