@@ -88,7 +88,12 @@ export const PlannerActionSchema = z
 export const BATCHABLE_ACTIONS = ["click", "fill", "select_option", "hover", "press_key"] as const;
 const BATCHABLE_ACTION_SET = new Set<string>(BATCHABLE_ACTIONS);
 
-export const MAX_ACTIONS_PER_TURN = 5;
+// A generous hard ceiling on batch size. It exists only to bound a degenerate
+// response, not to shape behavior: the runner re-validates each action, and in
+// practice a batch is limited first by the observation's visible-control cap and
+// the model's output-token budget. Independent bulk work (filling many fields,
+// toggling many rows) can fill this in one turn.
+export const MAX_ACTIONS_PER_TURN = 50;
 
 // A planner turn is one or more actions. The first may be any action; any action
 // after it must be batchable, and a non-batchable first action must stand alone.

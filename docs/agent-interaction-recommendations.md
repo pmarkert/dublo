@@ -339,13 +339,17 @@ Item 6 is partially implemented:
 
 - **Multi-action batches** — the planner turn is now a list of actions
   (`{reason, actions: [...]}`). The runner executes the first, then runs any
-  batched follow-ons without another model call, re-collecting the observation
-  and re-validating each action's target before running it and aborting the
-  batch on the first mismatch or recoverable failure. Only click/fill/
-  select_option/hover/press_key may follow the first action; everything else
-  must stand alone. `maxActionsPerTurn` (default 4, set 1 to disable) caps the
-  batch. This cuts planner calls on form-heavy flows and compounds with prompt
-  caching.
+  batched follow-ons without another model call. Each follow-on is pinned to the
+  exact element the planner saw (via the per-turn stamp), so ids can never be
+  remapped; if that element was replaced or removed the action aborts the rest
+  of the batch and the next turn re-plans. Independent bulk work (filling a whole
+  form, toggling many rows) therefore runs in one turn, while any real UI change
+  stops the batch. Only click/fill/select_option/hover/press_key may follow the
+  first action; everything else must stand alone. Batching is uncapped by
+  default (bounded in practice by the observation's visible-control cap and the
+  model's output-token budget, with a hard ceiling of 50); `maxActionsPerTurn`
+  lowers it (1 disables batching). This cuts planner calls on form- and
+  list-heavy flows and compounds with prompt caching.
 
 All seven recommendation areas now have an implementation; remaining follow-ups
 are the two noted under item 5 (cross-frame/iframe observation and an

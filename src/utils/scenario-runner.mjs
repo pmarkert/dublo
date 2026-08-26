@@ -956,9 +956,15 @@ export async function runScenario(config, options = {}) {
       }
 
       // Multi-action batch: run the remaining planned actions without another
-      // planner call. Each is re-validated against a fresh observation, and the
-      // batch aborts on the first mismatch or recoverable failure so stale
-      // actions never march into the wrong controls.
+      // planner call. Every follow-on resolves against the SAME observation the
+      // batch was planned from and is located by the per-turn stamp on the exact
+      // element the planner saw, so ids can never be remapped to a different
+      // control. If that element was replaced (a re-render or a validation node
+      // shifted the DOM), the stamp is gone and the action is a recoverable
+      // "target not found" that aborts the rest of the batch; the next planner
+      // turn re-observes and re-plans. Independent actions (filling many fields,
+      // toggling many rows) therefore run in one turn, while any real UI change
+      // stops the batch instead of acting blindly.
       const batchable = new Set(["click", "fill", "select_option", "hover", "press_key"]);
       if (
         report.status === "running" &&
@@ -970,20 +976,6 @@ export async function runScenario(config, options = {}) {
           const followPayload = batchActions[b];
           if (!batchable.has(followPayload.action)) break;
           throwIfInterrupted();
-          await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
-          observationTurn += 1;
-          const followTurnToken = `t${observationTurn}`;
-          const followObservation = await collectObservation(page, observationConfig, followTurnToken);
-          followObservation.runtimeErrors = drainRuntimeErrors();
-
-          if ("target" in followPayload) {
-            try {
-              resolveTargetControl(followObservation.controls, followPayload.target);
-            } catch (error) {
-              logger.info(`batch stopped before action ${b + 1}: ${errorMessage(error)}`);
-              break;
-            }
-          }
 
           const followAction = { reason: plannerTurn.reason, payload: followPayload };
           const followActionName = `batch_${followPayload.action}_${b + 1}`;
@@ -999,8 +991,8 @@ export async function runScenario(config, options = {}) {
                 const result = await executeBrowserAction({
                   page,
                   action: followAction,
-                  observation: followObservation,
-                  turnToken: followTurnToken,
+                  observation,
+                  turnToken,
                   actionHistory,
                   contextData,
                   humanInputs,
@@ -1015,17 +1007,15 @@ export async function runScenario(config, options = {}) {
                 lastUiActionAt = Date.now();
                 pendingInteractionRequest = null;
               },
-              config.debug
-                ? { observation: redactSecretValues(followObservation, secretValues) }
-                : undefined,
-              { phase: "batch", runtimeErrors: followObservation.runtimeErrors }
+              undefined,
+              { phase: "batch" }
             );
           } catch (error) {
             const kind = classifyRecoverableActionError(error);
             if (!kind) throw error;
             followOutcome = kind;
             followErrorMessage = errorMessage(error);
-            logger.warn(`batch action recoverable failure (${kind}): ${followErrorMessage}`);
+            logger.info(`batch stopped at action ${b + 1} (${kind}): ${followErrorMessage}`);
             await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
           }
 

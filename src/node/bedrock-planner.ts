@@ -381,7 +381,7 @@ export function createBedrockPlanner(
         await sendWithServiceTierFallback(client, config, {
           system,
           messages: [{ role: "user", content }],
-          inferenceConfig: buildInferenceConfig(config, 700),
+          inferenceConfig: buildInferenceConfig(config, 4096),
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
             : {}),

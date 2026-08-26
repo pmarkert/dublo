@@ -13,7 +13,7 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
   persona: "",
   context: [],
   maxSteps: 40,
-  maxActionsPerTurn: 4,
+  maxActionsPerTurn: 50,
   settleDelayMs: 500,
   settleTimeoutMs: 20000,
   headless: false,

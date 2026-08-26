@@ -134,6 +134,99 @@ void test("executes a batched turn as multiple steps from one planner call", asy
   assert.equal(turns, 2);
 });
 
+const MUTATING_HTML = `<!doctype html><html><body>
+  <button onclick="document.getElementById('two').remove();document.getElementById('log').textContent='PRIMARY_RAN'">One</button>
+  <button id="two">Two</button>
+  <button>Three</button>
+  <div id="log"></div>
+</body></html>`;
+
+function startAbortServer(): Promise<{ server: Server; baseUrl: string }> {
+  const server = createServer((request, response) => {
+    if (request.url === "/" || request.url === "") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(MUTATING_HTML);
+      return;
+    }
+    let body = "";
+    request.on("data", (chunk) => {
+      body += String(chunk);
+    });
+    request.on("end", () => {
+      // Once the first button has run (the page shows the sentinel), finish;
+      // otherwise send a batch that clicks all three, even though clicking the
+      // first removes the second.
+      const turn = body.includes("PRIMARY_RAN")
+        ? { reason: "Done.", actions: [{ action: "finish" }] }
+        : {
+            reason: "Click all three in one batch.",
+            actions: [
+              { action: "click", target: { text: "One" } },
+              { action: "click", target: { text: "Two" } },
+              { action: "click", target: { text: "Three" } }
+            ]
+          };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  { function: { name: "planner_action", arguments: JSON.stringify(turn) } }
+                ]
+              }
+            }
+          ],
+          usage: { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 }
+        })
+      );
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+    });
+  });
+}
+
+void test("aborts the batch when an element it planned against is removed mid-batch", async (t) => {
+  const { server, baseUrl } = await startAbortServer();
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), "dublo-batch-abort-"));
+  t.after(async () => rm(outputDir, { force: true, recursive: true }));
+
+  const report = (await runScenario({
+    baseUrl: `${baseUrl}/`,
+    scenario: "Click the buttons.",
+    maxSteps: 6,
+    settleDelayMs: 1,
+    settleTimeoutMs: 300,
+    headed: false,
+    debug: false,
+    screenshots: "none",
+    reports: [],
+    outputDir,
+    contextOperations: [],
+    workspacePromptFile: "",
+    personaFile: "",
+    observationConfigFile: "",
+    llm: { provider: "openai-compatible", baseUrl: `${baseUrl}/v1`, modelId: "fake-model" }
+  })) as Report & { steps: Array<{ name: string; outcome?: string }> };
+
+  // "One" ran and removed "Two"; the batch then hit the now-missing element and
+  // aborted, so "Three" (still present) was never clicked from the stale plan.
+  assert.equal(report.status, "passed");
+  const batchSteps = report.steps.filter((step) => step.name.startsWith("batch_"));
+  // The second batch action aborted (error); "three" was never executed.
+  assert.ok(batchSteps.some((step) => step.outcome === "error"));
+  assert.equal(
+    report.steps.some((step) => step.name === "batch_click_3"),
+    false
+  );
+});
+
 void test("maxActionsPerTurn of 1 disables batching", async () => {
   const { report, turns } = await runWith(1);
 

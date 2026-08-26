@@ -73,7 +73,8 @@ export function buildPlannerMessages({
         ? "Use only the visible control ID as the target selector, for example { id: 'a3' }."
         : "The lightweight selector { id: 'a3' } is acceptable and preferred by default. You may combine any visible control fields when needed to identify one control.",
       "Return actions as a list. Each entry holds one action and its action-specific fields; keep a single reason at the root.",
-      "Prefer one action per turn. You may return a short batch only when the next few steps are high-confidence and local (for example fill several fields then click submit). The runner executes the batch in order, re-checking each action against a fresh observation and stopping the batch if anything no longer matches, so batch only when confident.",
+      "You may return several actions in one turn when they can all be planned from the CURRENT observation and do not depend on each other's results (for example fill every field of a form from known values, or toggle many rows before a bulk action). Batching many independent actions in one turn is efficient and encouraged.",
+      "The runner executes a batch in order against the elements you see now, and stops the batch as soon as a later action's element has changed or disappeared. So do NOT batch an action whose target only appears after an earlier action, or that depends on an earlier action's outcome; take those on their own turn after re-observing.",
       "Only click, fill, select_option, hover, and press_key may follow the first action in a batch. Any action that navigates, waits, finishes, gives up, reports a finding, or escalates to the human must be the only action in the list.",
       "Never emit click or fill without target.",
       "For fill actions, also provide a value.",

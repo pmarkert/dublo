@@ -255,7 +255,7 @@ export function createOpenAICompatiblePlanner(
             }
           ],
           tool_choice: { type: "function", function: { name: "planner_action" } },
-          max_tokens: 700
+          max_tokens: 4096
         })
       });
       if (!response.ok) {
