@@ -333,6 +333,30 @@ void test("Bedrock planner preflight sends the planner tool definition", async (
   assert.match(requestJson, /"maxTokens":256/);
 });
 
+void test("Bedrock planner preflight fails loudly on a truncated (empty) tool call", async () => {
+  // A too-tight token budget can truncate the toolUse so the endpoint returns
+  // an empty `{}` input. That must not rubber-stamp the model: preflight has to
+  // verify a complete, well-formed planner_action.
+  const planner = createBedrockPlanner(
+    { modelId: "test-model", region: "us-east-1", supportsStrictToolUse: true },
+    {
+      client: {
+        send() {
+          return Promise.resolve({
+            output: {
+              message: {
+                content: [{ toolUse: { name: "planner_action", input: {} } }]
+              }
+            }
+          });
+        }
+      }
+    }
+  );
+
+  await assert.rejects(() => planner.preflight(), /empty or truncated planner_action/);
+});
+
 void test("Bedrock planner rejects resolved error responses", async () => {
   const planner = createBedrockPlanner(
     { modelId: "test-model", region: "us-east-1" },

@@ -84,6 +84,28 @@ function parsePlannerAction(rawAction: unknown) {
   }
 }
 
+// Pulls the planner_action payload out of a Converse response. Prefers the
+// forced toolUse.input; falls back to a JSON object embedded in a text block
+// (some models emit the call as text). Returns undefined when neither is
+// present. A truncated tool call surfaces here as an empty `{}` input.
+function extractPlannerActionInput(result: Record<string, unknown>): unknown {
+  const output = isRecord(result.output) ? result.output : undefined;
+  const message = output && isRecord(output.message) ? output.message : undefined;
+  const contentItems = Array.isArray(message?.content) ? message.content : [];
+  const toolItem = contentItems.find(
+    (item): item is Record<string, unknown> => isRecord(item) && isRecord(item.toolUse)
+  );
+  const toolUse = toolItem && isRecord(toolItem.toolUse) ? toolItem.toolUse : undefined;
+  if (toolUse?.input !== undefined) return toolUse.input;
+  const text = contentItems
+    .filter(isRecord)
+    .map((item) => (typeof item.text === "string" ? item.text : ""))
+    .join("\n")
+    .trim();
+  if (!text) return undefined;
+  return extractJsonObject(text);
+}
+
 function numberOrZero(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
@@ -349,7 +371,19 @@ export function createBedrockPlanner(
             : {}),
           ...buildToolConfig(config)
         });
-        assertBedrockConverseResponse(result);
+        // Verify the model produced a complete, well-formed planner_action —
+        // not just a syntactically valid envelope. A too-tight token budget
+        // truncates the toolUse: some endpoints reject it outright, others
+        // return an empty `{}` input that would pass a shape-only check. Parse
+        // the payload so a truncated or malformed call fails loudly here rather
+        // than sorting working models into pass/fail on an unrelated signal.
+        const rawAction = extractPlannerActionInput(assertBedrockConverseResponse(result));
+        if (!isRecord(rawAction) || Object.keys(rawAction).length === 0) {
+          throw new Error(
+            "the model returned an empty or truncated planner_action tool call (no input fields). This usually means the output token budget is too small."
+          );
+        }
+        parsePlannerAction(rawAction);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(
@@ -393,25 +427,9 @@ export function createBedrockPlanner(
           ...buildToolConfig(config)
         })
       );
-      const output = isRecord(result.output) ? result.output : undefined;
-      const message = output && isRecord(output.message) ? output.message : undefined;
-      const contentItems = Array.isArray(message?.content) ? message.content : [];
-      const toolItem = contentItems.find(
-        (item): item is Record<string, unknown> => isRecord(item) && isRecord(item.toolUse)
-      );
-      const toolUse = toolItem && isRecord(toolItem.toolUse) ? toolItem.toolUse : undefined;
-      const rawAction = toolUse?.input;
+      const rawAction = extractPlannerActionInput(result);
       if (rawAction === undefined) {
-        const text = contentItems
-          .filter(isRecord)
-          .map((item) => (typeof item.text === "string" ? item.text : ""))
-          .join("\n")
-          .trim();
-        if (!text) throw new Error("Bedrock planner API returned no planner action.");
-        return {
-          action: parsePlannerAction(extractJsonObject(text)),
-          tokenUsage: normalizeTokenUsage(result.usage)
-        };
+        throw new Error("Bedrock planner API returned no planner action.");
       }
       return {
         action: parsePlannerAction(rawAction),
