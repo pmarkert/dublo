@@ -51,7 +51,7 @@ function startFakeServer(): Promise<ServerHandle> {
       }
       const turn =
         isPreflight || remaining.length === 0
-          ? { reason: "Done.", actions: [{ action: "finish" }] }
+          ? { reason: "Done.", actions: [{ action: "finish", summary: "done" }] }
           : { reason: "Complete and submit the sign-in form.", actions: remaining };
 
       response.writeHead(200, { "content-type": "application/json" });
@@ -157,7 +157,7 @@ function startAbortServer(): Promise<{ server: Server; baseUrl: string }> {
       // otherwise send a batch that clicks all three, even though clicking the
       // first removes the second.
       const turn = body.includes("PRIMARY_RAN")
-        ? { reason: "Done.", actions: [{ action: "finish" }] }
+        ? { reason: "Done.", actions: [{ action: "finish", summary: "done" }] }
         : {
             reason: "Click all three in one batch.",
             actions: [

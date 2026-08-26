@@ -16,6 +16,8 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
   maxActionsPerTurn: 0,
   maxRepeatedFailures: 3,
   maxStagnantTurns: 8,
+  maxTurnsWithoutGoalProgress: 15,
+  init: [],
   settleDelayMs: 500,
   settleTimeoutMs: 20000,
   headless: false,
@@ -36,6 +38,8 @@ const ResolvedWorkspaceConfigSchema = z.object({
   maxActionsPerTurn: z.number().int().nonnegative(),
   maxRepeatedFailures: z.number().int().positive(),
   maxStagnantTurns: z.number().int().positive(),
+  maxTurnsWithoutGoalProgress: z.number().int().positive(),
+  init: z.array(z.string()),
   settleDelayMs: z.number().int().positive(),
   settleTimeoutMs: z.number().int().positive(),
   headless: z.boolean(),
@@ -104,6 +108,7 @@ function parseEnvironment(environment: Environment) {
     maxActionsPerTurn: parsePositiveInteger(environment.DUBLO_MAX_ACTIONS_PER_TURN),
     maxRepeatedFailures: parsePositiveInteger(environment.DUBLO_MAX_REPEATED_FAILURES),
     maxStagnantTurns: parsePositiveInteger(environment.DUBLO_MAX_STAGNANT_TURNS),
+    init: parseList(environment.DUBLO_INIT),
     settleDelayMs: parsePositiveInteger(environment.DUBLO_SETTLE_DELAY_MS),
     settleTimeoutMs: parsePositiveInteger(environment.DUBLO_SETTLE_TIMEOUT_MS),
     headless: parseBoolean(environment.DUBLO_HEADLESS),
@@ -182,6 +187,18 @@ export function resolveWorkspaceConfig(
     workspace.maxRepeatedFailures,
     DEFAULT_WORKSPACE_DEFAULTS.maxRepeatedFailures
   );
+  const [init, initSource] = resolveValue(
+    cli.init,
+    environment.init,
+    workspace.init,
+    DEFAULT_WORKSPACE_DEFAULTS.init as unknown as string[]
+  );
+  const [maxTurnsWithoutGoalProgress, maxTurnsWithoutGoalProgressSource] = resolveValue(
+    cli.maxTurnsWithoutGoalProgress,
+    environment.maxTurnsWithoutGoalProgress,
+    workspace.maxTurnsWithoutGoalProgress,
+    DEFAULT_WORKSPACE_DEFAULTS.maxTurnsWithoutGoalProgress
+  );
   const [maxStagnantTurns, maxStagnantTurnsSource] = resolveValue(
     cli.maxStagnantTurns,
     environment.maxStagnantTurns,
@@ -248,6 +265,8 @@ export function resolveWorkspaceConfig(
       maxActionsPerTurn,
       maxRepeatedFailures,
       maxStagnantTurns,
+      maxTurnsWithoutGoalProgress,
+      init,
       settleDelayMs,
       settleTimeoutMs,
       headless,
@@ -267,6 +286,8 @@ export function resolveWorkspaceConfig(
       maxActionsPerTurn: maxActionsPerTurnSource,
       maxRepeatedFailures: maxRepeatedFailuresSource,
       maxStagnantTurns: maxStagnantTurnsSource,
+      maxTurnsWithoutGoalProgress: maxTurnsWithoutGoalProgressSource,
+      init: initSource,
       settleDelayMs: settleDelayMsSource,
       settleTimeoutMs: settleTimeoutMsSource,
       headless: headlessSource,

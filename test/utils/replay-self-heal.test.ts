@@ -31,7 +31,7 @@ function startFakeServer(): Promise<{ server: Server; baseUrl: string }> {
             reason: "Re-grounded the recorded click.",
             actions: [{ action: "click", target: { text: "Click me" } }]
           }
-        : { reason: "Objective satisfied.", actions: [{ action: "finish" }] };
+        : { reason: "Objective satisfied.", actions: [{ action: "finish", summary: "done" }] };
       const payload = {
         choices: [
           {

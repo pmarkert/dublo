@@ -38,6 +38,48 @@ export function resolveTargetControl(controls, targetSelector) {
   if (matches.length === 1) return matches[0];
 
   const selectorText = JSON.stringify(targetSelector);
+
+  /*
+   * An `id` that resolves settles the question on its own.
+   *
+   * Control ids are unique per observation, so once one matches, the descriptive
+   * fields alongside it are the planner restating what it believes rather than
+   * narrowing anything. Models abbreviate them -- targeting
+   * {id: "a17", text: "Account"} at a control whose text is "Account Manage your
+   * name, picture, and care network." Requiring every field to match then failed
+   * as "target not found", which says the element is gone and invites a retry
+   * against a page where nothing had changed.
+   *
+   * Ambiguity is still reported: this only applies when exactly one control
+   * carries the id.
+   */
+  if (targetSelector && targetSelector.id) {
+    const byId = controls.filter(
+      (control) => normalizeTargetValue(control.id) === normalizeTargetValue(targetSelector.id)
+    );
+    /*
+     * ...but only when nothing else contradicts it. Ids are per-observation, so a
+     * replayed block carries ids that now belong to different elements: trusting
+     * one blindly filled a button that happened to inherit the id recorded for an
+     * email field. An abbreviated descriptor still counts as agreement -- "Account"
+     * against "Account Manage your name…" is the same control -- but a descriptor
+     * with no overlap at all means the id is stale, and the descriptive fields are
+     * what the block was recorded to survive on.
+     */
+    if (byId.length === 1) {
+      const candidate = byId[0];
+      const contradicted = Object.entries(targetSelector).some(([key, expected]) => {
+        if (key === "id" || expected === undefined || expected === null) return false;
+        const actual = key === "disabled" ? Boolean(candidate.disabled) : candidate[key];
+        if (actual === undefined || actual === null) return false;
+        const a = String(normalizeTargetValue(actual));
+        const b = String(normalizeTargetValue(expected));
+        return !(a === b || a.includes(b) || b.includes(a));
+      });
+      if (!contradicted) return candidate;
+    }
+  }
+
   if (matches.length === 0) throw new Error(`Planner target not found: ${selectorText}`);
   throw new Error(`Planner target selector is ambiguous: ${selectorText} matched ${matches.length} controls.`);
 }
@@ -63,6 +105,14 @@ export function classifyRecoverableActionError(error) {
    * a desktop sidebar and a mobile bottom bar produces two, and neither is a
    * defect.
    */
+  /*
+   * Filling something that cannot hold text -- a button, a div -- is a mistake
+   * about the control, not a broken app. Telling the planner what it actually
+   * targeted costs one turn; ending the run discards everything before it.
+   */
+  if (message.includes("is not an <input>") || message.includes("does not have a role allowing")) {
+    return "not_fillable";
+  }
   if (message.includes("selector is ambiguous")) return "ambiguous_target";
   if (message.includes("planner target not found")) return "target_disappeared";
   if (message.includes("planner select_option target is not a native select")) return "invalid_selection";

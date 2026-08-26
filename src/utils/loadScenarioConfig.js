@@ -155,6 +155,8 @@ export function loadScenarioConfig(overrides = {}) {
     maxActionsPerTurn: parsePositiveInteger(workspaceConfig.maxActionsPerTurn, undefined),
     maxRepeatedFailures: parsePositiveInteger(workspaceConfig.maxRepeatedFailures, undefined),
     maxStagnantTurns: parsePositiveInteger(workspaceConfig.maxStagnantTurns, undefined),
+    maxTurnsWithoutGoalProgress: parsePositiveInteger(workspaceConfig.maxTurnsWithoutGoalProgress, undefined),
+    init: normalizeStringArray(workspaceConfig.init),
     settleDelayMs: parsePositiveInteger(workspaceConfig.settleDelayMs, undefined),
     settleTimeoutMs: parsePositiveInteger(workspaceConfig.settleTimeoutMs, undefined),
     headless: parseBoolean(workspaceConfig.headless, undefined),
@@ -175,6 +177,11 @@ export function loadScenarioConfig(overrides = {}) {
     maxActionsPerTurn: parsePositiveInteger(firstDefined(process.env.DUBLO_MAX_ACTIONS_PER_TURN), undefined),
     maxRepeatedFailures: parsePositiveInteger(firstDefined(process.env.DUBLO_MAX_REPEATED_FAILURES), undefined),
     maxStagnantTurns: parsePositiveInteger(firstDefined(process.env.DUBLO_MAX_STAGNANT_TURNS), undefined),
+    // Only present when the variable is actually set. normalizeStringArray returns
+    // [] for undefined, and an empty array survives cleanUndefined -- which would
+    // let an unset DUBLO_INIT clobber the workspace value, since env layers after
+    // workspace.
+    init: process.env.DUBLO_INIT ? normalizeStringArray(process.env.DUBLO_INIT) : undefined,
     settleDelayMs: parsePositiveInteger(firstDefined(process.env.DUBLO_SETTLE_DELAY_MS), undefined),
     settleTimeoutMs: parsePositiveInteger(firstDefined(process.env.DUBLO_SETTLE_TIMEOUT_MS), undefined),
     headless: parseBoolean(firstDefined(process.env.DUBLO_HEADLESS), undefined),
@@ -217,6 +224,10 @@ export function loadScenarioConfig(overrides = {}) {
     // Generous: filling several fields in a row can leave visible text and the
     // control set unchanged, and that is legitimate progress.
     maxStagnantTurns: 8,
+    // Generous: a criterion can legitimately take many turns to satisfy. This
+    // only fires alongside repeated screen changes, i.e. movement without arrival.
+    maxTurnsWithoutGoalProgress: 15,
+    init: [],
     settleDelayMs: 500,
     settleTimeoutMs: 3000,
     headless: false,

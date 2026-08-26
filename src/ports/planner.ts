@@ -71,7 +71,21 @@ export const PlannerActionPayloadSchema = z.discriminatedUnion("action", [
     })
     .strict(),
   z.object({ action: z.literal("give_up") }).strict(),
-  z.object({ action: z.literal("finish") }).strict()
+  z
+    .object({
+      action: z.literal("finish"),
+      /*
+       * Optional in the schema, required by the runner.
+       *
+       * `finish` used to carry no payload at all, so a run's verdict — which
+       * routes rendered, which entry points led somewhere — had nowhere to live.
+       * But making it a hard schema requirement broke tool use outright on a
+       * weaker model, which then could not run at all. A missing summary is
+       * recoverable ("finish must include a summary"); an unusable model is not.
+       */
+      summary: z.string().trim().min(1).optional()
+    })
+    .strict()
 ]);
 
 export const PlannerActionSchema = z
@@ -97,6 +111,18 @@ const BATCHABLE_ACTION_SET = new Set<string>(BATCHABLE_ACTIONS);
 export const PlannerTurnSchema = z
   .object({
     reason: z.string().trim().min(1),
+    /*
+     * Which of the scenario's success criteria are now satisfied, as short
+     * stable labels the planner reuses turn to turn.
+     *
+     * This is the only available signal for *goal* progress. Screen changes and
+     * completedWork both grow while an agent wanders through the wrong part of
+     * the app, so neither distinguishes "working towards the goal" from "busy".
+     * A run whose criteria set stops growing while it keeps moving is not stuck
+     * -- it is lost, which is a usability finding about the path, not a defect
+     * in any one screen.
+     */
+    criteriaMet: z.array(z.string().trim().min(1)).optional(),
     actions: z.array(PlannerActionPayloadSchema).min(1)
   })
   .strict()
@@ -150,6 +176,16 @@ export interface PlannerResponse {
 export interface Planner {
   preflight(signal?: AbortSignal): Promise<void>;
   nextAction(request: PlannerRequest): Promise<PlannerResponse>;
+  /**
+   * A closing account of a run that ended without completing: what was achieved,
+   * how close it got, what stopped it.
+   *
+   * Plain text, no tools. The failures worth explaining are frequently failures
+   * of tool use itself, so a post-mortem that needs a valid tool call is exactly
+   * the thing that will not run when it is most needed. Optional so a planner
+   * without it degrades to no statement rather than an error.
+   */
+  summarize?(prompt: string): Promise<string>;
 }
 
 export type PlannerActionPayload = z.infer<typeof PlannerActionPayloadSchema>;

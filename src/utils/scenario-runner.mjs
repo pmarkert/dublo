@@ -42,6 +42,148 @@ export { classifyRecoverableActionError, isAlternatingScrollLoop, isDocumentText
  * changed screen, stable enough that re-rendering the same screen does not
  * read as progress.
  */
+/**
+ * Paths a run must have visited before `finish` is believable.
+ *
+ * Read from context so it travels with the scenario rather than the workspace:
+ * `finish.requireVisited` for an explicit list, or `finish.requireVisitedFrom`
+ * naming a dotted path to a list already in context — so a route sweep can point
+ * at the same inventory it was given to walk, instead of restating it.
+ */
+export function requiredVisitedPaths(contextData) {
+  const finish = contextData?.finish;
+  if (!finish || typeof finish !== "object") return [];
+
+  if (Array.isArray(finish.requireVisited)) {
+    return finish.requireVisited.filter((entry) => typeof entry === "string");
+  }
+
+  if (typeof finish.requireVisitedFrom === "string") {
+    const resolved = finish.requireVisitedFrom
+      .split(".")
+      .reduce((node, key) => (node && typeof node === "object" ? node[key] : undefined), contextData);
+    if (Array.isArray(resolved)) return resolved.filter((entry) => typeof entry === "string");
+  }
+
+  return [];
+}
+
+/**
+ * Checks the world must satisfy before a run can mean anything.
+ *
+ * A precondition written only in the scenario prose is a request, not a check --
+ * a run against an unprepared app produced 23 steps, a claim that "tasks
+ * scheduled for today were accurately displayed" on an account that had none,
+ * and a `blocked` verdict pointing at a defect that did not exist. Declared here
+ * instead, the runner verifies them itself and refuses to start.
+ *
+ *   preconditions:
+ *     - path: "/myday"
+ *       documentTextIncludes: "Today"
+ *       describe: "MyDay must show at least one task for today"
+ */
+export function preconditionsFrom(contextData) {
+  const list = contextData?.preconditions;
+  return Array.isArray(list) ? list.filter((entry) => entry && typeof entry === "object") : [];
+}
+
+/**
+ * A scenario's expected step count: a baseline drawn from a known-good run, not
+ * a ceiling.
+ *
+ * `maxSteps` says when to give up; this says what the work normally costs. A run
+ * finishing well above it did the same job the long way round, which is a
+ * regression in the path even though the run passed — the kind of drift nobody
+ * notices because the test still goes green.
+ */
+export function expectedStepsFrom(contextData) {
+  const value = contextData?.finish?.expectedSteps;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/** The pathname of a URL, for comparing against a declared path list. */
+export function pathOf(url) {
+  try {
+    return new URL(url).pathname || "/";
+  } catch {
+    return String(url || "");
+  }
+}
+
+/**
+ * Recoverable failures on a passing run above which the path itself looks hard:
+ * wrong controls tried, actions that did nothing, targets that would not resolve.
+ * Absolute on purpose -- unlike a budget ratio, it means the same thing whatever
+ * step ceiling the scenario happens to carry.
+ */
+const FRICTION_FAILURE_THRESHOLD = 5;
+
+/**
+ * How far above its expected step count a run may drift before it is worth
+ * saying so. Compared against a baseline from a known-good run, so unlike a
+ * budget ratio this reflects the path getting longer rather than the ceiling
+ * being tight.
+ */
+const STEP_DRIFT_TOLERANCE = 0.3;
+
+/**
+ * Why a run ended, in terms a reader can act on.
+ *
+ * "failed" conflates four different answers: the app could not do it, the path
+ * was too convoluted to follow, the budget was too small, or the agent jammed on
+ * one control. Each points somewhere different -- a bug, a design problem, a
+ * config change, or a tooling problem -- so the report should say which.
+ */
+export function classifyOutcome({ status, error, metCriteria, recoverableFailures, stepsUsed = 0, expectedSteps = 0 }) {
+  if (status === "passed") {
+    /*
+     * Graded on friction, not on how much of the budget was spent.
+     *
+     * Steps-against-budget measures the budget, which is a guess: the same path
+     * allotted 30 steps and finishing in 29 would score worse than one allotted
+     * 50 and finishing in 34, for identical work. Recoverable failures are
+     * intrinsic instead -- each one is the agent trying something that did not
+     * work, which is friction a person would have felt too.
+     */
+    if (recoverableFailures >= FRICTION_FAILURE_THRESHOLD) return "completed-with-friction";
+    if (expectedSteps > 0 && stepsUsed > expectedSteps * (1 + STEP_DRIFT_TOLERANCE)) {
+      return "completed-slower-than-expected";
+    }
+    return "completed";
+  }
+
+  const detail = String(error || "");
+
+  /*
+   * Tooling failures first. A planner that returns nothing, or output Bedrock
+   * rejects, says nothing about the app -- and falling through to "blocked"
+   * would report a harness problem as a probable defect in the product, which
+   * is the most expensive kind of wrong answer this classifier can give.
+   */
+  // Setup, before tooling: a run that never started says nothing about the app,
+  // and must not be filed under any verdict that implies it did.
+  if (/Precondition not met|Could not verify precondition/i.test(detail)) return "precondition-not-met";
+
+  if (
+    /returned no planner action|invalid sequence as part of ToolUse|preflight failed|invalid '[a-z_]+' turn/i.test(
+      detail
+    )
+  ) {
+    return "tooling-error";
+  }
+
+  if (/without meeting a new success criterion/i.test(detail)) return "lost";
+  if (/no visible change/i.test(detail)) return "stuck";
+  if (/failed \d+ times in a row/i.test(detail)) return "blocked";
+  if (/Max steps reached/i.test(detail)) {
+    // Still meeting criteria when the budget ran out means the budget was wrong,
+    // not the app.
+    return metCriteria > 0 ? "budget-exhausted" : "lost";
+  }
+  if (recoverableFailures > 0) return "blocked";
+  return "failed";
+}
+
 export function progressKey(url, observation) {
   const text = typeof observation?.documentText === "string" ? observation.documentText : "";
   const ids = (observation?.controls ?? [])
@@ -406,6 +548,55 @@ export async function runScenario(config, options = {}) {
   let lastUiActionAt = 0;
   let pendingInteractionRequest = null;
   let pendingScreenshotBuffer = null;
+  const visitedPaths = new Set();
+  const redirects = new Map();
+
+  /*
+   * Move past an item the run cannot get through, instead of ending the run.
+   *
+   * A sweep's value is the whole table, and a guard firing on item 12 used to
+   * discard items 13 onward -- so one broken route hid every route after it, and
+   * the report said "failed" rather than which parts pass and which do not.
+   * Where the scenario declares the work, a stall becomes a recorded defect for
+   * that item and a jump to the next outstanding one. Each skip consumes a path,
+   * so this cannot loop.
+   */
+  const skipToNextOutstanding = async (why, severity = "major") => {
+    const outstanding = requiredVisitedPaths(contextData).filter((path) => !visitedPaths.has(path));
+    if (outstanding.length === 0) return false;
+
+    const next = outstanding[0];
+    report.findings.push({
+      step: stepIndex,
+      url: page.url(),
+      severity,
+      category: "functional",
+      summary: `Could not complete work at ${pathOf(page.url())}: ${why}`,
+      evidence: "Recorded by the runner after a stall; the run continued to the next required path."
+    });
+    logger.warn(`skipping to ${next} after: ${why}`);
+
+    visitedPaths.add(next);
+    try {
+      await page.goto(new URL(next, config.baseUrl).toString(), { waitUntil: "domcontentloaded" });
+      await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+    } catch (error) {
+      logger.warn(`could not reach ${next}: ${errorMessage(error)}`);
+    }
+
+    lastProgressKey = null;
+    stagnantTurns = 0;
+    turnsSinceGoalProgress = 0;
+    screenChangesSinceGoalProgress = 0;
+    return true;
+  };
+  const metCriteria = new Set();
+  let turnsSinceGoalProgress = 0;
+  let lastRequiredCovered = 0;
+  let goalCheckpointRequested = false;
+  let progressCheckpoint = "";
+  let outstandingWork = [];
+  let screenChangesSinceGoalProgress = 0;
   let lastProgressKey = null;
   let stagnantTurns = 0;
   let previousTimedOutWait = null;
@@ -435,7 +626,14 @@ export async function runScenario(config, options = {}) {
     return captureViewportScreenshot(options);
   };
 
+  // Written by the step body when the runner refuses an action rather than
+  // throwing, so captureStep can record the refusal instead of "ok".
+  const recoverableOutcomeRef = { current: null };
+  const recoverableErrorRef = { current: null };
+
   async function captureStep(name, plannerAction, execute, stepDebugContext = undefined, metadata = undefined) {
+    recoverableOutcomeRef.current = null;
+    recoverableErrorRef.current = null;
     throwIfInterrupted();
     stepIndex += 1;
     const artifactBase = `${String(stepIndex).padStart(2, "0")}-${sanitizeSegment(name)}`;
@@ -491,8 +689,14 @@ export async function runScenario(config, options = {}) {
         phase: metadata?.phase,
         initBlock: metadata?.initBlock,
         ...(metadata?.runtimeErrors?.length ? { runtimeErrors: metadata.runtimeErrors } : {}),
-        outcome: stepError ? "error" : "ok",
-        error: stepError || undefined,
+        /*
+         * A step the runner refused -- a rejected finish, a target that could not
+         * be resolved -- returns normally, so `stepError` is empty and it used to
+         * be recorded as "ok". A rejected finish then read like an accepted one in
+         * the trace, which is exactly the thing a reader is trying to see.
+         */
+        outcome: stepError ? "error" : recoverableOutcomeRef.current || "ok",
+        error: stepError || recoverableErrorRef.current || undefined,
       });
     }
   }
@@ -666,6 +870,52 @@ export async function runScenario(config, options = {}) {
       }
     }
 
+    /*
+     * Verify the world before spending anything on the agent.
+     *
+     * A run against an unprepared app cannot say anything about the app, so it
+     * should not be reported as though it did. Checked after init blocks, since
+     * the setup they replay is usually what puts the world in the required state.
+     */
+    for (const precondition of preconditionsFrom(contextData)) {
+      throwIfInterrupted();
+      const description = precondition.describe || JSON.stringify(precondition);
+      try {
+        if (precondition.path) {
+          await page.goto(new URL(precondition.path, config.baseUrl).toString(), {
+            waitUntil: "domcontentloaded"
+          });
+          await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
+        }
+        observationTurn += 1;
+        const check = await collectObservation(page, observationConfig, `p${observationTurn}`);
+        const text = String(check.documentText || "");
+        const wanted = precondition.documentTextIncludes;
+        const unwanted = precondition.documentTextExcludes;
+        const ok =
+          (!wanted || text.toLowerCase().includes(String(wanted).toLowerCase())) &&
+          (!unwanted || !text.toLowerCase().includes(String(unwanted).toLowerCase()));
+
+        if (!ok) {
+          report.status = "failed";
+          report.outcome = "precondition-not-met";
+          report.finalUrl = page.url();
+          report.error =
+            `Precondition not met: ${description}. The run was not started — this says ` +
+            `nothing about the application, only that the environment was not prepared for it.`;
+          logger.error(report.error);
+          return;
+        }
+        logger.info(`precondition ok: ${description}`);
+      } catch (error) {
+        report.status = "failed";
+        report.outcome = "precondition-not-met";
+        report.error = `Could not verify precondition (${description}): ${errorMessage(error)}`;
+        logger.error(report.error);
+        return;
+      }
+    }
+
     for (let i = 0; i < config.maxSteps; i += 1) {
       throwIfInterrupted();
       await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
@@ -674,6 +924,7 @@ export async function runScenario(config, options = {}) {
       const observation = await collectObservation(page, observationConfig, turnToken);
       observation.runtimeErrors = drainRuntimeErrors();
       throwIfInterrupted();
+      visitedPaths.add(pathOf(page.url()));
       logger.info(`observation ${i + 1}: ${formatObservationSummary(observation)}`);
 
       const screenshotBufferForThisTurn = pendingScreenshotBuffer;
@@ -681,6 +932,9 @@ export async function runScenario(config, options = {}) {
       const knownHumanInputsSnapshot = Object.fromEntries(humanInputs.entries());
 
       const messages = buildPlannerMessages({
+        ...(metCriteria.size || outstandingWork.length
+          ? { goalProgress: { met: [...metCriteria], outstanding: outstandingWork } }
+          : {}),
         testPrompt: scenario,
         personaText,
         workspacePromptText,
@@ -790,9 +1044,63 @@ export async function runScenario(config, options = {}) {
         async () => {
           throwIfInterrupted();
           if (plannerPayload.action === "finish") {
+            /*
+             * Check the claim before accepting it.
+             *
+             * `status: "passed"` has only ever meant "the agent stopped
+             * voluntarily" -- a run that visited nothing and finished
+             * immediately passed by the same rule as one that did the work.
+             * Both of the checks below are mechanical, and both have been wrong
+             * in practice: sweeps have reported success having covered 0 of 30
+             * routes and 3 of 9.
+             */
+            const missing = requiredVisitedPaths(contextData).filter(
+              (candidate) => !visitedPaths.has(candidate)
+            );
+            if (missing.length > 0) {
+              const shown = missing.slice(0, 12).join(", ");
+              recoverableOutcome = "finish_incomplete";
+              recoverableOutcomeRef.current = "finish_incomplete";
+              recoverableErrorMessage =
+                `finish rejected: ${missing.length} required path(s) were never visited: ` +
+                `${shown}${missing.length > 12 ? `, +${missing.length - 12} more` : ""}.`;
+              recoverableErrorRef.current = recoverableErrorMessage;
+              logger.warn(recoverableErrorMessage);
+              return;
+            }
+
             logger.info(`finish accepted at ${page.url()}`);
             report.status = "passed";
             report.finalUrl = page.url();
+            /*
+             * Generate the summary when the planner omits it, rather than refusing.
+             *
+             * Refusing cost more than it gained: the field cannot be required in the
+             * schema (that broke tool use outright on a weaker model), models
+             * routinely omit it, and each refusal spent a turn — twice ending the run
+             * on the very next planner call. The deliverable is the summary itself,
+             * and a tool-free call can produce one from the run's own history whether
+             * or not the model volunteered it.
+             */
+            report.summary = plannerPayload.summary;
+            if (!report.summary && typeof planner.summarize === "function") {
+              try {
+                const done = actionHistory
+                  .filter((entry) => entry.outcome === "ok")
+                  .map((entry) => `- ${entry.action.payload.action}: ${clip(entry.action.reason, 110)}`)
+                  .slice(-30)
+                  .join("\n");
+                report.summary = await planner.summarize(
+                  `A web test run has just completed its objective.\n\nOBJECTIVE:\n${scenario}\n\n` +
+                    `WHAT IT DID:\n${done}\n\n` +
+                    `Write the verdict the objective asked for — for a sweep, the per-item table. ` +
+                    `Report only what the actions above show; do not claim items never visited.`
+                );
+                logger.info("summary generated for a finish that omitted one");
+              } catch (error) {
+                logger.warn(`summary unavailable: ${errorMessage(error)}`);
+              }
+            }
             return;
           }
 
@@ -810,7 +1118,9 @@ export async function runScenario(config, options = {}) {
             const waitKey = `${page.url()}::${formattedExpectedText}`;
             if (previousTimedOutWait === waitKey) {
               recoverableOutcome = "duplicate_wait";
+              recoverableOutcomeRef.current = "duplicate_wait";
               recoverableErrorMessage = `The same wait_until_gone condition already timed out without a URL change: '${formattedExpectedText}'.`;
+              recoverableErrorRef.current = recoverableErrorMessage;
               logger.warn(recoverableErrorMessage);
               return;
             }
@@ -825,7 +1135,9 @@ export async function runScenario(config, options = {}) {
             if (!waitResult.completed) {
               previousTimedOutWait = waitKey;
               recoverableOutcome = "wait_timeout";
+              recoverableOutcomeRef.current = "wait_timeout";
               recoverableErrorMessage = `Timed out after ${waitResult.elapsedMs}ms waiting for document text to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formattedExpectedText}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`;
+              recoverableErrorRef.current = recoverableErrorMessage;
               logger.warn(recoverableErrorMessage);
               return;
             }
@@ -846,6 +1158,7 @@ export async function runScenario(config, options = {}) {
              */
             if (secretValues.size > 0) {
               recoverableOutcome = "secret_available";
+              recoverableOutcomeRef.current = "secret_available";
               recoverableErrorMessage =
                 `Do not ask a human for this. The run has registered secrets: ` +
                 `${[...secretValues.keys()].join(", ")}. Fill the matching field with ` +
@@ -1027,6 +1340,27 @@ export async function runScenario(config, options = {}) {
         await waitForUiSettle(page, config.settleDelayMs, config.settleTimeoutMs);
       }
 
+      /*
+       * Record what was asked for, not only where we ended up.
+       *
+       * A route that always redirects can never satisfy a coverage requirement
+       * for its own path -- /notification-rules and /search both land on
+       * /notifications here, so requiring them would be unsatisfiable. Counting
+       * the requested path fixes that, and the from/to pair is itself worth
+       * reporting: two routes silently resolving to one page is the sort of thing
+       * a sweep exists to surface.
+       */
+      if (plannerPayload.action === "navigate" && !recoverableOutcome) {
+        try {
+          const requested = pathOf(new URL(plannerPayload.url, page.url()).toString());
+          const landed = pathOf(page.url());
+          visitedPaths.add(requested);
+          if (requested !== landed) redirects.set(requested, landed);
+        } catch {
+          // A malformed url is already the action's own failure; ignore it here.
+        }
+      }
+
       actionHistory.push({
         step: stepIndex,
         url: page.url(),
@@ -1034,7 +1368,13 @@ export async function runScenario(config, options = {}) {
         ...(actionTarget ? { target: actionTarget } : {}),
         outcome: recoverableOutcome || "ok",
         runnerFeedback:
-          recoverableOutcome === "ambiguous_target"
+          recoverableOutcome === "finish_without_summary"
+            ? "finish must include a summary field stating what you verified — the per-item verdict the scenario asked for. Return finish again with it."
+            : recoverableOutcome === "finish_incomplete"
+            ? "You have not visited every path the scenario requires. Navigate to each path named in the error, record a verdict for it, then finish. Do not finish again until they are covered."
+            : recoverableOutcome === "not_fillable"
+              ? "That control cannot hold text — it is a button or a container, not a field. Click it instead, or target the actual input."
+            : recoverableOutcome === "ambiguous_target"
             ? "That selector matched more than one visible control. Target exactly one of them by its id (for example {\"id\": \"a5\"}) rather than by text or label. Duplicate names are normal -- the same nav item often appears in both a sidebar and a mobile bar."
             : recoverableOutcome === "secret_available"
             ? "The value you asked a human for is registered as a secret. Fill it with {{secret:<path>}} using a path from availableSecretPaths. Do not use request_user_input for it again."
@@ -1173,15 +1513,128 @@ export async function runScenario(config, options = {}) {
        * matters: has the screen changed? When it has not for several turns in
        * a row, no further turn is going to help.
        */
+      /*
+       * Goal progress, as distinct from movement.
+       *
+       * An agent exploring the wrong half of the app changes screens on every
+       * turn, so the no-progress guard below never fires -- it is busy, not
+       * getting anywhere. Growth in the criteria the planner reports as met is
+       * the only signal that separates the two.
+       */
+      const criteriaBefore = metCriteria.size;
+      for (const label of plannerAction.criteriaMet ?? []) metCriteria.add(label);
+
+      /*
+       * Covering a required path is progress, and it is measured rather than
+       * self-reported.
+       *
+       * A sweep's criteria *are* its paths. Judging progress only by the labels a
+       * model volunteers meant a run steadily working through 24 routes was
+       * declared lost for not narrating them -- punishing the one scenario shape
+       * where progress is perfectly observable.
+       */
+      const requiredCovered = requiredVisitedPaths(contextData).filter((path) =>
+        visitedPaths.has(path)
+      ).length;
+      const coverageGrew = requiredCovered > lastRequiredCovered;
+      lastRequiredCovered = requiredCovered;
+
+      if (metCriteria.size > criteriaBefore || coverageGrew) {
+        turnsSinceGoalProgress = 0;
+        screenChangesSinceGoalProgress = 0;
+      } else {
+        turnsSinceGoalProgress += 1;
+      }
+
       const currentProgressKey = progressKey(page.url(), observation);
       if (currentProgressKey === lastProgressKey) {
         stagnantTurns += 1;
       } else {
         stagnantTurns = 0;
+        screenChangesSinceGoalProgress += 1;
         lastProgressKey = currentProgressKey;
       }
 
+      /*
+       * Before judging a run lost, ask it what it has achieved.
+       *
+       * `criteriaMet` on the turn is unreliable -- it rides inside a tool call
+       * the weaker models already struggle with, and one that never fills it in
+       * would look identical to one that is genuinely wandering. A tool-free
+       * checkpoint cannot fail that way, so the guard gets real evidence instead
+       * of an absence, and the same record becomes the closing statement rather
+       * than being recomputed from scratch at the end.
+       */
+      if (
+        turnsSinceGoalProgress >= config.maxTurnsWithoutGoalProgress &&
+        screenChangesSinceGoalProgress >= 3 &&
+        typeof planner.summarize === "function" &&
+        !goalCheckpointRequested
+      ) {
+        goalCheckpointRequested = true;
+        try {
+          const recent = actionHistory
+            .filter((entry) => entry.outcome === "ok")
+            .map((entry) => `- ${entry.action.payload.action}: ${clip(entry.action.reason, 100)}`)
+            .slice(-20)
+            .join("\n");
+          const answer = await planner.summarize(
+            `OBJECTIVE:\n${scenario}\n\nWHAT HAS BEEN DONE:\n${recent || "(nothing yet)"}\n\n` +
+              `Audit the objective. Reply in exactly two sections and nothing else:\n` +
+              `MET:\n(one short label per line for each success criterion definitely ` +
+              `satisfied, or the single word NONE)\n` +
+              `OUTSTANDING:\n(one short label per line for each criterion still to be done, ` +
+              `or the single word NONE)`
+          );
+          progressCheckpoint = answer;
+          const section = (name) => {
+            const match = new RegExp(`${name}:\\s*([\\s\\S]*?)(?=\\n\\s*(?:MET|OUTSTANDING):|$)`, "i").exec(
+              answer
+            );
+            if (!match) return [];
+            return match[1]
+              .split("\n")
+              .map((line) => line.replace(/^[-*\d.\s]+/, "").trim())
+              .filter((line) => line && !/^NONE$/i.test(line))
+              .map((line) => clip(line, 80));
+          };
+          for (const label of section("MET")) metCriteria.add(label);
+          outstandingWork = section("OUTSTANDING");
+          if (metCriteria.size > 0) {
+            turnsSinceGoalProgress = 0;
+            screenChangesSinceGoalProgress = 0;
+            logger.info(`goal checkpoint: ${[...metCriteria].join("; ")}`);
+          }
+        } catch (error) {
+          logger.warn(`goal checkpoint unavailable: ${errorMessage(error)}`);
+        }
+      }
+
+      /*
+       * Moving, but not arriving: the screen keeps changing, so nothing looks
+       * wrong, yet the checkpoint above found no new criterion satisfied. That is
+       * the signature of a path too convoluted to follow -- a finding about the
+       * app, not a failure of the run.
+       */
+      if (
+        goalCheckpointRequested &&
+        turnsSinceGoalProgress >= config.maxTurnsWithoutGoalProgress &&
+        screenChangesSinceGoalProgress >= 3
+      ) {
+        report.status = "failed";
+        report.finalUrl = page.url();
+        report.outcome = "lost";
+        report.error =
+          `Aborted after ${turnsSinceGoalProgress} turns without meeting a new success ` +
+          `criterion, across ${screenChangesSinceGoalProgress} screen changes. The run kept ` +
+          `moving without getting closer to the objective` +
+          `${metCriteria.size ? ` (met so far: ${[...metCriteria].join(", ")})` : " (nothing met)"}.`;
+        logger.error(report.error);
+        break;
+      }
+
       if (stagnantTurns >= config.maxStagnantTurns) {
+        if (await skipToNextOutstanding(`no visible change for ${stagnantTurns} turns`)) continue;
         report.status = "failed";
         report.finalUrl = page.url();
         report.error =
@@ -1197,6 +1650,13 @@ export async function runScenario(config, options = {}) {
         const repeats = trailingFailureRepeats(actionHistory, signature);
 
         if (repeats >= config.maxRepeatedFailures) {
+          if (
+            await skipToNextOutstanding(
+              `${plannerPayload.action} failed ${repeats} times (${recoverableOutcome})`
+            )
+          ) {
+            continue;
+          }
           report.status = "failed";
           report.finalUrl = page.url();
           report.error =
@@ -1255,6 +1715,107 @@ export async function runScenario(config, options = {}) {
     }
   } finally {
     report.finishedAt = new Date().toISOString();
+
+    /*
+     * Effort, so a reader can tell "worked first time" from "barely got there".
+     * A goal met at 95% of the budget is a usability signal even though the run
+     * passed.
+     */
+    const recoverableFailures = actionHistory.filter(
+      (entry) => entry.outcome && entry.outcome !== "ok"
+    ).length;
+    if (redirects.size > 0) {
+      report.redirects = [...redirects].map(([from, to]) => ({ from, to }));
+    }
+
+    /*
+     * Addresses asked for, against distinct pages actually reached.
+     *
+     * A gap between the two is the app's route table collapsing: many URLs
+     * resolving to one screen. It also explains runs that look stalled while
+     * working correctly — the agent keeps requesting new addresses and keeps
+     * landing somewhere it has already been, so every screen-based signal reads
+     * as no progress.
+     */
+    const landedPages = new Set(
+      report.steps.map((step) => pathOf(step.url || "")).filter(Boolean)
+    );
+    /*
+     * Only meaningful for a run that navigated. A scenario driven by clicking
+     * never requests an address, and reporting "0 requested, 3 reached" would put
+     * a navigation statistic on a report that did no navigation -- the shape of
+     * one scenario type leaking into every other.
+     */
+    if (visitedPaths.size > 0) {
+      report.routeCollapse = {
+        addressesRequested: visitedPaths.size,
+        distinctPagesReached: landedPages.size,
+        redirected: redirects.size
+      };
+    }
+
+    const expectedSteps = expectedStepsFrom(contextData);
+    report.effort = {
+      stepsUsed: stepIndex,
+      maxSteps: config.maxSteps,
+      ...(expectedSteps
+        ? {
+            expectedSteps,
+            stepDriftPct: Math.round(((stepIndex - expectedSteps) / expectedSteps) * 100)
+          }
+        : {}),
+      recoverableFailures,
+      criteriaMet: [...metCriteria],
+      screenChangesSinceGoalProgress,
+      turnsSinceGoalProgress
+    };
+    /*
+     * Ask the agent what it achieved when a run ends short.
+     *
+     * `report.error` says why the runner stopped; it cannot say how close the
+     * agent got, which criteria it satisfied, or whether it was blocked by the
+     * app or simply could not find the path. Only the agent knows that, and it
+     * is the difference between "the app cannot do this" and "the route to it is
+     * too convoluted to follow".
+     */
+    if (report.status === "failed" && typeof planner.summarize === "function") {
+      try {
+        const done = actionHistory
+          .filter((entry) => entry.outcome === "ok")
+          .map((entry) => `- ${entry.action.payload.action}: ${clip(entry.action.reason, 120)}`)
+          .slice(-25)
+          .join("\n");
+        report.closingStatement = await planner.summarize(
+          `A web test run has ended without completing its objective.\n\n` +
+            `OBJECTIVE:\n${scenario}\n\n` +
+            `WHY IT STOPPED:\n${report.error}\n\n` +
+            (progressCheckpoint
+              ? `CRITERIA ALREADY CONFIRMED MET DURING THE RUN:\n${progressCheckpoint}\n\n`
+              : "") +
+            `WHAT IT DID (most recent successful actions):\n${done || "(nothing succeeded)"}\n\n` +
+            `Write a short closing statement for a QA report:\n` +
+            `1. What was achieved, concretely.\n` +
+            `2. Which parts of the objective were NOT reached.\n` +
+            `3. Whether the app could not do it, the path to it was hard to find, or the run ` +
+            `simply ran out of actions — and what makes you say so.\n` +
+            `Be specific and do not claim anything you did not verify.`
+        );
+      } catch (error) {
+        // A missing post-mortem must never turn a reportable failure into a crash.
+        logger.warn(`closing statement unavailable: ${errorMessage(error)}`);
+      }
+    }
+
+    report.outcome =
+      report.outcome ||
+      classifyOutcome({
+        status: report.status,
+        error: report.error,
+        metCriteria: metCriteria.size,
+        recoverableFailures,
+        stepsUsed: stepIndex,
+        expectedSteps
+      });
 
     const configuredPricing = getConfiguredModelPricing(config);
     if (configuredPricing) {

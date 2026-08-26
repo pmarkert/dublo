@@ -128,3 +128,195 @@ void test("progress key tolerates a missing or malformed observation", async () 
   assert.equal(typeof progressKey("/x", {}), "string");
   assert.equal(typeof progressKey("/x", { controls: [{}, null] }), "string");
 });
+
+void test("a resolving id wins over abbreviated descriptive fields", async () => {
+  const { resolveTargetControl } = await import("../../src/utils/scenario-runner.mjs");
+  const controls = [
+    { id: "a17", text: "Account Manage your name, picture, and care network." },
+    { id: "a20", text: "Family Accounts Manage dependent accounts for family members" }
+  ];
+
+  // Models abbreviate the text they saw. The id already pins the element, so a
+  // partial text should not turn into "target not found" -- which tells the
+  // planner the element vanished and invites a retry against an unchanged page.
+  // resolveTargetControl comes from an untyped .mjs, so name the shape we assert on.
+  const hit = resolveTargetControl(controls, { id: "a17", text: "Account" }) as { id: string };
+  assert.equal(hit.id, "a17");
+
+  // An exact match still works, and an id that matches nothing still throws.
+  assert.equal((resolveTargetControl(controls, { id: "a20" }) as { id: string }).id, "a20");
+  assert.throws(() => resolveTargetControl(controls, { id: "a99" }), /not found/);
+});
+
+void test("required paths come from an explicit list or a pointer into context", async () => {
+  const { requiredVisitedPaths } = await import("../../src/utils/scenario-runner.mjs");
+
+  assert.deepEqual(requiredVisitedPaths({ finish: { requireVisited: ["/a", "/b"] } }), ["/a", "/b"]);
+
+  // A pointer lets a sweep reuse the inventory it was already given, rather than
+  // restating thirty paths that would then drift.
+  const ctx = { routes: { app: ["/x", "/y"] }, finish: { requireVisitedFrom: "routes.app" } };
+  assert.deepEqual(requiredVisitedPaths(ctx), ["/x", "/y"]);
+
+  // Absent, malformed, or dangling config means no gate — never a crash.
+  assert.deepEqual(requiredVisitedPaths({}), []);
+  assert.deepEqual(requiredVisitedPaths(undefined), []);
+  assert.deepEqual(requiredVisitedPaths({ finish: { requireVisitedFrom: "nope.missing" } }), []);
+  assert.deepEqual(requiredVisitedPaths({ finish: { requireVisited: "not-an-array" } }), []);
+});
+
+void test("path comparison ignores origin and query", async () => {
+  const { pathOf } = await import("../../src/utils/scenario-runner.mjs");
+  assert.equal(pathOf("http://localhost:8080/settings/account"), "/settings/account");
+  assert.equal(pathOf("http://localhost:8080/myday?view=timeline"), "/myday");
+  assert.equal(pathOf("http://localhost:8080"), "/");
+  assert.equal(pathOf("not a url"), "not a url");
+});
+
+void test("outcome classification distinguishes why a run ended", async () => {
+  const { classifyOutcome } = await import("../../src/utils/scenario-runner.mjs");
+  const base = { metCriteria: 2, recoverableFailures: 0 };
+
+  // Friction, not budget: the step ceiling is a guess, so grading against it would
+  // score identical work differently depending on the number the scenario carries.
+  assert.equal(classifyOutcome({ ...base, status: "passed" }), "completed");
+  assert.equal(
+    classifyOutcome({ ...base, status: "passed", recoverableFailures: 7 }),
+    "completed-with-friction"
+  );
+  // A generous budget must not change the verdict for the same work.
+  assert.equal(classifyOutcome({ ...base, status: "passed", recoverableFailures: 1 }), "completed");
+
+  // Moving without arriving is a path problem; jammed on one control is not.
+  assert.equal(
+    classifyOutcome({ ...base, status: "failed", error: "Aborted after 15 turns without meeting a new success criterion" }),
+    "lost"
+  );
+  assert.equal(
+    classifyOutcome({ ...base, status: "failed", error: "Aborted after 8 consecutive turns with no visible change" }),
+    "stuck"
+  );
+  assert.equal(
+    classifyOutcome({ ...base, status: "failed", error: "Aborted after the same action failed 3 times in a row" }),
+    "blocked"
+  );
+
+  // Out of budget while still meeting criteria means the budget was wrong, not the app.
+  assert.equal(
+    classifyOutcome({ ...base, status: "failed", error: "Max steps reached (100) before objective completion." }),
+    "budget-exhausted"
+  );
+  assert.equal(
+    classifyOutcome({ ...base, status: "failed", error: "Max steps reached (100)", metCriteria: 0 }),
+    "lost"
+  );
+});
+
+void test("step drift is measured against a baseline, not a budget", async () => {
+  const { classifyOutcome, expectedStepsFrom } = await import("../../src/utils/scenario-runner.mjs");
+
+  assert.equal(expectedStepsFrom({ finish: { expectedSteps: 45 } }), 45);
+  assert.equal(expectedStepsFrom({ finish: {} }), 0);
+  assert.equal(expectedStepsFrom({ finish: { expectedSteps: "45" } }), 0);
+  assert.equal(expectedStepsFrom(undefined), 0);
+
+  const pass = { status: "passed", metCriteria: 3, recoverableFailures: 0 };
+
+  // Within tolerance, and comfortably over it.
+  assert.equal(classifyOutcome({ ...pass, stepsUsed: 50, expectedSteps: 45 }), "completed");
+  assert.equal(
+    classifyOutcome({ ...pass, stepsUsed: 70, expectedSteps: 45 }),
+    "completed-slower-than-expected"
+  );
+
+  // No baseline declared means no drift verdict — silence, not a guess.
+  assert.equal(classifyOutcome({ ...pass, stepsUsed: 500, expectedSteps: 0 }), "completed");
+
+  // Friction is the more actionable finding when both apply.
+  assert.equal(
+    classifyOutcome({ ...pass, recoverableFailures: 9, stepsUsed: 70, expectedSteps: 45 }),
+    "completed-with-friction"
+  );
+});
+
+void test("a harness failure is never reported as an app defect", async () => {
+  const { classifyOutcome } = await import("../../src/utils/scenario-runner.mjs");
+  const failed = { status: "failed", metCriteria: 0, recoverableFailures: 2 };
+
+  // Each of these is the tool failing, not the product. Falling through to
+  // "blocked" would send someone hunting a bug that does not exist.
+  for (const error of [
+    "Bedrock planner API returned no planner action.",
+    "Model produced invalid sequence as part of ToolUse.",
+    "Bedrock preflight failed for model 'x'.",
+    "Bedrock planner returned an invalid 'finish' turn with fields [actions, reason]"
+  ]) {
+    assert.equal(classifyOutcome({ ...failed, error }), "tooling-error");
+  }
+
+  // A genuine repeated-action failure still reads as blocked.
+  assert.equal(
+    classifyOutcome({ ...failed, error: "Aborted after the same action failed 3 times in a row" }),
+    "blocked"
+  );
+});
+
+void test("absence of a progress signal is not evidence of being lost", async () => {
+  const { classifyOutcome } = await import("../../src/utils/scenario-runner.mjs");
+  // The guard that produces this error only fires once criteriaMet has been used
+  // at least once; a planner that never reports it must not be judged lost. This
+  // asserts the classification stays honest about which signal it acted on.
+  assert.equal(
+    classifyOutcome({
+      status: "failed",
+      error: "Aborted after 15 turns without meeting a new success criterion, across 9 screen changes.",
+      metCriteria: 3,
+      recoverableFailures: 0
+    }),
+    "lost"
+  );
+});
+
+void test("a stale id does not override a descriptor that contradicts it", async () => {
+  const { resolveTargetControl } = await import("../../src/utils/scenario-runner.mjs");
+  const controls = [
+    { id: "a3", tag: "button", label: "Continue with email" },
+    { id: "a7", tag: "input", label: "Email address" }
+  ];
+
+  // A replayed block records ids that later belong to other elements. Trusting the
+  // id here filled a button that had inherited the id recorded for an email field.
+  // Refusing is the correct outcome: "not found" is recoverable and lets the block
+  // self-heal onto the right control, where filling the wrong one is silent damage.
+  assert.throws(
+    () => resolveTargetControl(controls, { id: "a3", tag: "input", label: "Email address" }),
+    /not found/
+  );
+
+  // An abbreviated descriptor is still agreement, not contradiction.
+  const controls2 = [{ id: "a17", text: "Account Manage your name, picture, and care network." }];
+  assert.equal(
+    (resolveTargetControl(controls2, { id: "a17", text: "Account" }) as { id: string }).id,
+    "a17"
+  );
+});
+
+void test("an unprepared environment is never reported as an app verdict", async () => {
+  const { classifyOutcome, preconditionsFrom } = await import("../../src/utils/scenario-runner.mjs");
+
+  assert.deepEqual(preconditionsFrom({ preconditions: [{ path: "/myday" }] }), [{ path: "/myday" }]);
+  assert.deepEqual(preconditionsFrom({}), []);
+  assert.deepEqual(preconditionsFrom({ preconditions: "nope" }), []);
+
+  // The run never started, so no verdict about the product is available. Reporting
+  // this as "blocked" pointed at a defect that did not exist.
+  for (const error of [
+    "Precondition not met: MyDay must show at least one task for today.",
+    "Could not verify precondition (x): navigation failed"
+  ]) {
+    assert.equal(
+      classifyOutcome({ status: "failed", error, metCriteria: 0, recoverableFailures: 3 }),
+      "precondition-not-met"
+    );
+  }
+});

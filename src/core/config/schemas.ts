@@ -36,6 +36,8 @@ export const WorkspaceDefaultsSchema = z
     maxActionsPerTurn: z.number().int().nonnegative().optional(),
     maxRepeatedFailures: z.number().int().positive().optional(),
     maxStagnantTurns: z.number().int().positive().optional(),
+    maxTurnsWithoutGoalProgress: z.number().int().positive().optional(),
+    init: z.array(z.string()).optional(),
     settleDelayMs: z.number().int().positive().optional(),
     settleTimeoutMs: z.number().int().positive().optional(),
     headless: z.boolean().optional(),

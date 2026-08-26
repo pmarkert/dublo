@@ -17,6 +17,7 @@ export function buildPlannerMessages({
   secretValues = new Map(),
   screenshotRequested,
   strictTargetSelectors = false,
+  goalProgress = null,
 }) {
   const redactedObservation = redactSecretValues(observation, secretValues);
   const compactControls = redactedObservation.controls.map((control) => ({
@@ -88,6 +89,7 @@ export function buildPlannerMessages({
       "If observation.truncated is true, more controls exist than are shown; scroll or interact to reveal the rest instead of assuming the visible list is complete.",
       "A control with low or none confidence (or inferred:true) has a weak or missing accessible name; identify it by contextPath and position, and treat a missing name on an interactive control as an accessibility issue worth a finding.",
       "Use navigate with a same-origin url to follow a known deep link, and go_back to return to the previous page (for example to verify state survives browser back).",
+      "When goalProgress is present it is an audit of the objective taken mid-run: `met` is confirmed done, `outstanding` is what remains. Work on the outstanding items; do not redo the met ones, and do not finish while any remain unless you state in the summary why they could not be done.",
       "completedWork is a durable record of successful work from this run. Do not scroll only to re-verify completed work; use the current observation and completedWork to decide what remains.",
       "A successful submit or save followed by visible confirmation of the saved item is sufficient persistence evidence. Do not reopen a saved item merely to inspect settings already recorded in completedWork unless the objective explicitly requires post-save verification or visible evidence contradicts it.",
       "Before finishing, do not try to audit every part of a long form from one viewport. Combine current visible evidence with completedWork; if all success criteria are covered, finish instead of alternating scroll directions.",
@@ -105,8 +107,10 @@ export function buildPlannerMessages({
       "Do not return finish while the UI appears to be loading or transitioning.",
       "Before finish, verify visible evidence for the success criteria in the test prompt.",
       "Use give_up with a specific reason only after exhausting credible actions and no safe or reliable path to the objective remains.",
-      "When the objective is completed, return finish.",
-      "Use report_finding to record a defect or notable issue (accessibility, usability, functional, performance, or security) without ending the run. It is non-terminal: after reporting, continue toward the objective. Report each distinct issue once; do not repeat a finding already recorded in recentActions.",
+      "Track the scenario's success criteria explicitly. Each turn, set `criteriaMet` to the short stable labels of every criterion satisfied so far -- reuse the same label once you have used it. This is how the run knows it is getting closer rather than merely moving; a run that keeps changing screens without meeting a new criterion is treated as lost, and reported as a path too convoluted to follow rather than a defect.",
+      "Before you finish, re-read the objective and check yourself against it: list each success criterion and whether you met it, could not meet it, or could not determine it. If any are unmet, either go and do them or say plainly in the summary that they are unmet and why. Do not report success for work you did not do.",
+      "When the objective is completed, return finish with a `summary` stating what you verified — for a sweep, the per-item verdict table the scenario asked for. The summary is the run's deliverable; `status` records only that you stopped, not what you found.",
+      "Use report_finding to record a defect or notable issue (accessibility, usability, functional, performance, or security) without ending the run. It is non-terminal: after reporting, continue toward the objective. Report each distinct issue once; do not repeat a finding already recorded in recentActions. Never file a finding for behaviour that matches what the scenario says should happen — a confirmed expectation belongs in the finish summary, not in the defect list.",
     ],
     humanEscalationRules: [
       // A registered secret must win over human escalation. Naming OTP codes
@@ -146,6 +150,15 @@ export function buildPlannerMessages({
     screenshotRequested,
     completedWork: redactSecretValues(completedWork, secretValues),
     recentActions: actionHistory.slice(-10),
+    /*
+     * A checkpoint of the objective, once one has been taken: what is confirmed
+     * done and what is outstanding.
+     *
+     * completedWork lists actions, which is not the same as progress -- it grows
+     * just as fast while exploring the wrong part of the app. This is the only
+     * place the agent is told, in the objective's own terms, what it still owes.
+     */
+    ...(goalProgress ? { goalProgress } : {}),
   };
 
   const systemText = [

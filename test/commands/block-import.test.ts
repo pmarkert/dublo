@@ -28,7 +28,7 @@ void test("imports successful replayable steps after startup from the latest run
         {
           index: 1,
           outcome: "ok",
-          plannerAction: { reason: "Startup.", payload: { action: "finish" } }
+          plannerAction: { reason: "Startup.", payload: { action: "finish", summary: "done" } }
         },
         {
           index: 2,
@@ -49,7 +49,7 @@ void test("imports successful replayable steps after startup from the latest run
         {
           index: 4,
           outcome: "ok",
-          plannerAction: { reason: "Done.", payload: { action: "finish" } }
+          plannerAction: { reason: "Done.", payload: { action: "finish", summary: "done" } }
         },
         {
           index: 5,
@@ -111,7 +111,7 @@ void test("imports descriptive targets and a URL post-condition for replay", asy
         {
           index: 1,
           outcome: "ok",
-          plannerAction: { reason: "Startup.", payload: { action: "finish" } }
+          plannerAction: { reason: "Startup.", payload: { action: "finish", summary: "done" } }
         },
         {
           index: 2,

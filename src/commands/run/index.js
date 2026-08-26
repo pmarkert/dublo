@@ -96,7 +96,13 @@ export async function runCommand(options) {
     })
   );
   config.contextOperations = resolveContextOperations(config);
-  config.initBlocks = await resolveInitBlocks(options.init, config.workspace);
+  // `--init` wins; otherwise fall back to `init` in defaults.json / DUBLO_INIT, so a
+  // workspace whose scenarios all need the same setup (a sign-in, say) does not
+  // depend on every caller remembering the flag.
+  config.initBlocks = await resolveInitBlocks(
+    options.init && options.init.length > 0 ? options.init : config.init,
+    config.workspace
+  );
 
   if (config.scenario && config.adhocScenario) {
     throw new Error("Provide either a scenario reference (--scenario or positional) or --adhoc, not both.");

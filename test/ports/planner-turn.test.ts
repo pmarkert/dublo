@@ -5,7 +5,7 @@ import { PlannerTurnSchema } from "../../src/ports/planner.js";
 void test("accepts a single non-batchable action", () => {
   const result = PlannerTurnSchema.safeParse({
     reason: "Objective met.",
-    actions: [{ action: "finish" }]
+    actions: [{ action: "finish", summary: "done" }]
   });
   assert.equal(result.success, true);
 });
@@ -41,7 +41,7 @@ void test("drops a non-batchable action after the first, keeping the first", () 
 void test("drops extras after a non-batchable primary, keeping the primary", () => {
   const result = PlannerTurnSchema.safeParse({
     reason: "Finish then click.",
-    actions: [{ action: "finish" }, { action: "click", target: { id: "a1" } }]
+    actions: [{ action: "finish", summary: "done" }, { action: "click", target: { id: "a1" } }]
   });
   assert.equal(result.success, true);
   assert.equal(result.data?.actions.length, 1);

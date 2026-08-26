@@ -372,12 +372,22 @@ export function createBedrockPlanner(
   return {
     async preflight() {
       try {
-        const result = await sendWithServiceTierFallback(client, config, {
+        // Retried for the same reason nextAction() retries it: Bedrock rejects a
+        // model's malformed tool-use output intermittently, and a run should not
+        // die before it starts over one bad turn.
+        let result;
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            result = await sendWithServiceTierFallback(client, config, {
           messages: [
             {
               role: "user",
               content: [
                 {
+                  // Deliberately minimal. The probe only needs to prove the model
+                  // can emit one valid tool call; asking for optional fields makes
+                  // the requested shape harder and a weaker model then fails
+                  // preflight for a capability it actually has.
                   text: "Call the planner_action tool with reason 'Preflight.' and actions set to a single entry with action 'finish'."
                 }
               ]
@@ -392,8 +402,13 @@ export function createBedrockPlanner(
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
             : {}),
-          ...buildToolConfig(config)
-        });
+              ...buildToolConfig(config)
+            });
+            break;
+          } catch (error) {
+            if (!isMalformedToolUseError(error) || attempt >= PLANNER_SCHEMA_RETRIES) throw error;
+          }
+        }
         assertBedrockConverseResponse(result);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
@@ -402,6 +417,25 @@ export function createBedrockPlanner(
           { cause: error }
         );
       }
+    },
+
+    async summarize(prompt: string): Promise<string> {
+      // No toolConfig: a plain completion cannot fail the way a tool call can,
+      // which matters because this runs precisely when tool use has gone wrong.
+      const result = assertBedrockConverseResponse(
+        await sendWithServiceTierFallback(client, config, {
+          messages: [{ role: "user", content: [{ text: prompt }] }],
+          inferenceConfig: buildInferenceConfig(config, 800)
+        })
+      );
+      const output = isRecord(result.output) ? result.output : undefined;
+      const message = output && isRecord(output.message) ? output.message : undefined;
+      const items = Array.isArray(message?.content) ? message.content : [];
+      return items
+        .filter(isRecord)
+        .map((item) => (typeof item.text === "string" ? item.text : ""))
+        .join("\n")
+        .trim();
     },
 
     async nextAction(request: PlannerRequest): Promise<PlannerResponse> {

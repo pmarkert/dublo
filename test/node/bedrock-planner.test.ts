@@ -26,7 +26,7 @@ void test("Bedrock planner validates tool-use actions through an injected client
                       name: "planner_action",
                       input: {
                         reason: "Success criteria are visible.",
-                        actions: [{ action: "finish" }]
+                        actions: [{ action: "finish", summary: "done" }]
                       }
                     }
                   }
@@ -43,7 +43,7 @@ void test("Bedrock planner validates tool-use actions through an injected client
 
   assert.deepEqual(response.action, {
     reason: "Success criteria are visible.",
-    actions: [{ action: "finish" }]
+    actions: [{ action: "finish", summary: "done" }]
   });
   assert.deepEqual(response.tokenUsage, {
     inputTokens: 8,
@@ -81,7 +81,7 @@ void test("Bedrock planner enables strict tool validation when the model support
                       name: "planner_action",
                       input: {
                         reason: "Success criteria are visible.",
-                        actions: [{ action: "finish" }]
+                        actions: [{ action: "finish", summary: "done" }]
                       }
                     }
                   }
@@ -235,7 +235,7 @@ void test("Bedrock planner inserts cache points when prompt caching is enabled",
                   {
                     toolUse: {
                       name: "planner_action",
-                      input: { reason: "Done.", actions: [{ action: "finish" }] }
+                      input: { reason: "Done.", actions: [{ action: "finish", summary: "done" }] }
                     }
                   }
                 ]
@@ -278,7 +278,7 @@ void test("Bedrock planner omits cache points by default", async () => {
                   {
                     toolUse: {
                       name: "planner_action",
-                      input: { reason: "Done.", actions: [{ action: "finish" }] }
+                      input: { reason: "Done.", actions: [{ action: "finish", summary: "done" }] }
                     }
                   }
                 ]
@@ -310,7 +310,7 @@ void test("Bedrock planner preflight sends the planner tool definition", async (
                   {
                     toolUse: {
                       name: "planner_action",
-                      input: { reason: "Preflight.", actions: [{ action: "finish" }] }
+                      input: { reason: "Preflight.", actions: [{ action: "finish", summary: "done" }] }
                     }
                   }
                 ]

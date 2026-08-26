@@ -10,7 +10,7 @@ export const reportGenerator = {
     return [
       "# Agentic Scenario (LLM-Driven)",
       "",
-      `- Status: ${report.status}`,
+      `- Status: ${report.status}${report.outcome ? ` (${report.outcome})` : ""}`,
       `- Provider/Model: ${modelSummary}`,
       `- Final URL: ${report.finalUrl || "n/a"}`,
       `- Run ID: ${runId}`,
@@ -27,6 +27,43 @@ export const reportGenerator = {
             `- Cache Read: ${report.costEstimate.costs.cacheRead.toFixed(6)} ${report.costEstimate.currency}`,
             `- Cache Write: ${report.costEstimate.costs.cacheWrite.toFixed(6)} ${report.costEstimate.currency}`,
             `- Total: ${report.costEstimate.costs.total.toFixed(6)} ${report.costEstimate.currency}`,
+            "",
+          ]
+        : []),
+      ...(report.summary
+        ? ["## Verdict", stripAnsi(report.summary), ""]
+        : []),
+      ...(report.closingStatement
+        ? ["## How far it got", stripAnsi(report.closingStatement), ""]
+        : []),
+      ...(report.effort
+        ? [
+            "## Effort",
+            `- Steps: ${report.effort.stepsUsed}${
+              report.effort.expectedSteps
+                ? ` (expected ${report.effort.expectedSteps}, drift ${report.effort.stepDriftPct}%)`
+                : ""
+            }`,
+            `- Recoverable failures: ${report.effort.recoverableFailures}`,
+            ...(report.effort.criteriaMet?.length
+              ? [`- Criteria met: ${report.effort.criteriaMet.join("; ")}`]
+              : []),
+            ...(report.routeCollapse
+              ? [
+                  `- Addresses requested: ${report.routeCollapse.addressesRequested}, ` +
+                    `distinct pages reached: ${report.routeCollapse.distinctPagesReached}, ` +
+                    `redirected: ${report.routeCollapse.redirected}`
+                ]
+              : []),
+            "",
+          ]
+        : []),
+      ...(Array.isArray(report.redirects) && report.redirects.length
+        ? [
+            `## Redirects (${report.redirects.length})`,
+            "| Requested | Landed on |",
+            "| --- | --- |",
+            ...report.redirects.map((entry) => `| \`${entry.from}\` | \`${entry.to}\` |`),
             "",
           ]
         : []),

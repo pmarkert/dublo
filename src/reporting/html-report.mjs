@@ -305,6 +305,45 @@ export const reportGenerator = {
           <div><span class="meta-label">Screenshots</span><strong>${escapeHtml(screenshots)}</strong></div>
         </div>
       </section>
+      ${
+        report.summary
+          ? `<section class="card"><h2>Verdict</h2><pre style="white-space:pre-wrap">${escapeHtml(
+              stripAnsi(report.summary)
+            )}</pre></section>`
+          : ""
+      }
+      ${
+        report.closingStatement
+          ? `<section class="card"><h2>How far it got</h2><pre style="white-space:pre-wrap">${escapeHtml(
+              stripAnsi(report.closingStatement)
+            )}</pre></section>`
+          : ""
+      }
+      ${
+        report.effort
+          ? `<section class="card"><h2>Effort</h2><ul>` +
+            `<li>Steps: ${report.effort.stepsUsed}${
+              report.effort.expectedSteps
+                ? ` (expected ${report.effort.expectedSteps}, drift ${report.effort.stepDriftPct}%)`
+                : ""
+            }</li>` +
+            `<li>Recoverable failures: ${report.effort.recoverableFailures}</li>` +
+            (report.routeCollapse
+              ? `<li>Addresses requested: ${report.routeCollapse.addressesRequested}, distinct pages reached: ${report.routeCollapse.distinctPagesReached}, redirected: ${report.routeCollapse.redirected}</li>`
+              : "") +
+            `</ul></section>`
+          : ""
+      }
+      ${
+        Array.isArray(report.redirects) && report.redirects.length
+          ? `<section class="card"><h2>Redirects (${report.redirects.length})</h2><table>` +
+            `<tr><th>Requested</th><th>Landed on</th></tr>` +
+            report.redirects
+              .map((e) => `<tr><td><code>${escapeHtml(e.from)}</code></td><td><code>${escapeHtml(e.to)}</code></td></tr>`)
+              .join("") +
+            `</table></section>`
+          : ""
+      }
       ${costSummary}
       <section class="card prompt"><h2>Test Prompt</h2><p>${escapeHtml(scenario)}</p></section>
       ${findingsHtml}
