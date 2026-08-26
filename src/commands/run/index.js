@@ -268,6 +268,7 @@ function normalizeLlmConfig(value = {}) {
     cacheWritePrice: firstDefined(llm.cacheWritePrice, llm["cache-write-price"]),
     currency: firstDefined(llm.currency),
     tokenUnit: firstDefined(llm.tokenUnit, llm["token-unit"]),
+    promptCaching: firstDefined(llm.promptCaching, llm["prompt-caching"]),
     supportsConditionalToolSchemas: firstDefined(llm.supportsConditionalToolSchemas),
     supportsStrictToolUse: firstDefined(llm.supportsStrictToolUse)
   };

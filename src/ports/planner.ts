@@ -38,6 +38,10 @@ export const PlannerActionPayloadSchema = z.discriminatedUnion("action", [
       direction: z.enum(["up", "down"])
     })
     .strict(),
+  z.object({ action: z.literal("press_key"), key: z.string().trim().min(1) }).strict(),
+  z.object({ action: z.literal("hover"), target: TargetSelectorSchema }).strict(),
+  z.object({ action: z.literal("navigate"), url: z.string().trim().min(1) }).strict(),
+  z.object({ action: z.literal("go_back") }).strict(),
   z
     .object({ action: z.literal("wait_until_gone"), expectGone: WaitUntilGoneExpectationSchema })
     .strict(),
@@ -56,6 +60,15 @@ export const PlannerActionPayloadSchema = z.discriminatedUnion("action", [
     .strict(),
   z
     .object({ action: z.literal("request_screenshot"), screenshotPrompt: z.string().trim().min(1) })
+    .strict(),
+  z
+    .object({
+      action: z.literal("report_finding"),
+      severity: z.enum(["info", "minor", "major", "critical"]),
+      category: z.enum(["accessibility", "usability", "functional", "performance", "security"]),
+      summary: z.string().trim().min(1),
+      evidence: z.string().trim().min(1).optional()
+    })
     .strict(),
   z.object({ action: z.literal("give_up") }).strict(),
   z.object({ action: z.literal("finish") }).strict()

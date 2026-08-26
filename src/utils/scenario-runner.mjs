@@ -6,7 +6,8 @@ import { createBedrockPlanner } from "../node/bedrock-planner.js";
 import { createOpenAICompatiblePlanner } from "../node/openai-compatible-planner.js";
 import { createPlaywrightBrowserFactory } from "../node/playwright-browser.js";
 import { createTerminalInteractionProvider } from "../node/terminal-interaction.js";
-import { loadContextFromOperations, redactSecretValues } from "./scenario/context-operations.mjs";
+import { loadContextFromOperations, redactSecretValues, scrubSecretsFromText } from "./scenario/context-operations.mjs";
+import { createRuntimeErrorTracker } from "./scenario/runtime-errors.mjs";
 import { buildPlannerMessages } from "./scenario/planner-context.mjs";
 import { loadObservationConfig, normalizeScreenshotMode } from "./scenario/observation-config.mjs";
 import { collectObservation } from "./scenario/observation.mjs";
@@ -227,6 +228,7 @@ export async function runScenario(config, options = {}) {
     },
     pricing: null,
     costEstimate: null,
+    findings: [],
     steps: [],
     artifactsDir: runDir,
   };
@@ -246,6 +248,9 @@ export async function runScenario(config, options = {}) {
             ? { additionalModelRequestFields: config.llm.additionalModelRequestFields }
             : {}),
           ...(config.llm.serviceTier ? { serviceTier: config.llm.serviceTier } : {}),
+          ...(config.llm.promptCaching !== undefined
+            ? { promptCaching: config.llm.promptCaching }
+            : {}),
           ...(config.llm.supportsConditionalToolSchemas !== undefined
             ? { supportsConditionalToolSchemas: config.llm.supportsConditionalToolSchemas }
             : {}),
@@ -292,6 +297,8 @@ export async function runScenario(config, options = {}) {
     viewport: { width: 1440, height: 900 },
   });
   const { page } = browserSession;
+  const runtimeErrorTracker = createRuntimeErrorTracker(page);
+  const drainRuntimeErrors = () => scrubSecretsFromText(runtimeErrorTracker.drain(), secretValues);
   const plannerAbortController = new AbortController();
   page.once("close", () => {
     browserClosed = true;
@@ -384,6 +391,7 @@ export async function runScenario(config, options = {}) {
         plannerTokenUsage: stepDebugContext?.plannerTokenUsage,
         phase: metadata?.phase,
         initBlock: metadata?.initBlock,
+        ...(metadata?.runtimeErrors?.length ? { runtimeErrors: metadata.runtimeErrors } : {}),
         outcome: stepError ? "error" : "ok",
         error: stepError || undefined,
       });
@@ -448,12 +456,13 @@ export async function runScenario(config, options = {}) {
         observationTurn += 1;
         const turnToken = `t${observationTurn}`;
         const observation = await collectObservation(page, observationConfig, turnToken);
+        observation.runtimeErrors = drainRuntimeErrors();
         await captureStep(
           `init_${sanitizeSegment(block.name)}_${action.payload.action}`,
           action,
           () => executeDeterministicAction(action, observation, turnToken),
           config.debug ? { observation: redactSecretValues(observation, secretValues) } : undefined,
-          { phase: "init", initBlock: block.name }
+          { phase: "init", initBlock: block.name, runtimeErrors: observation.runtimeErrors }
         );
       }
     }
@@ -464,6 +473,7 @@ export async function runScenario(config, options = {}) {
       observationTurn += 1;
       const turnToken = `t${observationTurn}`;
       const observation = await collectObservation(page, observationConfig, turnToken);
+      observation.runtimeErrors = drainRuntimeErrors();
       throwIfInterrupted();
       logger.info(`observation ${i + 1}: ${formatObservationSummary(observation)}`);
 
@@ -519,7 +529,9 @@ export async function runScenario(config, options = {}) {
         ? plannerPayload.target.id
         : "containerId" in plannerPayload
           ? plannerPayload.containerId
-          : "selector")}`;
+          : "severity" in plannerPayload
+            ? plannerPayload.severity
+            : "selector")}`;
 
       let recoverableOutcome = null;
       let recoverableErrorMessage = "";
@@ -677,11 +689,31 @@ export async function runScenario(config, options = {}) {
             return;
           }
 
+          if (plannerPayload.action === "report_finding") {
+            report.findings.push({
+              step: stepIndex,
+              url: page.url(),
+              severity: plannerPayload.severity,
+              category: plannerPayload.category,
+              summary: plannerPayload.summary,
+              ...(plannerPayload.evidence ? { evidence: plannerPayload.evidence } : {}),
+              reason: plannerAction.reason,
+            });
+            logger.info(
+              `finding [${plannerPayload.severity}/${plannerPayload.category}]: ${clip(plannerPayload.summary, 140)}`
+            );
+            return;
+          }
+
           if (
             plannerPayload.action !== "scroll" &&
             plannerPayload.action !== "click" &&
             plannerPayload.action !== "fill" &&
-            plannerPayload.action !== "select_option"
+            plannerPayload.action !== "select_option" &&
+            plannerPayload.action !== "hover" &&
+            plannerPayload.action !== "press_key" &&
+            plannerPayload.action !== "navigate" &&
+            plannerPayload.action !== "go_back"
           ) {
             throw new Error(`Unsupported planner action: ${plannerPayload.action}`);
           }
@@ -697,6 +729,7 @@ export async function runScenario(config, options = {}) {
             secretValues,
             settleDelayMs: config.settleDelayMs,
             settleTimeoutMs: config.settleTimeoutMs,
+            baseUrl: config.baseUrl,
             logger,
             throwIfInterrupted,
           });
@@ -707,7 +740,8 @@ export async function runScenario(config, options = {}) {
           }
           return;
         },
-        stepDebugContext
+        stepDebugContext,
+        { runtimeErrors: observation.runtimeErrors }
       );
     } catch (error) {
         const recoverableKind = classifyRecoverableActionError(error);
@@ -825,6 +859,7 @@ export async function runScenario(config, options = {}) {
     };
     await writeFile(latestManifestPath, `${JSON.stringify(latestManifest, null, 2)}\n`, "utf8");
 
+    runtimeErrorTracker.dispose();
     await browserSession.close();
 
     const statusPrefix = report.status === "passed"

@@ -52,3 +52,51 @@ void test("renders action, URL, duration, and reason in each step header", () =>
     /\.raw-json-toggle pre \{ min-width: 0; max-width: 100%; overflow-x: auto; \}/
   );
 });
+
+void test("renders reported findings and per-step runtime signals", () => {
+  const html = reportGenerator.render({
+    context: {
+      config: { baseUrl: "https://example.com" },
+      modelSummary: "test/model",
+      runId: "run-2",
+      scenario: "Explore",
+      screenshots: "none"
+    },
+    report: {
+      finalUrl: "https://example.com/home",
+      status: "passed",
+      findings: [
+        {
+          step: 3,
+          url: "https://example.com/cart",
+          severity: "major",
+          category: "accessibility",
+          summary: "Remove button has no accessible name.",
+          evidence: "Icon-only button with no label.",
+          reason: "Screen reader users cannot identify the control."
+        }
+      ],
+      steps: [
+        {
+          durationMs: 50,
+          index: 3,
+          name: "click_a5",
+          plannerAction: {
+            reason: "Open cart.",
+            payload: { action: "click", target: { id: "a5" } }
+          },
+          url: "https://example.com/cart",
+          runtimeErrors: [
+            { type: "response", status: 500, method: "GET", url: "https://api.example.com/cart" }
+          ]
+        }
+      ]
+    }
+  });
+
+  assert.match(html, /<h2>Findings \(1\)<\/h2>/);
+  assert.match(html, /finding finding-major/);
+  assert.match(html, /Remove button has no accessible name\./);
+  assert.match(html, /<h4>Runtime Signals<\/h4>/);
+  assert.match(html, /response · 500 · GET · https:\/\/api\.example\.com\/cart/);
+});

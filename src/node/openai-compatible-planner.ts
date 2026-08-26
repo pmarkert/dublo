@@ -141,6 +141,10 @@ function buildPlannerActionSchema(): Record<string, unknown> {
             { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
             ["containerId", "direction"]
           ),
+          variant("press_key", { key: { type: "string" } }, ["key"]),
+          variant("hover", { target }, ["target"]),
+          variant("navigate", { url: { type: "string" } }, ["url"]),
+          variant("go_back"),
           variant(
             "wait_until_gone",
             {
@@ -164,6 +168,18 @@ function buildPlannerActionSchema(): Record<string, unknown> {
           variant("request_screenshot", { screenshotPrompt: { type: "string" } }, [
             "screenshotPrompt"
           ]),
+          variant(
+            "report_finding",
+            {
+              severity: { enum: ["info", "minor", "major", "critical"] },
+              category: {
+                enum: ["accessibility", "usability", "functional", "performance", "security"]
+              },
+              summary: { type: "string" },
+              evidence: { type: "string" }
+            },
+            ["severity", "category", "summary"]
+          ),
           variant("give_up"),
           variant("finish")
         ]

@@ -9,7 +9,8 @@ import {
 import {
   loadContextFromOperations,
   redactSecretValues,
-  resolveFillValue
+  resolveFillValue,
+  scrubSecretsFromText
 } from "../../src/utils/scenario/context-operations.mjs";
 import { executeBrowserAction } from "../../src/utils/scenario/action-executor.mjs";
 import { buildPlannerMessages } from "../../src/utils/scenario/planner-context.mjs";
@@ -296,6 +297,21 @@ void test("secret redaction masks only exact string matches", () => {
   );
 
   assert.deepEqual(redacted, { exact: "*******", embedded: "prefix-token", nested: ["*******"] });
+});
+
+void test("scrubSecretsFromText masks secrets embedded in free-form text", () => {
+  const scrubbed: unknown = scrubSecretsFromText(
+    [
+      { type: "console", text: "Login failed for password hunter2 (401)" },
+      { type: "response", status: 500, url: "https://api.example.com/x?token=hunter2" }
+    ],
+    new Map([["auth.password", "hunter2"]])
+  );
+
+  assert.deepEqual(scrubbed, [
+    { type: "console", text: "Login failed for password ******* (401)" },
+    { type: "response", status: 500, url: "https://api.example.com/x?token=*******" }
+  ]);
 });
 
 void test("DUBLO_SECRET variables are discovered without a CLI secret operation", async () => {

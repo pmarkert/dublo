@@ -269,3 +269,24 @@ Ranked by value-to-effort:
    largest sustained cost savings once flows are proven.
 7. **Set-of-marks screenshots and two-tier routing** — final grounding and
    cost polish once the loop and personas have settled.
+
+## Implementation status
+
+Items 1–4 are implemented:
+
+- **Prompt caching** — `promptCaching` on the Bedrock LLM profile inserts cache
+  points after the system prompt and static context (`src/node/bedrock-planner.ts`).
+- **Runtime signals** — console errors, uncaught exceptions, failed/`>= 400`
+  responses, failed requests, and auto-dismissed native dialogs are captured
+  each step (`src/utils/scenario/runtime-errors.mjs`), shown to the planner, and
+  recorded in reports; secrets embedded in signal text are masked.
+- **`report_finding`** — a non-terminal action that records severity/category/
+  summary/evidence into `report.findings`, rendered in the HTML and Markdown
+  reports.
+- **Action vocabulary + focus** — `press_key`, `hover`, `navigate` (same-origin),
+  and `go_back`, plus focus state on the observation (`observation.focus` and a
+  per-control `focused` flag).
+
+Items 5–7 (observation blind spots / `ariaSnapshot`, regression replay with
+self-healing and action batches, set-of-marks screenshots and two-tier routing)
+remain open.

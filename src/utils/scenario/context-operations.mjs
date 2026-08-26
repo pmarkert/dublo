@@ -264,6 +264,34 @@ export function redactSecretValues(value, secretValues) {
   return redactSecretValue(value, new Set(secretValues.values()));
 }
 
+/**
+ * Replaces any secret value appearing as a substring of free-form text (such as
+ * a captured runtime error or console message) with a mask. Unlike
+ * {@link redactSecretValues}, which only masks whole-string matches, this scrubs
+ * secrets embedded inside larger strings.
+ */
+export function scrubSecretsFromText(value, secretValues) {
+  const secrets = [...secretValues.values()].filter((secret) => typeof secret === "string" && secret.length > 0);
+  if (secrets.length === 0) return value;
+
+  const scrub = (input) => {
+    let output = input;
+    for (const secret of secrets) {
+      if (output.includes(secret)) output = output.split(secret).join("*******");
+    }
+    return output;
+  };
+
+  const walk = (node) => {
+    if (typeof node === "string") return scrub(node);
+    if (Array.isArray(node)) return node.map(walk);
+    if (isPlainObject(node)) return Object.fromEntries(Object.entries(node).map(([key, nested]) => [key, walk(nested)]));
+    return node;
+  };
+
+  return walk(value);
+}
+
 function redactSecretValue(value, secretValues) {
   if (typeof value === "string") return secretValues.has(value) ? "*******" : value;
   if (Array.isArray(value)) return value.map((entry) => redactSecretValue(entry, secretValues));

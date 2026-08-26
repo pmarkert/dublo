@@ -155,6 +155,34 @@ export async function waitForDocumentTextGone(page, expectedText, settleDelayMs,
   return { completed: false, latestDocumentText, elapsedMs: Date.now() - startedAt };
 }
 
+export function resolveSameOriginUrl(rawUrl, currentUrl, baseUrl) {
+  const reference = currentUrl || baseUrl;
+  let resolved;
+  try {
+    resolved = new URL(rawUrl, reference || undefined);
+  } catch {
+    throw new Error(`Planner navigate URL is invalid: ${rawUrl}`);
+  }
+
+  const allowedOrigins = new Set();
+  for (const candidate of [currentUrl, baseUrl]) {
+    if (!candidate) continue;
+    try {
+      allowedOrigins.add(new URL(candidate).origin);
+    } catch {
+      // ignore unparseable references
+    }
+  }
+
+  if (allowedOrigins.size > 0 && !allowedOrigins.has(resolved.origin)) {
+    throw new Error(
+      `Planner navigate URL is cross-origin and was blocked: ${resolved.href} (allowed: ${[...allowedOrigins].join(", ")}).`
+    );
+  }
+
+  return resolved.href;
+}
+
 async function isTargetDisabled(target) {
   try {
     return await target.evaluate((element) => {
@@ -177,10 +205,36 @@ export async function executeBrowserAction({
   secretValues,
   settleDelayMs,
   settleTimeoutMs,
+  baseUrl,
   logger,
   throwIfInterrupted,
 }) {
   const payload = action.payload;
+
+  if (payload.action === "press_key") {
+    logger.info(`pressing key '${payload.key}'`);
+    await page.keyboard.press(payload.key);
+    throwIfInterrupted();
+    await waitForUiSettle(page, settleDelayMs, settleTimeoutMs);
+    return {};
+  }
+
+  if (payload.action === "navigate") {
+    const targetUrl = resolveSameOriginUrl(payload.url, page.url(), baseUrl);
+    logger.info(`navigating to ${targetUrl}`);
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+    throwIfInterrupted();
+    await waitForUiSettle(page, settleDelayMs, settleTimeoutMs);
+    return {};
+  }
+
+  if (payload.action === "go_back") {
+    logger.info("navigating back");
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    throwIfInterrupted();
+    await waitForUiSettle(page, settleDelayMs, settleTimeoutMs);
+    return {};
+  }
 
   if (payload.action === "scroll") {
     if (isAlternatingScrollLoop(actionHistory, payload)) {
@@ -208,7 +262,7 @@ export async function executeBrowserAction({
     return {};
   }
 
-  if (!["click", "fill", "select_option"].includes(payload.action)) {
+  if (!["click", "fill", "select_option", "hover"].includes(payload.action)) {
     throw new Error(`Unsupported browser action: ${payload.action}`);
   }
 
@@ -216,7 +270,10 @@ export async function executeBrowserAction({
   const target = page.locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${matchedControl.id}"]`).first();
   if ((await target.count()) === 0) throw new Error(`Planner target not found: ${describeTarget(payload.target)}`);
 
-  if (payload.action === "click") {
+  if (payload.action === "hover") {
+    logger.info(`hovering target ${describeTarget(payload.target)}`);
+    await target.hover({ timeout: 1500 });
+  } else if (payload.action === "click") {
     if (await isTargetDisabled(target)) throw new Error(`Disabled target before click: ${describeTarget(payload.target)}`);
     logger.info(`clicking target ${describeTarget(payload.target)}`);
     await target.click({ timeout: 1500 });

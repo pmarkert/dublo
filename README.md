@@ -316,9 +316,20 @@ LLM profile (`<workspace>/llm/<name>.json`) structure:
   "cacheReadPrice": 0.2,
   "cacheWritePrice": 0,
   "currency": "USD",
-  "tokenUnit": 1000000
+  "tokenUnit": 1000000,
+  "promptCaching": true
 }
 ```
+
+`promptCaching` (Bedrock only, default `false`) inserts cache points after the
+system prompt and the static planner context so the large, run-stable prefix
+(system prompt, persona, scenario, planning rules, context data) is read from
+cache on every step instead of being re-billed at the full input rate. Enable
+it on models that support Bedrock prompt caching (e.g. Amazon Nova, Anthropic
+Claude); it is the single biggest cost lever for long runs and pairs with the
+`cacheReadPrice`/`cacheWritePrice` fields for accurate cost estimates. Prefixes
+below a model's minimum cache size are ignored by Bedrock, so enabling it is
+safe when the prompt is short.
 
 For local or self-hosted LLMs using the OpenAI-compatible API (Ollama, LM Studio, llama.cpp, vLLM, etc.):
 
@@ -430,6 +441,27 @@ LLM-specific env vars:
 
 The run command writes a manifest file at `output-dir/latest.json` for easy access to the most recent run artifacts.
 
+## Agent actions
+
+On each step the planner returns exactly one action:
+
+- `click`, `fill`, `select_option` — interact with an observed control.
+- `hover` — reveal menus or content shown only on pointer hover.
+- `press_key` — send a key (for example `Tab`, `Shift+Tab`, `Enter`, `Escape`, `ArrowDown`) to the focused element or page. `click` a control first to focus it. Each observation reports the currently focused control (`observation.focus` and a per-control `focused` flag), which is required for keyboard and accessibility testing.
+- `scroll` — scroll an observed scroll container.
+- `navigate` — go to a **same-origin** URL (cross-origin navigations are blocked); `go_back` — return to the previous page, useful for verifying that state survives browser back/forward.
+- `wait_until_gone` — wait for specific visible text to disappear during a transition.
+- `request_user_input`, `request_user_interaction`, `request_screenshot` — escalate to the human or ask for a screenshot (headed mode).
+- `report_finding` — record a defect or notable issue **without ending the run** (see below).
+- `finish`, `give_up` — terminate the run.
+
+## Findings and runtime signals
+
+Two features turn a run into a defect report rather than a pass/fail:
+
+- **Findings.** The planner can call `report_finding` with a `severity` (`info`, `minor`, `major`, `critical`), a `category` (`accessibility`, `usability`, `functional`, `performance`, `security`), a `summary`, and optional `evidence`. Findings are collected in `report.findings` and rendered in both the Markdown and HTML reports. This lets usability, accessibility, and security personas file specific issues as they go instead of burying them in action reasons.
+- **Runtime signals.** Every observation includes `runtimeErrors`: console errors, uncaught exceptions, failed/`>= 400` HTTP responses, failed requests, and native dialogs captured since the previous step. Native dialogs are auto-dismissed so an unexpected `alert()`/`confirm()` cannot hang the run. These deterministic, zero-token signals are shown to the planner (as objective evidence, not instructions), recorded per step in the report, and any secret values embedded in them are masked.
+
 ## Project structure
 
 ```text
@@ -448,8 +480,10 @@ llm.default.example.json
 
 ## Next suggested enhancements
 
-- Add robust model output schema validation
-- Add richer action types (navigate, press, screenshot, evaluate)
-- Add junit/json result reporting
-- Add retries and safety guards for flaky selectors
-- Add test fixtures and integration tests
+See [docs/agent-interaction-recommendations.md](docs/agent-interaction-recommendations.md) for the full review. Remaining higher-effort items:
+
+- Non-ARIA name/role fallbacks and an accessibility-tree (`ariaSnapshot`) observation mode.
+- Observation coverage for shadow DOM, iframes, and inferred non-semantic clickables.
+- Regression replay with self-healing, and short high-confidence action batches.
+- Set-of-marks screenshots and two-tier (cheap/escalation) model routing.
+- Add junit/json result reporting and more integration fixtures.

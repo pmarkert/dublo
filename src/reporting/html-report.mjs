@@ -130,6 +130,30 @@ export const reportGenerator = {
       </section>`
       : "";
 
+    const findings = Array.isArray(report.findings) ? report.findings : [];
+    const findingsHtml = findings.length
+      ? `<section class="card findings">
+          <h2>Findings (${findings.length})</h2>
+          <div class="findings-list">${findings
+            .map((finding) => {
+              const evidence = finding.evidence ? `<p class="finding-evidence">${escapeHtml(finding.evidence)}</p>` : "";
+              const reason = finding.reason ? `<p class="finding-reason">${escapeHtml(finding.reason)}</p>` : "";
+              return `<article class="finding finding-${escapeHtml(finding.severity || "info")}">
+                <div class="finding-head">
+                  <span class="finding-severity">${escapeHtml((finding.severity || "info").toUpperCase())}</span>
+                  <span class="finding-category">${escapeHtml(finding.category || "")}</span>
+                  ${typeof finding.step === "number" ? `<span class="finding-step">step ${finding.step}</span>` : ""}
+                </div>
+                <p class="finding-summary">${escapeHtml(finding.summary || "")}</p>
+                ${evidence}
+                ${reason}
+                ${finding.url ? `<a class="finding-url" href="${escapeHtml(finding.url)}">${escapeHtml(finding.url)}</a>` : ""}
+              </article>`;
+            })
+            .join("")}</div>
+        </section>`
+      : "";
+
     const stepsHtml = report.steps
       .map((step) => {
         const planner = step.plannerAction
@@ -150,6 +174,22 @@ export const reportGenerator = {
           : "";
         const tokenBlock = step.plannerTokenUsage ? `<section><h4>Planner Token Usage</h4>${renderJsonHtml(step.plannerTokenUsage)}</section>` : "";
         const errorBlock = step.error ? `<section><h4>Step Error</h4><pre>${escapeHtml(stripAnsi(step.error))}</pre></section>` : "";
+        const runtimeErrorsBlock = Array.isArray(step.runtimeErrors) && step.runtimeErrors.length
+          ? `<section><h4>Runtime Signals</h4><div class="pill-list">${step.runtimeErrors
+              .map((entry) => {
+                const label = [
+                  entry.type,
+                  typeof entry.status === "number" ? entry.status : "",
+                  entry.method || "",
+                  entry.dialogType || "",
+                  entry.url || entry.text || "",
+                ]
+                  .filter((part) => part !== "" && part !== undefined)
+                  .join(" · ");
+                return `<span class="mini-pill mini-pill-alert">${escapeHtml(label)}</span>`;
+              })
+              .join("")}</div></section>`
+          : "";
 
         return `
         <details class="step-card">
@@ -166,6 +206,7 @@ export const reportGenerator = {
             <div class="chip-row">${liveUrlLink}${screenshotLink}${htmlLink}</div>
             ${screenshotPreview ? `<section><h4>Screenshot</h4>${screenshotPreview}</section>` : ""}
             ${plannerActionBlock}
+            ${runtimeErrorsBlock}
             ${observationBlock}
             ${inputsBlock}
             ${tokenBlock}
@@ -199,6 +240,19 @@ export const reportGenerator = {
       .badge { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 0.85rem; font-weight: 700; background: var(--accent-soft); color: var(--accent); }
       .badge.failed { background: #fce7e7; color: var(--error); }
       .prompt, .error-card { padding: 20px; margin-bottom: 20px; }
+      .findings { padding: 20px; margin-bottom: 20px; }
+      .findings-list { display: grid; gap: 12px; }
+      .finding { padding: 14px 16px; border-radius: 14px; background: #fffcf7; border: 1px solid #ece2d1; border-left: 4px solid var(--muted); }
+      .finding-critical { border-left-color: #8a1c1c; }
+      .finding-major { border-left-color: #b45309; }
+      .finding-minor { border-left-color: #b7791f; }
+      .finding-info { border-left-color: var(--accent); }
+      .finding-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+      .finding-severity { font-weight: 800; font-size: 0.78rem; letter-spacing: 0.05em; color: var(--ink); }
+      .finding-category, .finding-step { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      .finding-summary { margin: 0 0 6px; font-weight: 600; }
+      .finding-evidence, .finding-reason { margin: 0 0 6px; color: var(--muted); line-height: 1.5; }
+      .finding-url { font-size: 0.85rem; word-break: break-all; }
       .steps { display: grid; gap: 14px; min-width: 0; }
       .step-card { min-width: 0; max-width: 100%; }
       .step-card summary { min-width: 0; max-width: 100%; list-style: none; cursor: pointer; padding: 18px 20px; }
@@ -253,6 +307,7 @@ export const reportGenerator = {
       </section>
       ${costSummary}
       <section class="card prompt"><h2>Test Prompt</h2><p>${escapeHtml(scenario)}</p></section>
+      ${findingsHtml}
       <section><h2>Steps</h2><div class="steps">${stepsHtml}</div></section>
       ${report.error ? `<section class="card error-card"><h2>Error</h2><pre>${escapeHtml(stripAnsi(report.error))}</pre></section>` : ""}
     </main>

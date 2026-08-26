@@ -165,6 +165,130 @@ void test("Bedrock planner preserves strict action payloads", async () => {
   });
 });
 
+void test("Bedrock planner accepts a report_finding action", async () => {
+  const requests: unknown[] = [];
+  const planner = createBedrockPlanner(
+    { modelId: "test-model", region: "us-east-1" },
+    {
+      client: {
+        send(command) {
+          requests.push(command.input);
+          return Promise.resolve({
+            output: {
+              message: {
+                content: [
+                  {
+                    toolUse: {
+                      name: "planner_action",
+                      input: {
+                        reason: "The control cannot be identified by assistive tech.",
+                        payload: {
+                          action: "report_finding",
+                          severity: "major",
+                          category: "accessibility",
+                          summary: "Icon-only button has no accessible name."
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          });
+        }
+      }
+    }
+  );
+
+  const response = await planner.nextAction({ messages });
+
+  assert.deepEqual(response.action, {
+    reason: "The control cannot be identified by assistive tech.",
+    payload: {
+      action: "report_finding",
+      severity: "major",
+      category: "accessibility",
+      summary: "Icon-only button has no accessible name."
+    }
+  });
+  assert.match(JSON.stringify(requests[0]), /"const":"report_finding"/);
+});
+
+void test("Bedrock planner inserts cache points when prompt caching is enabled", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const planner = createBedrockPlanner(
+    { modelId: "test-model", region: "us-east-1", promptCaching: true },
+    {
+      client: {
+        send(command) {
+          requests.push(command.input as Record<string, unknown>);
+          return Promise.resolve({
+            output: {
+              message: {
+                content: [
+                  {
+                    toolUse: {
+                      name: "planner_action",
+                      input: { reason: "Done.", payload: { action: "finish" } }
+                    }
+                  }
+                ]
+              }
+            }
+          });
+        }
+      }
+    }
+  );
+
+  await planner.nextAction({ messages });
+
+  const input = requests[0];
+  const system = input.system as Array<Record<string, unknown>>;
+  const userContent = (input.messages as Array<{ content: Array<Record<string, unknown>> }>)[0]
+    .content;
+
+  // The system prompt is cached, then the static context, so the stable prefix
+  // (system + static) is read from cache on every subsequent turn.
+  assert.deepEqual(system[system.length - 1], { cachePoint: { type: "default" } });
+  const staticIndex = userContent.findIndex((block) => block.text === "static");
+  assert.deepEqual(userContent[staticIndex + 1], { cachePoint: { type: "default" } });
+  // The dynamic context stays outside the cached prefix.
+  assert.equal(userContent[staticIndex + 2].text, "dynamic");
+});
+
+void test("Bedrock planner omits cache points by default", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const planner = createBedrockPlanner(
+    { modelId: "test-model", region: "us-east-1" },
+    {
+      client: {
+        send(command) {
+          requests.push(command.input as Record<string, unknown>);
+          return Promise.resolve({
+            output: {
+              message: {
+                content: [
+                  {
+                    toolUse: {
+                      name: "planner_action",
+                      input: { reason: "Done.", payload: { action: "finish" } }
+                    }
+                  }
+                ]
+              }
+            }
+          });
+        }
+      }
+    }
+  );
+
+  await planner.nextAction({ messages });
+
+  assert.doesNotMatch(JSON.stringify(requests[0]), /cachePoint/);
+});
+
 void test("Bedrock planner preflight sends the planner tool definition", async () => {
   const requests: unknown[] = [];
   const planner = createBedrockPlanner(

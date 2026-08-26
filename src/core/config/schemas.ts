@@ -18,7 +18,10 @@ export const LlmProfileSchema = z
     cacheReadPrice: z.number().nonnegative().optional(),
     cacheWritePrice: z.number().nonnegative().optional(),
     currency: z.string().trim().min(1).optional(),
-    tokenUnit: z.number().positive().optional()
+    tokenUnit: z.number().positive().optional(),
+    promptCaching: z.boolean().optional(),
+    supportsConditionalToolSchemas: z.boolean().optional(),
+    supportsStrictToolUse: z.boolean().optional()
   })
   .strict();
 

@@ -456,6 +456,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
         ...(el.getAttribute("aria-current") ? { current: el.getAttribute("aria-current") } : {}),
         ...(el.getAttribute("aria-invalid") === "true" ? { invalid: true } : {}),
         ...(disabled ? { disabled: true } : {}),
+        ...(el === globalThis.document.activeElement ? { focused: true } : {}),
       };
     });
 
@@ -494,9 +495,23 @@ export async function collectObservation(page, observationConfig, turnToken) {
 
     documentText = documentText.slice(0, documentTextMaxChars);
 
+    const activeElement = globalThis.document.activeElement;
+    const hasFocus =
+      activeElement &&
+      activeElement !== globalThis.document.body &&
+      activeElement !== globalThis.document.documentElement;
+    const focus = hasFocus
+      ? {
+          tag: activeElement.tagName.toLowerCase(),
+          ...(activeElement.getAttribute("role") ? { role: activeElement.getAttribute("role") } : {}),
+          label: resolveControlName(activeElement, leafTextSegments(activeElement)),
+        }
+      : null;
+
     return {
       url: globalThis.window.location.href,
       title: globalThis.document.title,
+      focus,
       modal: {
         open: Boolean(activeModal),
         blocksBackground: modalBlocksBackground,

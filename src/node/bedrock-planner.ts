@@ -8,6 +8,7 @@ export interface BedrockPlannerConfig {
   inferenceConfig?: Record<string, unknown>;
   modelId: string;
   region: string;
+  promptCaching?: boolean;
   serviceTier?: "default" | "priority" | "flex" | "reserved";
   supportsConditionalToolSchemas?: boolean;
   supportsStrictToolUse?: boolean;
@@ -200,6 +201,10 @@ function buildActionSchema(strict: boolean): Record<string, unknown> {
             { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
             ["containerId", "direction"]
           ),
+          buildActionPayloadVariant("press_key", { key: { type: "string" } }, ["key"]),
+          buildActionPayloadVariant("hover", { target }, ["target"]),
+          buildActionPayloadVariant("navigate", { url: { type: "string" } }, ["url"]),
+          buildActionPayloadVariant("go_back"),
           buildActionPayloadVariant("wait_until_gone", { expectGone }, ["expectGone"]),
           buildActionPayloadVariant(
             "request_user_input",
@@ -215,6 +220,18 @@ function buildActionSchema(strict: boolean): Record<string, unknown> {
             "request_screenshot",
             { screenshotPrompt: { type: "string" } },
             ["screenshotPrompt"]
+          ),
+          buildActionPayloadVariant(
+            "report_finding",
+            {
+              severity: { enum: ["info", "minor", "major", "critical"] },
+              category: {
+                enum: ["accessibility", "usability", "functional", "performance", "security"]
+              },
+              summary: { type: "string" },
+              evidence: { type: "string" }
+            },
+            ["severity", "category", "summary"]
           ),
           buildActionPayloadVariant("give_up"),
           buildActionPayloadVariant("finish")
@@ -332,9 +349,23 @@ export function createBedrockPlanner(
     },
 
     async nextAction(request: PlannerRequest): Promise<PlannerResponse> {
+      // Cache the large, run-stable prefix (system prompt + static context) so
+      // each step reads it from cache instead of re-billing it at the full input
+      // rate. The dynamic context (observation, history) follows the cache point
+      // and changes every turn. Below-threshold prefixes are ignored by Bedrock,
+      // so enabling this is safe on supported models.
+      const cachePoint = { cachePoint: { type: "default" } };
+      const system: Array<Record<string, unknown>> = [{ text: request.messages.systemText }];
+      if (config.promptCaching) {
+        system.push({ ...cachePoint });
+      }
+
       const content: Array<Record<string, unknown>> = [
         { text: request.messages.staticContextText }
       ];
+      if (config.promptCaching) {
+        content.push({ ...cachePoint });
+      }
       content.push({ text: request.messages.dynamicContextText });
       if (request.screenshot) {
         content.push({ image: { format: "png", source: { bytes: request.screenshot } } });
@@ -342,7 +373,7 @@ export function createBedrockPlanner(
 
       const result = assertBedrockConverseResponse(
         await sendWithServiceTierFallback(client, config, {
-          system: [{ text: request.messages.systemText }],
+          system,
           messages: [{ role: "user", content }],
           inferenceConfig: buildInferenceConfig(config, 700),
           ...(config.additionalModelRequestFields
