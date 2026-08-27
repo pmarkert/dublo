@@ -11,7 +11,7 @@ import {
 void test("loads default observation configuration and normalizes screenshot modes", async () => {
   const config = (await loadObservationConfig()) as Record<string, unknown>;
 
-  assert.equal(config.maxControls, 80);
+  assert.equal(config.maxControls, 150);
   assert.deepEqual(config.documentTextScopeSelectors, ["main", "[role='main']"]);
   assert.equal(normalizeScreenshotMode("full-page"), "fullpage");
   assert.equal(normalizeScreenshotMode("VIEWPORT"), "viewport");

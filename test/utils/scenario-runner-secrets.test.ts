@@ -9,7 +9,8 @@ import {
 import {
   loadContextFromOperations,
   redactSecretValues,
-  resolveFillValue
+  resolveFillValue,
+  scrubSecretsFromText
 } from "../../src/utils/scenario/context-operations.mjs";
 import { executeBrowserAction } from "../../src/utils/scenario/action-executor.mjs";
 import { buildPlannerMessages } from "../../src/utils/scenario/planner-context.mjs";
@@ -202,7 +203,10 @@ void test("strict planner messages require ID-only target selectors", () => {
   });
 
   assert.match(messages.staticContextText, /Use only the visible control ID/);
-  assert.match(messages.staticContextText, /action and action-specific fields in payload/);
+  assert.match(
+    messages.staticContextText,
+    /Each entry holds one action and its action-specific fields/
+  );
   assert.match(messages.staticContextText, /use scroll with its containerId and direction/);
   assert.match(messages.dynamicContextText, /"scrollContainers"/);
   assert.doesNotMatch(messages.staticContextText, /You may combine any visible control fields/);
@@ -296,6 +300,21 @@ void test("secret redaction masks only exact string matches", () => {
   );
 
   assert.deepEqual(redacted, { exact: "*******", embedded: "prefix-token", nested: ["*******"] });
+});
+
+void test("scrubSecretsFromText masks secrets embedded in free-form text", () => {
+  const scrubbed: unknown = scrubSecretsFromText(
+    [
+      { type: "console", text: "Login failed for password hunter2 (401)" },
+      { type: "response", status: 500, url: "https://api.example.com/x?token=hunter2" }
+    ],
+    new Map([["auth.password", "hunter2"]])
+  );
+
+  assert.deepEqual(scrubbed, [
+    { type: "console", text: "Login failed for password ******* (401)" },
+    { type: "response", status: 500, url: "https://api.example.com/x?token=*******" }
+  ]);
 });
 
 void test("DUBLO_SECRET variables are discovered without a CLI secret operation", async () => {

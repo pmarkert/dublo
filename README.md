@@ -12,8 +12,18 @@ The TypeScript migration, library API, CLI redesign, and quality roadmap are doc
 
 ## Install
 
+From a source checkout (for developing Dublo):
+
 ```bash
-npm install
+npm install && npm run build
+```
+
+To use the `dublo` CLI in another project, install it globally (it builds on
+install via the `prepare` script):
+
+```bash
+npm install -g dublo                     # once published to npm
+npm install -g github:pmarkert/dublo     # or straight from GitHub
 ```
 
 Install Playwright browser binaries (one-time per machine):
@@ -27,6 +37,29 @@ If your system is missing native browser dependencies, install them with:
 ```bash
 npx playwright install-deps chromium
 ```
+
+### Testing an app in another repository
+
+Dublo is a standalone test runner that drives your app over HTTP; the app's repo
+does not depend on it. To test another project:
+
+The workspace defaults to `./.dublo` (override with `--workspace` or
+`DUBLO_WORKSPACE`), so these commands can omit it:
+
+```bash
+cd /path/to/your-app
+dublo init --base-url http://localhost:3000   # creates ./.dublo — commit it with the app
+dublo llm config                              # configure the model
+dublo skill install                           # add the Dublo skill for Claude Code
+# start your app, then:
+dublo run --adhoc "Sign in and confirm the dashboard loads."
+```
+
+`dublo skill install` copies the bundled agent skill into `./.claude/skills/dublo`
+(use `--user` for `~/.claude/skills`, `--force` to update after upgrading), so an
+agent working in that repo becomes a Dublo expert. `dublo skill show` prints the
+skill to stdout. Keep `./.dublo/` (scenarios, personas, context) in the app repo
+so tests live with the app.
 
 ## Quick start
 
@@ -161,6 +194,8 @@ dublo report list [options]
 dublo report show [run-id] [options]
 dublo report open [run-id] [options]
 dublo report render [run-id] [options]
+dublo skill install [--target <dir>] [--user] [--force]
+dublo skill show
 
 Options:
   --workspace <path>    Workspace directory containing defaults.json and llm/personas/scenarios/context folders
@@ -177,7 +212,7 @@ Options:
 
 `dublo init` creates a new workspace and refuses to overwrite existing defaults without `--force`.
 
-`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `persona`, `max-steps`, `settle-delay-ms`, `settle-timeout-ms`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`. The settle settings control the runner's UI stability debounce before LLM observations; defaults are `500ms` stable time and a `20000ms` maximum polling window.
+`dublo config show` displays persisted defaults. `dublo config show --effective` displays the non-secret effective configuration and the source of each value. `config set` accepts `base-url`, `llm`, `escalation-llm`, `persona`, `max-steps`, `max-actions-per-turn`, `settle-delay-ms`, `settle-timeout-ms`, `headless`, `screenshots`, `debug`, `output-dir`, and `observation-config`. The settle settings control the runner's UI stability debounce before LLM observations; defaults are `500ms` stable time and a `20000ms` maximum polling window.
 
 `dublo report list` shows saved reports. `dublo report show`, `open`, and `render` default to the report named by `latest.json` when no run ID is provided.
 
@@ -290,6 +325,7 @@ Workspace runtime config (`<workspace>/defaults.json`) structure:
 {
   "baseUrl": "https://example.com",
   "llm": "default",
+  "escalationLlm": "strong",
   "persona": "qa-strict",
   "context": ["shared", "qa-user"],
   "maxSteps": 40,
@@ -316,9 +352,43 @@ LLM profile (`<workspace>/llm/<name>.json`) structure:
   "cacheReadPrice": 0.2,
   "cacheWritePrice": 0,
   "currency": "USD",
-  "tokenUnit": 1000000
+  "tokenUnit": 1000000,
+  "promptCaching": true
 }
 ```
+
+### Two-tier model routing (escalation)
+
+Set an optional `escalationLlm` — a second LLM profile name — to run most steps
+on a cheap model and switch to a stronger one only when needed:
+
+```bash
+dublo config set escalation-llm strong --workspace ./.dublo
+# or per run:
+dublo run checkout --llm cheap --escalation-llm strong --workspace ./.dublo
+```
+
+The escalation model is used for a turn when the primary model hits a recoverable
+failure or the observation was truncated, and it rescues a `give_up` by retrying
+the turn once with the stronger model. Resolution order mirrors `--llm`:
+`--escalation-llm` > `DUBLO_ESCALATION_LLM` > workspace `escalationLlm`. Escalation
+calls are counted in the report's `tokenUsage.escalationCalls`; cost is estimated
+at the primary model's rates.
+
+When the planner calls `request_screenshot`, the captured image is annotated with
+**set-of-marks** labels — the same control ids (`a1`, `a2`, …) drawn on each
+observed control — so vision models can target controls by id even when the DOM
+is hostile. This is on by default.
+
+`promptCaching` (Bedrock only, default `false`) inserts cache points after the
+system prompt and the static planner context so the large, run-stable prefix
+(system prompt, persona, scenario, planning rules, context data) is read from
+cache on every step instead of being re-billed at the full input rate. Enable
+it on models that support Bedrock prompt caching (e.g. Amazon Nova, Anthropic
+Claude); it is the single biggest cost lever for long runs and pairs with the
+`cacheReadPrice`/`cacheWritePrice` fields for accurate cost estimates. Prefixes
+below a model's minimum cache size are ignored by Bedrock, so enabling it is
+safe when the prompt is short.
 
 For local or self-hosted LLMs using the OpenAI-compatible API (Ollama, LM Studio, llama.cpp, vLLM, etc.):
 
@@ -430,6 +500,52 @@ LLM-specific env vars:
 
 The run command writes a manifest file at `output-dir/latest.json` for easy access to the most recent run artifacts.
 
+## Agent actions
+
+On each turn the planner returns one action, or a **short batch** of actions to run in sequence:
+
+- `click`, `fill`, `select_option` — interact with an observed control.
+- `hover` — reveal menus or content shown only on pointer hover.
+- `press_key` — send a key (for example `Tab`, `Shift+Tab`, `Enter`, `Escape`, `ArrowDown`) to the focused element or page. `click` a control first to focus it. Each observation reports the currently focused control (`observation.focus` and a per-control `focused` flag), which is required for keyboard and accessibility testing.
+- `scroll` — scroll an observed scroll container.
+- `navigate` — go to a **same-origin** URL (cross-origin navigations are blocked); `go_back` — return to the previous page, useful for verifying that state survives browser back/forward.
+- `wait_until_gone` — wait for specific visible text to disappear during a transition.
+- `request_user_input`, `request_user_interaction`, `request_screenshot` — escalate to the human or ask for a screenshot (headed mode).
+- `finish`, `give_up` — terminate the run.
+
+Alongside its actions, any turn may carry **findings** — a turn-level annotation recording defects or notable issues **without ending the run** (see below).
+
+### Action batches
+
+When several actions can be planned from the current screen and don't depend on each other's results — filling every field of a form from known values, toggling many rows before a bulk action — the planner may return them as a single batch instead of one action per model call.
+
+The runner executes the batch in order, and every follow-on is **pinned to the exact element the planner saw** (via a per-turn stamp), so an id can never be remapped to a different control. If a later action's element has since changed or disappeared (a re-render, or a validation node that shifted the DOM), that action is a "target not found" that **aborts the rest of the batch**; the next turn re-observes and re-plans. So independent bulk work runs in one turn, while any real UI change stops the batch instead of acting blindly — and validation errors from a fully-filled form all surface together in the next observation. Only `click`, `fill`, `select_option`, `hover`, and `press_key` may follow the first action; anything that navigates, waits, finishes, gives up, or escalates must stand alone (findings are a turn-level field, not an action, so they never conflict with batching). Each executed action is still its own step in the report (batched follow-ons are tagged `phase: "batch"`).
+
+Batching is **uncapped** — there is no fixed ceiling on actions per turn, so a turn may fill an entire form or toggle every visible row in one model call. The only natural limits are inherent: the observation lists up to `maxControls` controls (default 150), and the model's output-token budget bounds how many actions fit in one response, so very large lists (hundreds of rows) are still done in per-viewport chunks. Controls are **ranked by relevance** (in-viewport first, then keyword matches derived from the scenario) before the `maxControls` cap is applied, so truncation drops the least relevant controls rather than whatever is last in the DOM; set `maxControls` to `0` in an observation-config file to surface every control (at higher token cost), and the observation reports `truncated` when the cap bites. `maxActionsPerTurn` optionally imposes a cap: `0` (the default) means unlimited, `1` disables batching entirely (one action per turn), and any `N ≥ 2` caps the batch at N — useful only to rein in a model that over-batches. Configure it via `dublo config set max-actions-per-turn <n>`, the workspace default `maxActionsPerTurn`, or `DUBLO_MAX_ACTIONS_PER_TURN`. Batching is the main lever for cutting planner calls on form- and list-heavy flows, and compounds with prompt caching (which cuts the cost of each call).
+
+## Regression replay with self-healing
+
+`dublo block import <name>` builds a reusable initialization block from a passed
+run, and `dublo run <scenario> --init <name>` replays it deterministically before
+the planner takes over. Imported blocks record the **descriptive** target of each
+step (label/text/role/type) rather than the ephemeral per-turn id, plus a URL
+post-condition, so they resolve against later runs.
+
+When a recorded step's target no longer resolves (the control moved, was renamed,
+or is now ambiguous), the runner **self-heals**: it asks the planner to pick the
+equivalent control in the current UI and executes that instead, preserving the
+recorded fill value. Self-heal calls are counted in `tokenUsage.selfHealCalls`,
+and a recorded URL post-condition fails the run loudly if a replayed step lands on
+the wrong page. This turns brittle recorded flows into resilient regression checks
+that cost planner tokens only on the steps that actually drifted.
+
+## Findings and runtime signals
+
+Two features turn a run into a defect report rather than a pass/fail:
+
+- **Findings.** Any planner turn can carry a `findings` array alongside its actions; each entry has a `severity` (`info`, `minor`, `major`, `critical`), a `category` (`accessibility`, `usability`, `functional`, `performance`, `security`), a `summary`, and optional `evidence`. Because findings are an annotation rather than an action, reporting a defect never costs a dedicated planner turn and never conflicts with batching — a persona can file an issue in the same turn as the action it just decided on. Findings are collected in `report.findings` and rendered in both the Markdown and HTML reports.
+- **Runtime signals.** Every observation includes `runtimeErrors`: console errors, uncaught exceptions, failed/`>= 400` HTTP responses, failed requests, and native dialogs captured since the previous step. Native dialogs are auto-dismissed so an unexpected `alert()`/`confirm()` cannot hang the run. These deterministic, zero-token signals are shown to the planner (as objective evidence, not instructions), recorded per step in the report, and any secret values embedded in them are masked.
+
 ## Project structure
 
 ```text
@@ -448,8 +564,10 @@ llm.default.example.json
 
 ## Next suggested enhancements
 
-- Add robust model output schema validation
-- Add richer action types (navigate, press, screenshot, evaluate)
-- Add junit/json result reporting
-- Add retries and safety guards for flaky selectors
-- Add test fixtures and integration tests
+See [docs/agent-interaction-recommendations.md](docs/agent-interaction-recommendations.md) for the full review. Remaining higher-effort items:
+
+- Non-ARIA name/role fallbacks and an accessibility-tree (`ariaSnapshot`) observation mode.
+- Observation coverage for shadow DOM, iframes, and inferred non-semantic clickables.
+- Regression replay with self-healing, and short high-confidence action batches.
+- Set-of-marks screenshots and two-tier (cheap/escalation) model routing.
+- Add junit/json result reporting and more integration fixtures.

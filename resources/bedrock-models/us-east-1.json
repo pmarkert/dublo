@@ -75,6 +75,32 @@
     }
   },
   {
+    "label": "Anthropic Claude Sonnet 4.5",
+    "modelId": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "supportsConditionalToolSchemas": false,
+    "supportsStrictToolUse": true,
+    "inferenceProfiles": ["global", "us"],
+    "inferenceConfig": { "temperature": 0 },
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 3, "output": 15 }
+    }
+  },
+  {
+    "label": "Anthropic Claude Sonnet 4.6",
+    "modelId": "anthropic.claude-sonnet-4-6",
+    "supportsConditionalToolSchemas": false,
+    "supportsStrictToolUse": true,
+    "inferenceProfiles": ["global", "us"],
+    "inferenceConfig": { "temperature": 0 },
+    "pricing": {
+      "tokenUnit": 1000000,
+      "currency": "USD",
+      "defaults": { "input": 3, "output": 15 }
+    }
+  },
+  {
     "label": "Anthropic Claude Sonnet 5",
     "modelId": "anthropic.claude-sonnet-5",
     "supportsConditionalToolSchemas": false,

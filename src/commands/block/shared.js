@@ -42,10 +42,28 @@ const BlockActionPayloadSchema = z.discriminatedUnion("action", [
     .strict()
 ]);
 
+// Optional post-condition recorded at import time. During replay the runner
+// verifies it after the action so a drifted flow fails loudly (or self-heals)
+// instead of silently doing the wrong thing.
+const BlockExpectationSchema = z
+  .object({
+    urlIncludes: z.string().trim().min(1).optional()
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "expect must contain at least one condition."
+  });
+
 export const BlockActionSchema = z
   .object({
     reason: z.string().trim().min(1),
-    payload: BlockActionPayloadSchema
+    payload: BlockActionPayloadSchema,
+    // Identity of the control this step was recorded against. Replay resolves
+    // by description, so this is what detects "same description, different
+    // control" drift. Optional: blocks imported before fingerprints existed
+    // (and hand-written blocks) simply skip the drift check.
+    fingerprint: z.string().trim().min(1).optional(),
+    expect: BlockExpectationSchema.optional()
   })
   .strict();
 

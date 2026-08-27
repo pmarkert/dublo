@@ -1,6 +1,6 @@
 {
   "name": "dublo",
-  "version": "0.1.0",
+  "version": "0.3.4",
   "description": "Agentic LLM loop web-testing framework using Playwright and AWS Bedrock",
   "type": "module",
   "bin": {
@@ -23,7 +23,9 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "build": "rm -rf dist && node scripts/sync-skill.mjs && tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "sync:skill": "node scripts/sync-skill.mjs",
+    "prepare": "node scripts/prepare.mjs",
     "clean": "rm -rf dist",
     "dev": "tsx src/cli.ts",
     "format": "prettier --write package.json tsconfig.json eslint.config.js .prettierrc.json src/**/*.ts test/**/*.ts",

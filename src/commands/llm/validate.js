@@ -143,6 +143,12 @@ function validateParsedProfile(profile, profilePath) {
       `LLM profile '${profilePath}' field 'supportsStrictToolUse' must be a boolean when present.`
     );
   }
+
+  if (profile.promptCaching !== undefined && typeof profile.promptCaching !== "boolean") {
+    throw new Error(
+      `LLM profile '${profilePath}' field 'promptCaching' must be a boolean when present.`
+    );
+  }
 }
 
 function isPlainObject(value) {

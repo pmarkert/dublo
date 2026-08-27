@@ -83,16 +83,30 @@ function parsePositiveInteger(value: string): number {
   return parsed;
 }
 
+function parseNonNegativeInteger(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Expected a non-negative integer, received '${value}'.`);
+  }
+  return parsed;
+}
+
 function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
   switch (setting) {
     case "base-url":
       return WorkspaceDefaultsPatchSchema.parse({ baseUrl: value });
     case "llm":
       return WorkspaceDefaultsPatchSchema.parse({ llm: value });
+    case "escalation-llm":
+      return WorkspaceDefaultsPatchSchema.parse({ escalationLlm: value });
     case "persona":
       return WorkspaceDefaultsPatchSchema.parse({ persona: value });
     case "max-steps":
       return WorkspaceDefaultsPatchSchema.parse({ maxSteps: parsePositiveInteger(value) });
+    case "max-actions-per-turn":
+      return WorkspaceDefaultsPatchSchema.parse({
+        maxActionsPerTurn: parseNonNegativeInteger(value)
+      });
     case "settle-delay-ms":
       return WorkspaceDefaultsPatchSchema.parse({ settleDelayMs: parsePositiveInteger(value) });
     case "settle-timeout-ms":
@@ -109,7 +123,7 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
       return WorkspaceDefaultsPatchSchema.parse({ observationConfigFile: value });
     default:
       throw new Error(
-        `Unknown setting '${setting}'. Available settings: base-url, llm, persona, max-steps, settle-delay-ms, settle-timeout-ms, headless, screenshots, debug, output-dir, observation-config.`
+        `Unknown setting '${setting}'. Available settings: base-url, llm, escalation-llm, persona, max-steps, max-actions-per-turn, settle-delay-ms, settle-timeout-ms, headless, screenshots, debug, output-dir, observation-config.`
       );
   }
 }
@@ -117,8 +131,10 @@ function parseSetting(setting: string, value: string): WorkspaceDefaultsPatch {
 const SETTING_KEYS = {
   "base-url": "baseUrl",
   llm: "llm",
+  "escalation-llm": "escalationLlm",
   persona: "persona",
   "max-steps": "maxSteps",
+  "max-actions-per-turn": "maxActionsPerTurn",
   "settle-delay-ms": "settleDelayMs",
   "settle-timeout-ms": "settleTimeoutMs",
   headless: "headless",

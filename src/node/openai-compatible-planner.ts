@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { PlannerActionSchema } from "../ports/planner.js";
+import { PlannerParseError, PlannerTurnSchema } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface OpenAICompatiblePlannerConfig {
@@ -19,6 +19,19 @@ const EMPTY_TOKEN_USAGE: TokenUsage = {
   cacheReadInputTokens: 0,
   cacheWriteInputTokens: 0
 };
+
+function parsePlannerTurn(rawAction: unknown) {
+  try {
+    return PlannerTurnSchema.parse(rawAction);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new PlannerParseError(
+      `OpenAI-compatible planner returned an invalid turn: ${detail}`,
+      detail,
+      { cause: error }
+    );
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -96,22 +109,28 @@ function getChatCompletionUrl(baseUrl: string): string {
 }
 
 function buildPlannerActionSchema(): Record<string, unknown> {
+  const fallbackNote =
+    "Fallback only; fields are ANDed with id, so a guessed value makes the match fail.";
   const target = {
     type: "object",
     additionalProperties: false,
     properties: {
-      id: { type: "string" },
-      tag: { type: "string" },
-      role: { type: "string" },
-      type: { type: "string" },
-      priority: { type: "boolean" },
-      text: { type: "string" },
-      ariaLabel: { type: "string" },
-      label: { type: "string" },
-      placeholder: { type: "string" },
-      hasValue: { type: "boolean" },
-      checked: { type: "boolean" },
-      disabled: { type: "boolean" }
+      id: {
+        type: "string",
+        description:
+          "Preferred and sufficient on its own: the control id from the current observation (e.g. 'a3'). Ids are unique per observation."
+      },
+      tag: { type: "string", description: fallbackNote },
+      role: { type: "string", description: fallbackNote },
+      type: { type: "string", description: fallbackNote },
+      priority: { type: "boolean", description: fallbackNote },
+      text: { type: "string", description: fallbackNote },
+      ariaLabel: { type: "string", description: fallbackNote },
+      label: { type: "string", description: fallbackNote },
+      placeholder: { type: "string", description: fallbackNote },
+      hasValue: { type: "boolean", description: fallbackNote },
+      checked: { type: "boolean", description: fallbackNote },
+      disabled: { type: "boolean", description: fallbackNote }
     }
   };
   const variant = (
@@ -128,45 +147,69 @@ function buildPlannerActionSchema(): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["reason", "payload"],
+    required: ["reason", "actions"],
     properties: {
       reason: { type: "string" },
-      payload: {
-        anyOf: [
-          variant("click", { target }, ["target"]),
-          variant("fill", { target, value: { type: "string" } }, ["target", "value"]),
-          variant("select_option", { target, value: { type: "string" } }, ["target", "value"]),
-          variant(
-            "scroll",
-            { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
-            ["containerId", "direction"]
-          ),
-          variant(
-            "wait_until_gone",
-            {
-              expectGone: {
-                type: "object",
-                additionalProperties: false,
-                required: ["documentText"],
-                properties: { documentText: { type: "string" } }
-              }
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "category", "summary"],
+          properties: {
+            severity: { enum: ["info", "minor", "major", "critical"] },
+            category: {
+              enum: ["accessibility", "usability", "functional", "performance", "security"]
             },
-            ["expectGone"]
-          ),
-          variant(
-            "request_user_input",
-            { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
-            ["inputKey", "inputPrompt"]
-          ),
-          variant("request_user_interaction", { interactionPrompt: { type: "string" } }, [
-            "interactionPrompt"
-          ]),
-          variant("request_screenshot", { screenshotPrompt: { type: "string" } }, [
-            "screenshotPrompt"
-          ]),
-          variant("give_up"),
-          variant("finish")
-        ]
+            summary: { type: "string" },
+            evidence: { type: "string" }
+          }
+        }
+      },
+      actions: {
+        type: "array",
+        minItems: 1,
+        items: {
+          anyOf: [
+            variant("click", { target }, ["target"]),
+            variant("fill", { target, value: { type: "string" } }, ["target", "value"]),
+            variant("select_option", { target, value: { type: "string" } }, ["target", "value"]),
+            variant(
+              "scroll",
+              { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
+              ["containerId", "direction"]
+            ),
+            variant("press_key", { key: { type: "string" } }, ["key"]),
+            variant("hover", { target }, ["target"]),
+            variant("navigate", { url: { type: "string" } }, ["url"]),
+            variant("go_back"),
+            variant(
+              "wait_until_gone",
+              {
+                expectGone: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["documentText"],
+                  properties: { documentText: { type: "string" } }
+                }
+              },
+              ["expectGone"]
+            ),
+            variant(
+              "request_user_input",
+              { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
+              ["inputKey", "inputPrompt"]
+            ),
+            variant("request_user_interaction", { interactionPrompt: { type: "string" } }, [
+              "interactionPrompt"
+            ]),
+            variant("request_screenshot", { screenshotPrompt: { type: "string" } }, [
+              "screenshotPrompt"
+            ]),
+            variant("give_up"),
+            variant("finish")
+          ]
+        }
       }
     }
   };
@@ -227,13 +270,14 @@ export function createOpenAICompatiblePlanner(
               type: "function",
               function: {
                 name: "planner_action",
-                description: "Return the next UI automation action as structured JSON input.",
+                description:
+                  "Return the next UI automation action, or a short batch of actions, as structured JSON input.",
                 parameters: buildPlannerActionSchema()
               }
             }
           ],
           tool_choice: { type: "function", function: { name: "planner_action" } },
-          max_tokens: 700
+          max_tokens: 4096
         })
       });
       if (!response.ok) {
@@ -266,7 +310,7 @@ export function createOpenAICompatiblePlanner(
         throw new Error("OpenAI-compatible planner API returned no planner action.");
 
       return {
-        action: PlannerActionSchema.parse(rawAction),
+        action: parsePlannerTurn(rawAction),
         tokenUsage: normalizeTokenUsage(result.usage)
       };
     }

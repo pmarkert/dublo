@@ -69,3 +69,177 @@ void test("observes blocking modal controls, active overlay options, and scroll 
     await browser.close();
   }
 });
+
+type RobustControl = {
+  id: string;
+  label: string;
+  tag: string;
+  nameSource: string;
+  confidence: string;
+  inferred?: boolean;
+};
+
+void test("pierces shadow DOM, resolves non-ARIA names, and infers non-semantic clickables", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <button id="icon" title="Delete item"><svg aria-hidden="true"></svg></button>
+      <button id="imgbtn"><img alt="Save file" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></button>
+      <div id="card" onclick="void 0" style="cursor:pointer">Open dashboard</div>
+      <span id="ignored" style="cursor:pointer">${"x".repeat(80)}</span>
+      <my-widget></my-widget>
+      <script>
+        const host = document.getElementById('my-widget') || document.querySelector('my-widget');
+        const root = host.attachShadow({ mode: 'open' });
+        root.innerHTML = '<button id="shadow-btn">Inside shadow</button>';
+      </script>
+    `);
+
+    const observation = (await collectObservation(page, {}, "t1")) as unknown as {
+      controls: RobustControl[];
+    };
+    const byLabel = (label: string) =>
+      observation.controls.find((control) => control.label === label);
+
+    // Icon-only button with no text falls back to the title attribute.
+    const iconButton = byLabel("Delete item");
+    assert.ok(iconButton, "expected the title-named icon button");
+    assert.equal(iconButton?.nameSource, "title");
+    assert.equal(iconButton?.confidence, "low");
+
+    // A button whose only content is an image falls back to the image alt text.
+    const imageButton = byLabel("Save file");
+    assert.ok(imageButton, "expected the image-alt named button");
+    assert.equal(imageButton?.nameSource, "alt");
+
+    // A <div onclick> with a pointer cursor is surfaced as an inferred control.
+    const card = byLabel("Open dashboard");
+    assert.ok(card, "expected the inferred clickable div");
+    assert.equal(card?.inferred, true);
+
+    // Long-text cursor:pointer elements with no explicit signal are not inferred.
+    assert.equal(
+      observation.controls.some((control) => control.id === "ignored"),
+      false
+    );
+
+    // A control inside an open shadow root is visible to the walker.
+    const shadowButton = byLabel("Inside shadow");
+    assert.ok(shadowButton, "expected the shadow-DOM button");
+    assert.equal(shadowButton?.tag, "button");
+
+    // A locator can still reach the shadow control for interaction.
+    const located = page.locator(`[data-agentic-id="${shadowButton?.id}"]`);
+    assert.equal(await located.count(), 1);
+    assert.equal(await located.innerText(), "Inside shadow");
+  } finally {
+    await browser.close();
+  }
+});
+
+void test("flags truncation when more controls exist than the cap", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(
+      Array.from({ length: 5 }, (_, index) => `<button>Item ${index + 1}</button>`).join("")
+    );
+
+    const observation = (await collectObservation(page, { maxControls: 2 }, "t1")) as unknown as {
+      controls: unknown[];
+      truncated?: boolean;
+      maxControls?: number;
+    };
+
+    assert.equal(observation.controls.length, 2);
+    assert.equal(observation.truncated, true);
+    assert.equal(observation.maxControls, 2);
+  } finally {
+    await browser.close();
+  }
+});
+
+void test("ranks relevance-keyword matches ahead of others under the cap", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    // "Cancel" comes first in the DOM but does not match the keyword; the
+    // relevant control should survive a cap of one.
+    await page.setContent(`<button>Cancel</button><button>Submit Order</button>`);
+
+    const observation = (await collectObservation(
+      page,
+      { maxControls: 1, relevanceKeywords: ["order"] },
+      "t1"
+    )) as unknown as { controls: Array<{ label: string }>; truncated?: boolean };
+
+    assert.equal(observation.controls.length, 1);
+    assert.equal(observation.controls[0].label, "Submit Order");
+    assert.equal(observation.truncated, true);
+  } finally {
+    await browser.close();
+  }
+});
+
+void test("document interaction scope surfaces and reaches off-viewport controls", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <button id="top">Top</button>
+      <div style="height: 2000px"></div>
+      <button id="bottom" onclick="this.textContent='clicked'">Bottom</button>
+    `);
+
+    type Ctl = { label: string; id: string; offscreen?: boolean };
+
+    // viewport scope: the below-the-fold button is not surfaced.
+    const viewport = (await collectObservation(page, {}, "t1")) as unknown as { controls: Ctl[] };
+    assert.ok(viewport.controls.some((control) => control.label === "Top"));
+    assert.equal(
+      viewport.controls.some((control) => control.label === "Bottom"),
+      false
+    );
+
+    // document scope: it appears, flagged offscreen, while the in-view one is not.
+    const doc = (await collectObservation(
+      page,
+      { interactionScope: "document" },
+      "t2"
+    )) as unknown as {
+      controls: Ctl[];
+    };
+    const bottom = doc.controls.find((control) => control.label === "Bottom");
+    assert.ok(bottom, "expected the off-viewport control in document scope");
+    assert.equal(bottom?.offscreen, true);
+    assert.equal(doc.controls.find((control) => control.label === "Top")?.offscreen, undefined);
+
+    // Playwright scrolls the off-viewport control into view on click.
+    const located = page.locator(`[data-agentic-id="${bottom?.id}"]`);
+    await located.click();
+    assert.equal(await located.innerText(), "clicked");
+  } finally {
+    await browser.close();
+  }
+});
+
+void test("maxControls of 0 surfaces every control with no truncation", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(
+      Array.from({ length: 6 }, (_, index) => `<button>Item ${index + 1}</button>`).join("")
+    );
+
+    const observation = (await collectObservation(page, { maxControls: 0 }, "t1")) as unknown as {
+      controls: unknown[];
+      truncated?: boolean;
+    };
+
+    assert.equal(observation.controls.length, 6);
+    assert.equal(observation.truncated, undefined);
+  } finally {
+    await browser.close();
+  }
+});

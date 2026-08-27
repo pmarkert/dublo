@@ -9,9 +9,11 @@ import {
 export const DEFAULT_WORKSPACE_DEFAULTS = {
   baseUrl: "http://localhost:8080",
   llm: "",
+  escalationLlm: "",
   persona: "",
   context: [],
   maxSteps: 40,
+  maxActionsPerTurn: 0,
   settleDelayMs: 500,
   settleTimeoutMs: 20000,
   headless: false,
@@ -25,9 +27,11 @@ export const DEFAULT_WORKSPACE_DEFAULTS = {
 const ResolvedWorkspaceConfigSchema = z.object({
   baseUrl: z.string().url(),
   llm: z.string(),
+  escalationLlm: z.string(),
   persona: z.string(),
   context: z.array(z.string()),
   maxSteps: z.number().int().positive(),
+  maxActionsPerTurn: z.number().int().nonnegative(),
   settleDelayMs: z.number().int().positive(),
   settleTimeoutMs: z.number().int().positive(),
   headless: z.boolean(),
@@ -89,9 +93,11 @@ function parseEnvironment(environment: Environment) {
   return WorkspaceDefaultsPatchSchema.parse({
     baseUrl: environment.DUBLO_BASE_URL,
     llm: environment.DUBLO_LLM,
+    escalationLlm: environment.DUBLO_ESCALATION_LLM,
     persona: environment.DUBLO_PERSONA,
     context: parseList(environment.DUBLO_CONTEXT),
     maxSteps: parsePositiveInteger(environment.DUBLO_MAX_STEPS),
+    maxActionsPerTurn: parsePositiveInteger(environment.DUBLO_MAX_ACTIONS_PER_TURN),
     settleDelayMs: parsePositiveInteger(environment.DUBLO_SETTLE_DELAY_MS),
     settleTimeoutMs: parsePositiveInteger(environment.DUBLO_SETTLE_TIMEOUT_MS),
     headless: parseBoolean(environment.DUBLO_HEADLESS),
@@ -128,7 +134,18 @@ export function resolveWorkspaceConfig(
     workspace.baseUrl,
     DEFAULT_WORKSPACE_DEFAULTS.baseUrl
   );
-  const [llm, llmSource] = resolveValue(cli.llm, environment.llm, workspace.llm, DEFAULT_WORKSPACE_DEFAULTS.llm);
+  const [llm, llmSource] = resolveValue(
+    cli.llm,
+    environment.llm,
+    workspace.llm,
+    DEFAULT_WORKSPACE_DEFAULTS.llm
+  );
+  const [escalationLlm, escalationLlmSource] = resolveValue(
+    cli.escalationLlm,
+    environment.escalationLlm,
+    workspace.escalationLlm,
+    DEFAULT_WORKSPACE_DEFAULTS.escalationLlm
+  );
   const [persona, personaSource] = resolveValue(
     cli.persona,
     environment.persona,
@@ -146,6 +163,12 @@ export function resolveWorkspaceConfig(
     environment.maxSteps,
     workspace.maxSteps,
     DEFAULT_WORKSPACE_DEFAULTS.maxSteps
+  );
+  const [maxActionsPerTurn, maxActionsPerTurnSource] = resolveValue(
+    cli.maxActionsPerTurn,
+    environment.maxActionsPerTurn,
+    workspace.maxActionsPerTurn,
+    DEFAULT_WORKSPACE_DEFAULTS.maxActionsPerTurn
   );
   const [settleDelayMs, settleDelayMsSource] = resolveValue(
     cli.settleDelayMs,
@@ -200,9 +223,11 @@ export function resolveWorkspaceConfig(
     values: ResolvedWorkspaceConfigSchema.parse({
       baseUrl,
       llm,
+      escalationLlm,
       persona,
       context,
       maxSteps,
+      maxActionsPerTurn,
       settleDelayMs,
       settleTimeoutMs,
       headless,
@@ -215,9 +240,11 @@ export function resolveWorkspaceConfig(
     sources: {
       baseUrl: baseUrlSource,
       llm: llmSource,
+      escalationLlm: escalationLlmSource,
       persona: personaSource,
       context: contextSource,
       maxSteps: maxStepsSource,
+      maxActionsPerTurn: maxActionsPerTurnSource,
       settleDelayMs: settleDelayMsSource,
       settleTimeoutMs: settleTimeoutMsSource,
       headless: headlessSource,

@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
-import { PlannerActionSchema } from "../ports/planner.js";
+import { PlannerParseError, PlannerTurnSchema } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface BedrockPlannerConfig {
@@ -8,6 +8,7 @@ export interface BedrockPlannerConfig {
   inferenceConfig?: Record<string, unknown>;
   modelId: string;
   region: string;
+  promptCaching?: boolean;
   serviceTier?: "default" | "priority" | "flex" | "reserved";
   supportsConditionalToolSchemas?: boolean;
   supportsStrictToolUse?: boolean;
@@ -67,21 +68,43 @@ function assertBedrockConverseResponse(value: unknown): Record<string, unknown> 
 
 function parsePlannerAction(rawAction: unknown) {
   try {
-    return PlannerActionSchema.parse(rawAction);
+    return PlannerTurnSchema.parse(rawAction);
   } catch (error) {
-    const action =
-      isRecord(rawAction) &&
-      isRecord(rawAction.payload) &&
-      typeof rawAction.payload.action === "string"
-        ? rawAction.payload.action
-        : "unknown";
+    const firstAction =
+      isRecord(rawAction) && Array.isArray(rawAction.actions) && isRecord(rawAction.actions[0])
+        ? rawAction.actions[0]
+        : undefined;
+    const action = typeof firstAction?.action === "string" ? firstAction.action : "unknown";
     const fields = isRecord(rawAction) ? Object.keys(rawAction).sort().join(", ") : "non-object";
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Bedrock planner returned an invalid '${action}' action with fields [${fields}]: ${detail}`,
+    throw new PlannerParseError(
+      `Bedrock planner returned an invalid '${action}' turn with fields [${fields}]: ${detail}`,
+      detail,
       { cause: error }
     );
   }
+}
+
+// Pulls the planner_action payload out of a Converse response. Prefers the
+// forced toolUse.input; falls back to a JSON object embedded in a text block
+// (some models emit the call as text). Returns undefined when neither is
+// present. A truncated tool call surfaces here as an empty `{}` input.
+function extractPlannerActionInput(result: Record<string, unknown>): unknown {
+  const output = isRecord(result.output) ? result.output : undefined;
+  const message = output && isRecord(output.message) ? output.message : undefined;
+  const contentItems = Array.isArray(message?.content) ? message.content : [];
+  const toolItem = contentItems.find(
+    (item): item is Record<string, unknown> => isRecord(item) && isRecord(item.toolUse)
+  );
+  const toolUse = toolItem && isRecord(toolItem.toolUse) ? toolItem.toolUse : undefined;
+  if (toolUse?.input !== undefined) return toolUse.input;
+  const text = contentItems
+    .filter(isRecord)
+    .map((item) => (typeof item.text === "string" ? item.text : ""))
+    .join("\n")
+    .trim();
+  if (!text) return undefined;
+  return extractJsonObject(text);
 }
 
 function numberOrZero(value: unknown): number {
@@ -133,22 +156,28 @@ function buildTargetSchema(strict: boolean): Record<string, unknown> {
     };
   }
 
+  const fallbackNote =
+    "Fallback only; fields are ANDed with id, so a guessed value makes the match fail.";
   return {
     type: "object",
     additionalProperties: false,
     properties: {
-      id: { type: "string" },
-      tag: { type: "string" },
-      role: { type: "string" },
-      type: { type: "string" },
-      priority: { type: "boolean" },
-      text: { type: "string" },
-      ariaLabel: { type: "string" },
-      label: { type: "string" },
-      placeholder: { type: "string" },
-      hasValue: { type: "boolean" },
-      checked: { type: "boolean" },
-      disabled: { type: "boolean" }
+      id: {
+        type: "string",
+        description:
+          "Preferred and sufficient on its own: the control id from the current observation (e.g. 'a3'). Ids are unique per observation."
+      },
+      tag: { type: "string", description: fallbackNote },
+      role: { type: "string", description: fallbackNote },
+      type: { type: "string", description: fallbackNote },
+      priority: { type: "boolean", description: fallbackNote },
+      text: { type: "string", description: fallbackNote },
+      ariaLabel: { type: "string", description: fallbackNote },
+      label: { type: "string", description: fallbackNote },
+      placeholder: { type: "string", description: fallbackNote },
+      hasValue: { type: "boolean", description: fallbackNote },
+      checked: { type: "boolean", description: fallbackNote },
+      disabled: { type: "boolean", description: fallbackNote }
     }
   };
 }
@@ -181,44 +210,68 @@ function buildActionSchema(strict: boolean): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["reason", "payload"],
+    required: ["reason", "actions"],
     properties: {
       reason: { type: "string" },
-      payload: {
-        anyOf: [
-          buildActionPayloadVariant("click", { target }, ["target"]),
-          buildActionPayloadVariant("fill", { target, value: { type: "string" } }, [
-            "target",
-            "value"
-          ]),
-          buildActionPayloadVariant("select_option", { target, value: { type: "string" } }, [
-            "target",
-            "value"
-          ]),
-          buildActionPayloadVariant(
-            "scroll",
-            { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
-            ["containerId", "direction"]
-          ),
-          buildActionPayloadVariant("wait_until_gone", { expectGone }, ["expectGone"]),
-          buildActionPayloadVariant(
-            "request_user_input",
-            { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
-            ["inputKey", "inputPrompt"]
-          ),
-          buildActionPayloadVariant(
-            "request_user_interaction",
-            { interactionPrompt: { type: "string" } },
-            ["interactionPrompt"]
-          ),
-          buildActionPayloadVariant(
-            "request_screenshot",
-            { screenshotPrompt: { type: "string" } },
-            ["screenshotPrompt"]
-          ),
-          buildActionPayloadVariant("give_up"),
-          buildActionPayloadVariant("finish")
-        ]
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "category", "summary"],
+          properties: {
+            severity: { enum: ["info", "minor", "major", "critical"] },
+            category: {
+              enum: ["accessibility", "usability", "functional", "performance", "security"]
+            },
+            summary: { type: "string" },
+            evidence: { type: "string" }
+          }
+        }
+      },
+      actions: {
+        type: "array",
+        minItems: 1,
+        items: {
+          anyOf: [
+            buildActionPayloadVariant("click", { target }, ["target"]),
+            buildActionPayloadVariant("fill", { target, value: { type: "string" } }, [
+              "target",
+              "value"
+            ]),
+            buildActionPayloadVariant("select_option", { target, value: { type: "string" } }, [
+              "target",
+              "value"
+            ]),
+            buildActionPayloadVariant(
+              "scroll",
+              { containerId: { type: "string" }, direction: { enum: ["up", "down"] } },
+              ["containerId", "direction"]
+            ),
+            buildActionPayloadVariant("press_key", { key: { type: "string" } }, ["key"]),
+            buildActionPayloadVariant("hover", { target }, ["target"]),
+            buildActionPayloadVariant("navigate", { url: { type: "string" } }, ["url"]),
+            buildActionPayloadVariant("go_back"),
+            buildActionPayloadVariant("wait_until_gone", { expectGone }, ["expectGone"]),
+            buildActionPayloadVariant(
+              "request_user_input",
+              { inputKey: { type: "string" }, inputPrompt: { type: "string" } },
+              ["inputKey", "inputPrompt"]
+            ),
+            buildActionPayloadVariant(
+              "request_user_interaction",
+              { interactionPrompt: { type: "string" } },
+              ["interactionPrompt"]
+            ),
+            buildActionPayloadVariant(
+              "request_screenshot",
+              { screenshotPrompt: { type: "string" } },
+              ["screenshotPrompt"]
+            ),
+            buildActionPayloadVariant("give_up"),
+            buildActionPayloadVariant("finish")
+          ]
+        }
       }
     }
   };
@@ -232,7 +285,8 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
           {
             toolSpec: {
               name: "planner_action",
-              description: "Return the next UI automation action as structured JSON input.",
+              description:
+                "Return the next UI automation action, or a short batch of actions, as structured JSON input.",
               strict: true,
               inputSchema: { json: buildActionSchema(true) }
             }
@@ -249,7 +303,8 @@ function buildToolConfig(config: BedrockPlannerConfig): Record<string, unknown> 
         {
           toolSpec: {
             name: "planner_action",
-            description: "Return the next UI automation action as structured JSON input.",
+            description:
+              "Return the next UI automation action, or a short batch of actions, as structured JSON input.",
             inputSchema: { json: buildActionSchema(false) }
           }
         }
@@ -310,18 +365,36 @@ export function createBedrockPlanner(
               role: "user",
               content: [
                 {
-                  text: "Call the planner_action tool with reason 'Preflight.' and payload action 'finish'."
+                  text: "Call the planner_action tool with reason 'Preflight.' and actions set to a single entry with action 'finish'."
                 }
               ]
             }
           ],
-          inferenceConfig: buildInferenceConfig(config, 20),
+          // The forced planner_action tool call returns { reason, actions: [...] },
+          // which needs ~40-50 output tokens. A tighter cap truncates the tool
+          // use mid-sequence: Anthropic models return an empty toolUse that still
+          // passes the shape check, but Nova rejects the invalid sequence
+          // ("Model produced invalid sequence as part of ToolUse"). Give the
+          // preflight room to emit the whole (tiny) call.
+          inferenceConfig: buildInferenceConfig(config, 256),
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
             : {}),
           ...buildToolConfig(config)
         });
-        assertBedrockConverseResponse(result);
+        // Verify the model produced a complete, well-formed planner_action —
+        // not just a syntactically valid envelope. A too-tight token budget
+        // truncates the toolUse: some endpoints reject it outright, others
+        // return an empty `{}` input that would pass a shape-only check. Parse
+        // the payload so a truncated or malformed call fails loudly here rather
+        // than sorting working models into pass/fail on an unrelated signal.
+        const rawAction = extractPlannerActionInput(assertBedrockConverseResponse(result));
+        if (!isRecord(rawAction) || Object.keys(rawAction).length === 0) {
+          throw new Error(
+            "the model returned an empty or truncated planner_action tool call (no input fields). This usually means the output token budget is too small."
+          );
+        }
+        parsePlannerAction(rawAction);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(
@@ -332,9 +405,23 @@ export function createBedrockPlanner(
     },
 
     async nextAction(request: PlannerRequest): Promise<PlannerResponse> {
+      // Cache the large, run-stable prefix (system prompt + static context) so
+      // each step reads it from cache instead of re-billing it at the full input
+      // rate. The dynamic context (observation, history) follows the cache point
+      // and changes every turn. Below-threshold prefixes are ignored by Bedrock,
+      // so enabling this is safe on supported models.
+      const cachePoint = { cachePoint: { type: "default" } };
+      const system: Array<Record<string, unknown>> = [{ text: request.messages.systemText }];
+      if (config.promptCaching) {
+        system.push({ ...cachePoint });
+      }
+
       const content: Array<Record<string, unknown>> = [
         { text: request.messages.staticContextText }
       ];
+      if (config.promptCaching) {
+        content.push({ ...cachePoint });
+      }
       content.push({ text: request.messages.dynamicContextText });
       if (request.screenshot) {
         content.push({ image: { format: "png", source: { bytes: request.screenshot } } });
@@ -342,34 +429,18 @@ export function createBedrockPlanner(
 
       const result = assertBedrockConverseResponse(
         await sendWithServiceTierFallback(client, config, {
-          system: [{ text: request.messages.systemText }],
+          system,
           messages: [{ role: "user", content }],
-          inferenceConfig: buildInferenceConfig(config, 700),
+          inferenceConfig: buildInferenceConfig(config, 4096),
           ...(config.additionalModelRequestFields
             ? { additionalModelRequestFields: config.additionalModelRequestFields }
             : {}),
           ...buildToolConfig(config)
         })
       );
-      const output = isRecord(result.output) ? result.output : undefined;
-      const message = output && isRecord(output.message) ? output.message : undefined;
-      const contentItems = Array.isArray(message?.content) ? message.content : [];
-      const toolItem = contentItems.find(
-        (item): item is Record<string, unknown> => isRecord(item) && isRecord(item.toolUse)
-      );
-      const toolUse = toolItem && isRecord(toolItem.toolUse) ? toolItem.toolUse : undefined;
-      const rawAction = toolUse?.input;
+      const rawAction = extractPlannerActionInput(result);
       if (rawAction === undefined) {
-        const text = contentItems
-          .filter(isRecord)
-          .map((item) => (typeof item.text === "string" ? item.text : ""))
-          .join("\n")
-          .trim();
-        if (!text) throw new Error("Bedrock planner API returned no planner action.");
-        return {
-          action: parsePlannerAction(extractJsonObject(text)),
-          tokenUsage: normalizeTokenUsage(result.usage)
-        };
+        throw new Error("Bedrock planner API returned no planner action.");
       }
       return {
         action: parsePlannerAction(rawAction),

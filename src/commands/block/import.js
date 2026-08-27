@@ -22,9 +22,13 @@ export async function importBlockCommand(name, runId, options = {}) {
 
   const imported = report.steps
     .filter((step) => step.index > 1 && step.outcome === "ok" && step.plannerAction)
-    .map((step) => ({ index: step.index, action: PlannerActionSchema.parse(step.plannerAction) }))
-    .filter((step) => REPLAYABLE_ACTIONS.has(step.action.payload.action))
-    .map((step) => ({ index: step.index, action: createBlockAction(step.action) }));
+    .map((step) => ({
+      index: step.index,
+      step,
+      action: PlannerActionSchema.parse(step.plannerAction)
+    }))
+    .filter((entry) => REPLAYABLE_ACTIONS.has(entry.action.payload.action))
+    .map((entry) => ({ index: entry.index, action: buildReplayableAction(entry.action, entry.step) }));
 
   if (imported.length === 0) {
     throw new Error(`Run '${report.runId}' has no successful replayable steps after startup navigation.`);
@@ -43,6 +47,57 @@ export async function importBlockCommand(name, runId, options = {}) {
   await mkdir(path.dirname(blockPath), { recursive: true });
   await writeAtomically(blockPath, `${JSON.stringify(block, null, 2)}\n`);
   process.stdout.write(`${blockPath}\n`);
+}
+
+// Builds a replayable block action. For click/fill it prefers the descriptive
+// target captured in the report step (label/text/role/type) over the ephemeral
+// per-turn id, so the block resolves against a later run instead of matching
+// whatever control happens to be at that DOM position. Adds a URL post-condition
+// when the recorded step's URL has a meaningful path.
+function buildReplayableAction(plannerAction, step) {
+  const payload = plannerAction.payload;
+  if (payload.action === "wait_until_gone") {
+    return createBlockAction(plannerAction);
+  }
+
+  const descriptiveTarget = buildDescriptiveTarget(step.target) || payload.target;
+  const rebuilt = {
+    reason: plannerAction.reason,
+    payload:
+      payload.action === "fill"
+        ? { action: "fill", target: descriptiveTarget, value: payload.value }
+        : { action: "click", target: descriptiveTarget },
+    // Recorded identity of the control this step ran against, so a later replay
+    // can tell a description match apart from the same control.
+    ...(typeof step.fingerprint === "string" && step.fingerprint
+      ? { fingerprint: step.fingerprint }
+      : {})
+  };
+
+  const expect = buildExpectation(step);
+  if (expect) rebuilt.expect = expect;
+  return createBlockAction(rebuilt);
+}
+
+function buildDescriptiveTarget(target) {
+  if (!target || typeof target !== "object") return null;
+  const descriptive = {};
+  for (const key of ["label", "text", "role", "type"]) {
+    const value = target[key];
+    if (typeof value === "string" && value.trim().length > 0) descriptive[key] = value;
+  }
+  return Object.keys(descriptive).length > 0 ? descriptive : null;
+}
+
+function buildExpectation(step) {
+  if (!step || typeof step.url !== "string") return null;
+  try {
+    const path = new URL(step.url).pathname;
+    if (path && path !== "/") return { urlIncludes: path };
+  } catch {
+    // Non-absolute or unparseable URL; skip the post-condition.
+  }
+  return null;
 }
 
 async function resolveLatestReportPath(outputDir) {

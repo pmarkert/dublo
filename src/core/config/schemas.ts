@@ -18,7 +18,10 @@ export const LlmProfileSchema = z
     cacheReadPrice: z.number().nonnegative().optional(),
     cacheWritePrice: z.number().nonnegative().optional(),
     currency: z.string().trim().min(1).optional(),
-    tokenUnit: z.number().positive().optional()
+    tokenUnit: z.number().positive().optional(),
+    promptCaching: z.boolean().optional(),
+    supportsConditionalToolSchemas: z.boolean().optional(),
+    supportsStrictToolUse: z.boolean().optional()
   })
   .strict();
 
@@ -26,9 +29,11 @@ export const WorkspaceDefaultsSchema = z
   .object({
     baseUrl: z.string().url().optional(),
     llm: z.string().trim().min(1).optional(),
+    escalationLlm: z.string().trim().min(1).optional(),
     persona: z.string().trim().min(1).optional(),
     context: z.array(z.string().trim().min(1)).optional(),
     maxSteps: z.number().int().positive().optional(),
+    maxActionsPerTurn: z.number().int().nonnegative().optional(),
     settleDelayMs: z.number().int().positive().optional(),
     settleTimeoutMs: z.number().int().positive().optional(),
     headless: z.boolean().optional(),

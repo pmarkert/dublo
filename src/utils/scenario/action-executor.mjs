@@ -19,31 +19,90 @@ export function formatExpectedDocumentText(expectedText) {
 export function isDocumentTextGone(documentText, expectedText) {
   const expectedTexts = Array.isArray(expectedText) ? expectedText : [expectedText];
   const normalizedDocumentText = normalizeDocumentText(documentText);
-  return expectedTexts.every((item) => !normalizedDocumentText.includes(normalizeDocumentText(item)));
+  return expectedTexts.every(
+    (item) => !normalizedDocumentText.includes(normalizeDocumentText(item))
+  );
 }
 
 function normalizeTargetValue(value) {
   return typeof value === "string" ? normalizeDocumentText(value) : value;
 }
 
+function describeCandidate(control) {
+  const name = control.label || control.text || control.ariaLabel || "";
+  return `${control.id} (${[control.tag, control.role].filter(Boolean).join(" ")}${name ? ` "${String(name).slice(0, 60)}"` : ""})`;
+}
+
+// Long string fields (label, text, value, ...) are clipped with a trailing
+// ellipsis before being shown to the planner, so a value the model copied
+// verbatim from the observation can be a truncated prefix of the real one.
+// Treat that as a match; otherwise asking the model to echo a field back for
+// verification would fail on every long label.
+function matchesClippedValue(actual, expected) {
+  if (typeof actual !== "string" || typeof expected !== "string") return false;
+  if (!expected.endsWith("...")) return false;
+  const prefix = expected.slice(0, -3);
+  return prefix.length > 0 && actual.startsWith(prefix);
+}
+
 export function resolveTargetControl(controls, targetSelector) {
   const selectorEntries = Object.entries(targetSelector || {});
+  const fieldMatches = (control, key, expectedValue) => {
+    const actualValue = key === "disabled" ? Boolean(control.disabled) : control[key];
+    const actual = normalizeTargetValue(actualValue);
+    const expected = normalizeTargetValue(expectedValue);
+    return actual === expected || matchesClippedValue(actual, expected);
+  };
   const matches = controls.filter((control) =>
-    selectorEntries.every(([key, expectedValue]) => {
-      const actualValue = key === "disabled" ? Boolean(control.disabled) : control[key];
-      return normalizeTargetValue(actualValue) === normalizeTargetValue(expectedValue);
-    })
+    selectorEntries.every(([key, expectedValue]) => fieldMatches(control, key, expectedValue))
   );
 
   if (matches.length === 1) return matches[0];
 
   const selectorText = JSON.stringify(targetSelector);
-  if (matches.length === 0) throw new Error(`Planner target not found: ${selectorText}`);
-  throw new Error(`Planner target selector is ambiguous: ${selectorText} matched ${matches.length} controls.`);
+  if (matches.length === 0) {
+    // Models corroborate a correct id with guessed attributes ("type":"text" on
+    // an input whose observed type is empty), and strict ANDing punishes the
+    // guess. When the id uniquely names a control, forgive supplied fields that
+    // mismatch only against an EMPTY observed value (nothing to contradict); a
+    // mismatch against an observed non-empty value still disqualifies, which
+    // keeps a stale id (pointing at a different control now) from resolving.
+    const wantedId = typeof targetSelector?.id === "string" ? targetSelector.id.trim() : "";
+    const byId = wantedId ? controls.filter((control) => control.id === wantedId) : [];
+    if (byId.length === 1) {
+      const control = byId[0];
+      const conflicts = selectorEntries.filter(([key, expectedValue]) => {
+        if (key === "id" || fieldMatches(control, key, expectedValue)) return false;
+        const actualValue = key === "disabled" ? Boolean(control.disabled) : control[key];
+        const normalizedActual = normalizeTargetValue(actualValue);
+        return !(
+          normalizedActual === "" ||
+          normalizedActual === undefined ||
+          normalizedActual === null
+        );
+      });
+      if (conflicts.length === 0) return control;
+      throw new Error(
+        `Planner target field mismatch: id '${wantedId}' names ${describeCandidate(control)}, but supplied field(s) ${conflicts
+          .map(([key]) => `'${key}'`)
+          .join(", ")} do not match that control. Selector: ${selectorText}`
+      );
+    }
+    throw new Error(`Planner target not found: ${selectorText}`);
+  }
+  throw new Error(
+    `Planner target selector is ambiguous: ${selectorText} matched ${matches.length} controls: ${matches
+      .slice(0, 5)
+      .map(describeCandidate)
+      .join("; ")}${matches.length > 5 ? "; …" : ""}.`
+  );
 }
 
 function errorMessage(error) {
-  return String(error instanceof Error ? error.message : error).replace(/[\u001B\u009B][[\]()#;?]*(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-ORZcf-nqry=><~])/g, "");
+  return String(error instanceof Error ? error.message : error).replace(
+    /[\u001B\u009B][[\]()#;?]*(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-ORZcf-nqry=><~])/g,
+    ""
+  );
 }
 
 export function classifyRecoverableActionError(error) {
@@ -56,9 +115,16 @@ export function classifyRecoverableActionError(error) {
     return "disabled_target";
   }
   if (message.includes("planner target not found")) return "target_disappeared";
-  if (message.includes("planner select_option target is not a native select")) return "invalid_selection";
+  if (message.includes("planner target selector is ambiguous")) return "ambiguous_target";
+  if (message.includes("planner target field mismatch")) return "target_field_mismatch";
+  if (message.includes("planner select_option target is not a native select"))
+    return "invalid_selection";
   if (message.includes("alternating scroll loop")) return "scroll_loop";
-  if (message.includes("cannot scroll down") || message.includes("cannot scroll up") || message.includes("did not move")) {
+  if (
+    message.includes("cannot scroll down") ||
+    message.includes("cannot scroll up") ||
+    message.includes("did not move")
+  ) {
     return "scroll_boundary";
   }
   return null;
@@ -85,7 +151,9 @@ export function isAlternatingScrollLoop(actionHistory, nextAction) {
 
 export async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
   const minStableMs = Number.isFinite(settleDelayMs) ? Math.max(1, Number(settleDelayMs)) : 500;
-  const maxWaitMs = Number.isFinite(settleTimeoutMs) ? Math.max(minStableMs, Number(settleTimeoutMs)) : 3000;
+  const maxWaitMs = Number.isFinite(settleTimeoutMs)
+    ? Math.max(minStableMs, Number(settleTimeoutMs))
+    : 3000;
   const pollMs = 120;
   const startedAt = Date.now();
   let stableSince = Date.now();
@@ -115,7 +183,8 @@ export async function waitForUiSettle(page, settleDelayMs, settleTimeoutMs) {
           const text = (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40);
           const ariaLabel = (element.getAttribute("aria-label") || "").slice(0, 40);
           const disabled =
-            ("disabled" in element && Boolean(element.disabled)) || element.getAttribute("aria-disabled") === "true";
+            ("disabled" in element && Boolean(element.disabled)) ||
+            element.getAttribute("aria-disabled") === "true";
           return `${element.tagName}:${disabled ? "1" : "0"}:${text}:${ariaLabel}`;
         })
         .join("|");
@@ -141,7 +210,11 @@ export async function waitForDocumentTextGone(page, expectedText, settleDelayMs,
   let absentSince = null;
   let latestDocumentText = "";
   while (Date.now() - startedAt < settleTimeoutMs) {
-    latestDocumentText = await page.evaluate(() => String(globalThis.document.body?.innerText || "").replace(/\s+/g, " ").trim());
+    latestDocumentText = await page.evaluate(() =>
+      String(globalThis.document.body?.innerText || "")
+        .replace(/\s+/g, " ")
+        .trim()
+    );
     if (isDocumentTextGone(latestDocumentText, expectedText)) {
       absentSince ??= Date.now();
       if (Date.now() - absentSince >= settleDelayMs) {
@@ -153,6 +226,34 @@ export async function waitForDocumentTextGone(page, expectedText, settleDelayMs,
     await page.waitForTimeout(pollMs);
   }
   return { completed: false, latestDocumentText, elapsedMs: Date.now() - startedAt };
+}
+
+export function resolveSameOriginUrl(rawUrl, currentUrl, baseUrl) {
+  const reference = currentUrl || baseUrl;
+  let resolved;
+  try {
+    resolved = new URL(rawUrl, reference || undefined);
+  } catch {
+    throw new Error(`Planner navigate URL is invalid: ${rawUrl}`);
+  }
+
+  const allowedOrigins = new Set();
+  for (const candidate of [currentUrl, baseUrl]) {
+    if (!candidate) continue;
+    try {
+      allowedOrigins.add(new URL(candidate).origin);
+    } catch {
+      // ignore unparseable references
+    }
+  }
+
+  if (allowedOrigins.size > 0 && !allowedOrigins.has(resolved.origin)) {
+    throw new Error(
+      `Planner navigate URL is cross-origin and was blocked: ${resolved.href} (allowed: ${[...allowedOrigins].join(", ")}).`
+    );
+  }
+
+  return resolved.href;
 }
 
 async function isTargetDisabled(target) {
@@ -177,17 +278,50 @@ export async function executeBrowserAction({
   secretValues,
   settleDelayMs,
   settleTimeoutMs,
+  baseUrl,
   logger,
-  throwIfInterrupted,
+  throwIfInterrupted
 }) {
   const payload = action.payload;
 
+  if (payload.action === "press_key") {
+    logger.info(`pressing key '${payload.key}'`);
+    await page.keyboard.press(payload.key);
+    throwIfInterrupted();
+    await waitForUiSettle(page, settleDelayMs, settleTimeoutMs);
+    return {};
+  }
+
+  if (payload.action === "navigate") {
+    const targetUrl = resolveSameOriginUrl(payload.url, page.url(), baseUrl);
+    logger.info(`navigating to ${targetUrl}`);
+    await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+    throwIfInterrupted();
+    await waitForUiSettle(page, settleDelayMs, settleTimeoutMs);
+    return {};
+  }
+
+  if (payload.action === "go_back") {
+    logger.info("navigating back");
+    await page.goBack({ waitUntil: "domcontentloaded" });
+    throwIfInterrupted();
+    await waitForUiSettle(page, settleDelayMs, settleTimeoutMs);
+    return {};
+  }
+
   if (payload.action === "scroll") {
     if (isAlternatingScrollLoop(actionHistory, payload)) {
-      throw new Error(`Alternating scroll loop detected in '${payload.containerId}'. Choose a non-scroll action or finish based on current evidence.`);
+      throw new Error(
+        `Alternating scroll loop detected in '${payload.containerId}'. Choose a non-scroll action or finish based on current evidence.`
+      );
     }
-    const container = observation.scrollContainers.find((candidate) => candidate.id === payload.containerId);
-    if (!container) throw new Error(`Planner scroll container '${payload.containerId}' is not in the observation.`);
+    const container = observation.scrollContainers.find(
+      (candidate) => candidate.id === payload.containerId
+    );
+    if (!container)
+      throw new Error(
+        `Planner scroll container '${payload.containerId}' is not in the observation.`
+      );
     if (payload.direction === "down" && !container.canScrollDown) {
       throw new Error(`Planner scroll container '${container.id}' cannot scroll down.`);
     }
@@ -195,11 +329,20 @@ export async function executeBrowserAction({
       throw new Error(`Planner scroll container '${container.id}' cannot scroll up.`);
     }
 
-    const scrollContainer = page.locator(`[data-agentic-turn="${turnToken}"][data-agentic-scroll-id="${container.id}"]`).first();
-    if ((await scrollContainer.count()) === 0) throw new Error(`Planner scroll container '${container.id}' is no longer available.`);
+    const scrollContainer = page
+      .locator(`[data-agentic-turn="${turnToken}"][data-agentic-scroll-id="${container.id}"]`)
+      .first();
+    if ((await scrollContainer.count()) === 0)
+      throw new Error(`Planner scroll container '${container.id}' is no longer available.`);
     const didScroll = await scrollContainer.evaluate((element, direction) => {
       const start = element.scrollTop;
-      element.scrollBy({ top: direction === "down" ? Math.max(200, Math.floor(element.clientHeight * 0.8)) : -Math.max(200, Math.floor(element.clientHeight * 0.8)), behavior: "instant" });
+      element.scrollBy({
+        top:
+          direction === "down"
+            ? Math.max(200, Math.floor(element.clientHeight * 0.8))
+            : -Math.max(200, Math.floor(element.clientHeight * 0.8)),
+        behavior: "instant"
+      });
       return Math.abs(element.scrollTop - start) > 1;
     }, payload.direction);
     if (!didScroll) throw new Error(`Planner scroll container '${container.id}' did not move.`);
@@ -208,39 +351,79 @@ export async function executeBrowserAction({
     return {};
   }
 
-  if (!["click", "fill", "select_option"].includes(payload.action)) {
+  if (!["click", "fill", "select_option", "hover"].includes(payload.action)) {
     throw new Error(`Unsupported browser action: ${payload.action}`);
   }
 
   const matchedControl = resolveTargetControl(observation.controls, payload.target);
-  const target = page.locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${matchedControl.id}"]`).first();
-  if ((await target.count()) === 0) throw new Error(`Planner target not found: ${describeTarget(payload.target)}`);
+  const target = page
+    .locator(`[data-agentic-turn="${turnToken}"][data-agentic-id="${matchedControl.id}"]`)
+    .first();
+  if ((await target.count()) === 0)
+    throw new Error(`Planner target not found: ${describeTarget(payload.target)}`);
 
-  if (payload.action === "click") {
-    if (await isTargetDisabled(target)) throw new Error(`Disabled target before click: ${describeTarget(payload.target)}`);
+  if (payload.action === "hover") {
+    logger.info(`hovering target ${describeTarget(payload.target)}`);
+    await target.hover({ timeout: 1500 });
+  } else if (payload.action === "click") {
+    if (await isTargetDisabled(target))
+      throw new Error(`Disabled target before click: ${describeTarget(payload.target)}`);
     logger.info(`clicking target ${describeTarget(payload.target)}`);
     await target.click({ timeout: 1500 });
   } else if (payload.action === "fill") {
     logger.info(`filling target ${describeTarget(payload.target)}`);
     await target.fill(resolveFillValue(payload.value, contextData, humanInputs, secretValues));
   } else {
-    if (matchedControl.tag !== "select") throw new Error(`Planner select_option target is not a native select: ${describeTarget(payload.target)}`);
-    const option = matchedControl.options?.find((candidate) => candidate.value === payload.value);
+    if (matchedControl.tag !== "select")
+      throw new Error(
+        `Planner select_option target is not a native select: ${describeTarget(payload.target)}`
+      );
+    // The planner's value may be an option's value attribute or its visible
+    // label (a model can predict "Sweden" but not that its value is "SE").
+    const observedOptions = matchedControl.options || [];
+    let option =
+      observedOptions.find((candidate) => candidate.value === payload.value) ||
+      observedOptions.find((candidate) => candidate.label === payload.value);
+    if (!option && matchedControl.optionsTruncated) {
+      // The observed options list was truncated (maxOptionsPerControl), so the
+      // live DOM is the arbiter: accept a value the observation could not show.
+      option = await target.evaluate((el, wanted) => {
+        const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
+        const candidates = Array.from(/** @type {HTMLSelectElement} */ (el).options);
+        const match =
+          candidates.find((candidate) => candidate.value === wanted) ||
+          candidates.find(
+            (candidate) => normalize(candidate.label || candidate.textContent) === wanted
+          );
+        return match
+          ? {
+              label: normalize(match.label || match.textContent),
+              value: match.value,
+              ...(match.disabled ? { disabled: true } : {})
+            }
+          : undefined;
+      }, payload.value);
+    }
     if (!option) throw new Error(`Planner select_option value is not available: ${payload.value}`);
-    if (option.disabled) throw new Error(`Planner select_option value is disabled: ${payload.value}`);
+    if (option.disabled)
+      throw new Error(`Planner select_option value is disabled: ${payload.value}`);
     logger.info(`selecting '${option.label || option.value}' in ${describeTarget(payload.target)}`);
-    await target.selectOption({ value: payload.value });
+    await target.selectOption({ value: option.value });
   }
 
   throwIfInterrupted();
   await waitForUiSettle(page, settleDelayMs, settleTimeoutMs);
   return {
+    // fingerprint is deliberately a SIBLING of target, not a field inside it:
+    // target is echoed back to the planner in completedWork, and fingerprints
+    // are recorded-only (artifacts and drift detection), never model-facing.
+    ...(matchedControl.fingerprint ? { fingerprint: matchedControl.fingerprint } : {}),
     target: {
       label: matchedControl.label,
       ...(matchedControl.ariaLabel ? { ariaLabel: matchedControl.ariaLabel } : {}),
       ...(matchedControl.text ? { text: matchedControl.text } : {}),
       ...(matchedControl.role ? { role: matchedControl.role } : {}),
-      ...(matchedControl.type ? { type: matchedControl.type } : {}),
-    },
+      ...(matchedControl.type ? { type: matchedControl.type } : {})
+    }
   };
 }

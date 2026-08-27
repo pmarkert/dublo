@@ -5,7 +5,14 @@ import process from "node:process";
 const DEFAULT_OBSERVATION_CONFIG = {
   controlsSelector:
     "button, a, input, textarea, select, [role='button'], [role='link'], [role='menuitem'], [role='menuitemcheckbox'], [role='menuitemradio'], [contenteditable='true']",
-  maxControls: 80,
+  // Maximum controls surfaced to the planner per observation. Controls are
+  // ranked by relevance (viewport proximity, then relevanceKeywords) before this
+  // cap is applied, so truncation drops the least relevant ones. 0 disables the
+  // cap (every eligible control is surfaced, at higher token cost).
+  maxControls: 150,
+  // Optional lowercase keywords that boost matching controls when ranking under
+  // the maxControls budget. The runner populates these from the scenario.
+  relevanceKeywords: [],
   ignoreControlSelectors: ["button[aria-label='Open Tanstack query devtools']"],
   ignoreControlTextPatterns: [],
   priorityControlSelectors: ["nav a", "nav button", "[role='navigation'] a", "[role='navigation'] button"],
@@ -16,6 +23,15 @@ const DEFAULT_OBSERVATION_CONFIG = {
   documentTextScopeSelectors: ["main", "[role='main']"],
   documentTextExcludeSelectors: ["button[aria-label='Open Tanstack query devtools']"],
   documentTextMaxChars: 2400,
+  pierceShadow: true,
+  includeInferredControls: true,
+  maxInferredControls: 20,
+  // "viewport" (default) surfaces only controls currently in view, mirroring
+  // what a human can reach; "document" also surfaces rendered-but-off-viewport
+  // controls (flagged offscreen), which the agent can target directly because
+  // Playwright scrolls them into view on click/fill. Keep "viewport" for
+  // usability/accessibility runs, where scroll reachability is under test.
+  interactionScope: "viewport",
 };
 
 function mergeObservationConfig(defaultConfig, overrideConfig) {

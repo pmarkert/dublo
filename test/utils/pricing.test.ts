@@ -3,7 +3,8 @@ import test from "node:test";
 import {
   addTokenUsageTotals,
   calculateCostEstimate,
-  getConfiguredModelPricing
+  getConfiguredModelPricing,
+  subtractTokenUsage
 } from "../../src/utils/scenario/pricing.mjs";
 
 void test("aggregates planner token usage including cache tokens", () => {
@@ -60,4 +61,28 @@ void test("resolves configured rates and calculates each cost component", () => 
       costs: { input: 1, output: 1, cacheRead: 0.2, cacheWrite: 0.3, total: 2.5 }
     }
   );
+});
+
+void test("subtractTokenUsage derives the primary tier's share and never goes negative", () => {
+  const total = {
+    inputTokens: 1000,
+    outputTokens: 400,
+    totalTokens: 1400,
+    cacheReadInputTokens: 200,
+    cacheWriteInputTokens: 100
+  };
+  const escalation = {
+    inputTokens: 300,
+    outputTokens: 150,
+    totalTokens: 450,
+    cacheReadInputTokens: 250,
+    cacheWriteInputTokens: 0
+  };
+  assert.deepEqual(subtractTokenUsage(total, escalation), {
+    inputTokens: 700,
+    outputTokens: 250,
+    totalTokens: 950,
+    cacheReadInputTokens: 0,
+    cacheWriteInputTokens: 100
+  });
 });

@@ -145,9 +145,11 @@ export async function runConfigWizard(
   const next = omitBuiltInDefaults({
     baseUrl,
     llm,
+    escalationLlm: values.escalationLlm,
     persona,
     context,
     maxSteps,
+    maxActionsPerTurn: values.maxActionsPerTurn,
     settleDelayMs: values.settleDelayMs,
     settleTimeoutMs: values.settleTimeoutMs,
     headless,

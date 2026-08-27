@@ -36,6 +36,22 @@ export function getConfiguredModelPricing(config) {
   };
 }
 
+export function subtractTokenUsage(total, part) {
+  return {
+    inputTokens: Math.max(0, toNumberOrZero(total?.inputTokens) - toNumberOrZero(part?.inputTokens)),
+    outputTokens: Math.max(0, toNumberOrZero(total?.outputTokens) - toNumberOrZero(part?.outputTokens)),
+    totalTokens: Math.max(0, toNumberOrZero(total?.totalTokens) - toNumberOrZero(part?.totalTokens)),
+    cacheReadInputTokens: Math.max(
+      0,
+      toNumberOrZero(total?.cacheReadInputTokens) - toNumberOrZero(part?.cacheReadInputTokens)
+    ),
+    cacheWriteInputTokens: Math.max(
+      0,
+      toNumberOrZero(total?.cacheWriteInputTokens) - toNumberOrZero(part?.cacheWriteInputTokens)
+    ),
+  };
+}
+
 export function calculateCostEstimate(tokenUsage, pricing) {
   if (!tokenUsage || !pricing) return null;
 
