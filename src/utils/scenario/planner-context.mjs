@@ -70,10 +70,13 @@ export function buildPlannerMessages({
       "If observation.modal.open is true but observation.modal.blocksBackground is false, you may still use background controls when needed.",
       "Do not invent element IDs.",
       "For click and fill actions, always provide a target object identifying one visible control from the current observation.",
-      "Target controls by id alone: { id: 'a3' }. Ids are unique within an observation, so { id } always identifies exactly one control; text and label are not unique (a button and an element nested inside it often share the same text).",
+      "Address controls by id: ids are unique within an observation, so the id identifies exactly one control; text and label are not unique (a button and an element nested inside it often share the same text).",
       strictTargetSelectors
         ? "Use only the visible control ID as the target selector, for example { id: 'a3' }."
-        : "Target selector fields are ANDed: every field you supply must match the observed control exactly, so an extra field can only make the match FAIL - it never adds precision. Never include a field value you did not copy verbatim from the current observation (do not guess type, text, or label). Use { id } alone.",
+        : "Along with the id, include that control's label copied EXACTLY as the observation shows it: { id: 'a3', label: 'Continue with email' }. The runner resolves the control by id and uses label only to confirm the id still names the control you meant; a disagreement is reported back to you instead of acted on, which is how a stale id from an earlier turn gets caught. Ids are per-observation and shift as controls appear and disappear, so always re-read the id from the CURRENT observation. Omit label only when the control has none.",
+      strictTargetSelectors
+        ? "Do not add any other selector field."
+        : "Add no selector field beyond id and label. Any other field you supply must also match exactly, so a guessed value (type, text, placeholder) can only make the action fail - it never adds precision. Never supply a value you did not copy verbatim from the current observation.",
       "Return actions as a list. Each entry holds one action and its action-specific fields; keep a single reason at the root.",
       "You may return several actions in one turn when they can all be planned from the CURRENT observation and do not depend on each other's results (for example fill every field of a form from known values, or toggle many rows before a bulk action). Batching many independent actions in one turn is efficient and encouraged.",
       "The runner executes a batch in order against the elements you see now, and stops the batch as soon as a later action's element has changed or disappeared. So do NOT batch an action whose target only appears after an earlier action, or that depends on an earlier action's outcome; take those on their own turn after re-observing.",

@@ -398,9 +398,50 @@ export async function collectObservation(page, observationConfig, turnToken) {
       return true;
     };
 
+    const isDisabledControl = (el) => {
+      if ("disabled" in el && el.disabled === true) return true;
+      return el.getAttribute("aria-disabled") === "true";
+    };
+
+    const isNativeInteractive = (el) => {
+      try {
+        return el.matches(controlsSelector);
+      } catch {
+        return false;
+      }
+    };
+
+    // A disabled control is unclickable, so every clickability probe above
+    // rejects it - component libraries routinely set `pointer-events: none` on
+    // the disabled state (shadcn/ui's default button does, via
+    // `disabled:pointer-events-none`), which also defeats the hit test.
+    // Dropping it is wrong: a disabled submit button is usually the most
+    // informative control on a form, because its state IS the reason the flow
+    // is blocked, and its text still appears in documentText - so the model
+    // sees a control advertised in one field and absent from another, and
+    // guesses. Surface visible, semantically-interactive disabled controls and
+    // let the `disabled` flag carry the meaning; the executor still refuses to
+    // click them, which is what produces the `disabled_target` feedback.
+    // Deliberately NOT extended to inferred/non-semantic clickables, where
+    // pointer-events:none remains a sound signal for decorative or inert layers.
+    const isObservableDisabledControl = (el) => {
+      if (!isDisabledControl(el)) return false;
+      if (!isNativeInteractive(el)) return false;
+      if (!isVisible(el)) return false;
+      try {
+        if (el.closest('[aria-hidden="true"], [inert]')) return false;
+      } catch {
+        // ignore malformed selectors / detached nodes
+      }
+      // Respect interactionScope: only surface an off-screen disabled control
+      // when the run is observing the whole document.
+      return Boolean(getVisibleClientRect(el)) || interactionScope === "document";
+    };
+
     const isSelectableControl = (el) =>
       isActiveOverlayControl(el) ||
       isLayerClickable(el) ||
+      isObservableDisabledControl(el) ||
       (interactionScope === "document" && isReachableOffscreen(el));
 
     const allVisibleControls = queryAllWithin(globalThis.document, controlsSelector).filter((el) => isVisible(el));

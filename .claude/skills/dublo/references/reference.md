@@ -338,6 +338,17 @@ control), `hasValue`, `checked`,
 `required`, `expanded`, `selected`, `pressed`, `current`, `invalid`, `disabled`,
 `focused`, `offscreen`.
 
+**Disabled controls are observed, not hidden.** A control that is `disabled` (or
+`aria-disabled="true"`) cannot be clicked, so the clickability probes would drop
+it — component libraries commonly set `pointer-events: none` on the disabled
+state (shadcn/ui's default button does). Dropping it is wrong: a disabled submit
+is usually the most informative control on a form, since its state is *why* the
+flow is blocked, and its text still appears in `documentText`. Visible,
+semantically-interactive disabled controls are therefore listed with
+`disabled: true`; acting on one yields the recoverable `disabled_target`
+outcome. Non-semantic inferred clickables (`cursor: pointer` tiles) with
+`pointer-events: none` remain excluded — there the heuristic is sound.
+
 Each control also carries a **`fingerprint`**: a short stable digest of
 (tag, role, type, accessible name, contextPath). It is *recorded-only* — written
 to `report.json` and to imported blocks, and never sent to the planner (targets
@@ -376,8 +387,11 @@ never conflicts with batching. Findings collect in `report.findings`.
 | `request_screenshot` | `screenshotPrompt` | delivers a set-of-marks-annotated viewport image next turn |
 | `finish` / `give_up` | — | terminate the run |
 
-`target` selector: use `{ id: "a3" }` — ids are unique per observation, so the
-id alone always identifies exactly one control (strict models require id-only).
+`target` selector: use `{ id: "a3", label: "<exactly as observed>" }` — the id
+addresses the control (ids are unique per observation) and `label` is *verified*
+against it, so a stale id from an earlier turn is caught instead of silently
+clicking the wrong control (strict models use id-only). A clipped label (long
+values are truncated with `...` before the planner sees them) still verifies.
 Other control fields (`tag`, `role`, `type`, `text`, `label`, `ariaLabel`,
 `placeholder`, `priority`, `hasValue`, `checked`, `disabled`) are ANDed with
 whatever is supplied: an extra field can only make the match fail, never add

@@ -33,11 +33,25 @@ function describeCandidate(control) {
   return `${control.id} (${[control.tag, control.role].filter(Boolean).join(" ")}${name ? ` "${String(name).slice(0, 60)}"` : ""})`;
 }
 
+// Long string fields (label, text, value, ...) are clipped with a trailing
+// ellipsis before being shown to the planner, so a value the model copied
+// verbatim from the observation can be a truncated prefix of the real one.
+// Treat that as a match; otherwise asking the model to echo a field back for
+// verification would fail on every long label.
+function matchesClippedValue(actual, expected) {
+  if (typeof actual !== "string" || typeof expected !== "string") return false;
+  if (!expected.endsWith("...")) return false;
+  const prefix = expected.slice(0, -3);
+  return prefix.length > 0 && actual.startsWith(prefix);
+}
+
 export function resolveTargetControl(controls, targetSelector) {
   const selectorEntries = Object.entries(targetSelector || {});
   const fieldMatches = (control, key, expectedValue) => {
     const actualValue = key === "disabled" ? Boolean(control.disabled) : control[key];
-    return normalizeTargetValue(actualValue) === normalizeTargetValue(expectedValue);
+    const actual = normalizeTargetValue(actualValue);
+    const expected = normalizeTargetValue(expectedValue);
+    return actual === expected || matchesClippedValue(actual, expected);
   };
   const matches = controls.filter((control) =>
     selectorEntries.every(([key, expectedValue]) => fieldMatches(control, key, expectedValue))

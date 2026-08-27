@@ -18,7 +18,7 @@ const program = new Command();
 program
   .name("dublo")
   .description("Agentic LLM web testing with Playwright")
-  .version("0.3.3", "--version");
+  .version("0.3.4", "--version");
 
 registerConfigCommands(program);
 registerRunCommand(program);

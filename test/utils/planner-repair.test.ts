@@ -301,6 +301,9 @@ void test("an ambiguous selector is recoverable and feeds disambiguation guidanc
   // NOT set supportsStrictToolUse - the wording is no longer gated on it.
   const firstBody = handle.requestBodies()[0];
   assert.ok(firstBody);
-  assert.match(firstBody, /Target selector fields are ANDed/);
-  assert.match(firstBody, /Target controls by id alone/);
+  assert.match(firstBody, /Add no selector field beyond id and label/);
+  assert.match(firstBody, /Address controls by id/);
+  // The id+label verification rule must actually be asked for, otherwise
+  // target_field_mismatch only fires when the model disobeys instructions.
+  assert.match(firstBody, /include that control's label copied EXACTLY/);
 });
