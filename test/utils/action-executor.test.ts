@@ -118,7 +118,7 @@ void test("select_option accepts a live value beyond a truncated options list", 
     const page = await browser.newPage();
     const optionMarkup = Array.from(
       { length: 60 },
-      (_, index) => `<option value="${1950 + index}">${1950 + index}</option>`
+      (_, index) => `<option value="y${1950 + index}">${1950 + index}</option>`
     ).join("");
     await page.setContent(`
       <label for="year">Birth year</label>
@@ -139,11 +139,12 @@ void test("select_option accepts a live value beyond a truncated options list", 
     assert.match(control.text, /1959/);
     assert.doesNotMatch(control.text, /2009/);
 
-    // A value beyond the truncated list is validated against the live DOM.
+    // A choice beyond the truncated list is validated against the live DOM,
+    // and the visible label resolves to the option's real value attribute.
     await executeBrowserAction({
       page,
       action: {
-        reason: "pick a year past the truncation point",
+        reason: "pick a year past the truncation point by its visible label",
         payload: { action: "select_option", target: { id: control.id }, value: "2005" }
       },
       observation,
@@ -152,7 +153,22 @@ void test("select_option accepts a live value beyond a truncated options list", 
       logger: noopLogger,
       throwIfInterrupted: noInterrupt
     });
-    assert.equal(await page.locator("#year").inputValue(), "2005");
+    assert.equal(await page.locator("#year").inputValue(), "y2005");
+
+    // The raw value attribute works beyond the cap too.
+    await executeBrowserAction({
+      page,
+      action: {
+        reason: "pick a year past the truncation point by value",
+        payload: { action: "select_option", target: { id: control.id }, value: "y2001" }
+      },
+      observation,
+      turnToken: "t1",
+      ...settle,
+      logger: noopLogger,
+      throwIfInterrupted: noInterrupt
+    });
+    assert.equal(await page.locator("#year").inputValue(), "y2001");
 
     // A value that exists nowhere still fails fast.
     await assert.rejects(

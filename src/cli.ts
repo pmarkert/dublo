@@ -15,7 +15,10 @@ import { registerReportCommands } from "./cli/report-commands.js";
 import { registerSkillCommands } from "./cli/skill-commands.js";
 
 const program = new Command();
-program.name("dublo").description("Agentic LLM web testing with Playwright").version("0.2.0", "--version");
+program
+  .name("dublo")
+  .description("Agentic LLM web testing with Playwright")
+  .version("0.3.0", "--version");
 
 registerConfigCommands(program);
 registerRunCommand(program);
@@ -32,7 +35,7 @@ completion.commands.delete("completion");
 addRunOptionValueCompletions(completion);
 
 program.parseAsync(process.argv).catch((error: unknown) => {
-	const message = error instanceof Error ? error.message : String(error);
-	process.stderr.write(`Error: ${message}\n`);
-	process.exitCode = 1;
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`Error: ${message}\n`);
+  process.exitCode = 1;
 });

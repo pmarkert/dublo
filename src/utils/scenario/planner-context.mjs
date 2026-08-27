@@ -81,7 +81,7 @@ export function buildPlannerMessages({
       "For fill actions, also provide a value.",
       "Treat checked, selected, and pressed as current control state. Do not click a control that is already in the state required by the objective.",
       "Use select_option only for an observed native select that includes an options list, using an observed option value. For an open custom combobox, click the visible role=option control instead.",
-      "When a select control has optionsTruncated:true, its options list shows only the first entries of optionCount total. You may select_option a value beyond the shown list when the control's pattern makes it predictable (for example a year, day, or sequential code); the runner verifies the value against the live control.",
+      "select_option's value may be either an option's value or its exact visible label. When a select control has optionsTruncated:true, its options list shows only the first entries of optionCount total; you may select_option an entry beyond the shown list when the pattern makes it predictable (for example a year, a country name, or a sequential code) — the runner verifies it against the live control.",
       "When an observed scroll container has canScrollDown or canScrollUp, use scroll with its containerId and direction to reveal more content before escalating.",
       "Use press_key for keyboard interaction (for example Tab, Shift+Tab, Enter, Escape, ArrowDown). It acts on the currently focused element or the page; click a control first when you need to focus it before typing a key. observation.focus and each control's focused flag show what currently has focus.",
       "Use hover to reveal menus or content that only appear on pointer hover.",

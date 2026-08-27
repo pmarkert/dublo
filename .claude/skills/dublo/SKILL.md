@@ -56,6 +56,10 @@ dublo init --workspace ./.dublo --base-url https://example.com
 
 # 2. Configure an LLM profile (interactive wizard, or edit .dublo/llm/<name>.json)
 dublo llm config            # wizard: pick a Bedrock model or enter a custom id
+# Bedrock Claude IDs are Converse-catalog forms, NOT first-party API ids —
+# e.g. global.anthropic.claude-sonnet-5 (yes, Sonnet 5 exists on Bedrock; no
+# date suffix, no -v1:0). See reference §3 "Bedrock model IDs" before hand-
+# writing a modelId.
 
 # 3. Run a scenario (a built-in name, a workspace scenario, or stdin text)
 dublo run homepage-smoke --workspace ./.dublo

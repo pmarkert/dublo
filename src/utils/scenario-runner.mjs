@@ -13,7 +13,7 @@ import { drawSetOfMarks, clearSetOfMarks } from "./scenario/set-of-marks.mjs";
 import { buildPlannerMessages } from "./scenario/planner-context.mjs";
 import { loadObservationConfig, normalizeScreenshotMode } from "./scenario/observation-config.mjs";
 import { collectObservation } from "./scenario/observation.mjs";
-import { addTokenUsageTotals, calculateCostEstimate, getConfiguredModelPricing } from "./scenario/pricing.mjs";
+import { addTokenUsageTotals, calculateCostEstimate, getConfiguredModelPricing, subtractTokenUsage } from "./scenario/pricing.mjs";
 import {
   classifyRecoverableActionError,
   executeBrowserAction,
@@ -255,6 +255,17 @@ export async function runScenario(config, options = {}) {
       selfHealCalls: 0,
       formatRetries: 0,
     },
+    // Token usage attributable to the escalation model alone (also included in
+    // the tokenUsage totals above); lets the cost estimate price each tier at
+    // its own rates.
+    escalationTokenUsage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      plannerCalls: 0,
+    },
     pricing: null,
     costEstimate: null,
     findings: [],
@@ -362,6 +373,7 @@ export async function runScenario(config, options = {}) {
   let pendingScreenshotBuffer = null;
   let previousTimedOutWait = null;
   let pendingEscalation = false;
+  let pendingEscalationReason = null;
 
   const captureViewportScreenshot = async (options = {}) => {
     throwIfInterrupted();
@@ -433,6 +445,10 @@ export async function runScenario(config, options = {}) {
         plannerTokenUsage: stepDebugContext?.plannerTokenUsage,
         phase: metadata?.phase,
         initBlock: metadata?.initBlock,
+        plannerModel: metadata?.plannerModel,
+        ...(metadata?.escalated
+          ? { escalated: true, escalationReason: metadata.escalationReason }
+          : {}),
         ...(metadata?.runtimeErrors?.length ? { runtimeErrors: metadata.runtimeErrors } : {}),
         outcome: stepError ? "error" : "ok",
         error: stepError || undefined,
@@ -646,6 +662,14 @@ export async function runScenario(config, options = {}) {
       debugLogger.log(messages.debugUserText);
       debugLogger.log("planner_user_end");
 
+      // What produced this turn's plan — recorded on the step so the report
+      // shows which model drove it and why escalation happened.
+      const turnPlanning = {
+        model: config.llm.modelId,
+        escalated: false,
+        escalationReason: null,
+      };
+
       const callPlannerOnce = async (activePlanner, activeMessages) => {
         const result = await requestPlannerAction({
           planner: activePlanner,
@@ -655,8 +679,29 @@ export async function runScenario(config, options = {}) {
         });
         if (result.tokenUsage) {
           addTokenUsageTotals(report.tokenUsage, result.tokenUsage);
+          if (escalationPlanner && activePlanner === escalationPlanner) {
+            addTokenUsageTotals(report.escalationTokenUsage, result.tokenUsage);
+          }
         }
         return result;
+      };
+
+      // A planner failure the run recovered from still deserves a visible step:
+      // the report should show the failed attempt and the retry, not silently
+      // merge them into one entry.
+      const recordPlannerFailureStep = (name, phase, model, retriedWith, errorText) => {
+        stepIndex += 1;
+        report.steps.push({
+          index: stepIndex,
+          name,
+          durationMs: 0,
+          url: page.url(),
+          phase,
+          plannerModel: model,
+          ...(retriedWith ? { retriedWith } : {}),
+          outcome: "error",
+          error: errorText,
+        });
       };
 
       const withValidationFeedback = (validationMessage) => ({
@@ -670,6 +715,10 @@ export async function runScenario(config, options = {}) {
       // retries re-read the cached prefix, so they are cheap. Only after all
       // repair attempts fail does the error propagate and fail the run.
       const callPlanner = async (activePlanner) => {
+        const activeModel =
+          escalationPlanner && activePlanner === escalationPlanner
+            ? config.escalationLlm.modelId
+            : config.llm.modelId;
         try {
           return await callPlannerOnce(activePlanner, messages);
         } catch (error) {
@@ -677,6 +726,13 @@ export async function runScenario(config, options = {}) {
           report.tokenUsage.formatRetries += 1;
           logger.warn(
             `planner turn failed validation; retrying with feedback: ${clip(error.validationMessage, 200)}`
+          );
+          recordPlannerFailureStep(
+            "planner_invalid_turn",
+            "planner_repair",
+            activeModel,
+            activeModel,
+            error.validationMessage
           );
           throwIfInterrupted();
           try {
@@ -689,6 +745,16 @@ export async function runScenario(config, options = {}) {
             logger.warn(
               `retried turn still failed validation; repairing with ${config.escalationLlm.modelId}`
             );
+            recordPlannerFailureStep(
+              "planner_invalid_turn",
+              "planner_repair",
+              activeModel,
+              config.escalationLlm.modelId,
+              retryError.validationMessage
+            );
+            turnPlanning.model = config.escalationLlm.modelId;
+            turnPlanning.escalated = true;
+            turnPlanning.escalationReason = "invalid planner turn persisted after one retry";
             throwIfInterrupted();
             return await callPlannerOnce(
               escalationPlanner,
@@ -703,13 +769,21 @@ export async function runScenario(config, options = {}) {
       // give_up from the cheap model by retrying once with the escalation model.
       const escalateThisTurn =
         Boolean(escalationPlanner) && (pendingEscalation || Boolean(observation.truncated));
+      if (escalateThisTurn) {
+        turnPlanning.model = config.escalationLlm.modelId;
+        turnPlanning.escalated = true;
+        turnPlanning.escalationReason = pendingEscalationReason || "observation truncated";
+      }
       let plannerResult = await callPlanner(escalateThisTurn ? escalationPlanner : planner);
       let usedEscalation = escalateThisTurn;
       if (escalateThisTurn) {
         report.tokenUsage.escalationCalls += 1;
-        logger.info(`escalated planning to ${config.escalationLlm.modelId}`);
+        logger.info(
+          `escalated planning to ${config.escalationLlm.modelId} (${turnPlanning.escalationReason})`
+        );
       }
       pendingEscalation = false;
+      pendingEscalationReason = null;
 
       if (
         escalationPlanner &&
@@ -717,6 +791,16 @@ export async function runScenario(config, options = {}) {
         plannerResult.action.actions[0].action === "give_up"
       ) {
         logger.info(`primary planner gave up; retrying with ${config.escalationLlm.modelId}`);
+        recordPlannerFailureStep(
+          "planner_gave_up",
+          "planner_rescue",
+          config.llm.modelId,
+          config.escalationLlm.modelId,
+          `Primary planner gave up: ${plannerResult.action.reason}`
+        );
+        turnPlanning.model = config.escalationLlm.modelId;
+        turnPlanning.escalated = true;
+        turnPlanning.escalationReason = "primary planner gave up";
         throwIfInterrupted();
         plannerResult = await callPlanner(escalationPlanner);
         usedEscalation = true;
@@ -978,7 +1062,13 @@ export async function runScenario(config, options = {}) {
           return;
         },
         stepDebugContext,
-        { runtimeErrors: observation.runtimeErrors }
+        {
+          runtimeErrors: observation.runtimeErrors,
+          plannerModel: turnPlanning.model,
+          ...(turnPlanning.escalated
+            ? { escalated: true, escalationReason: turnPlanning.escalationReason }
+            : {}),
+        }
       );
     } catch (error) {
         const recoverableKind = classifyRecoverableActionError(error);
@@ -1021,6 +1111,7 @@ export async function runScenario(config, options = {}) {
       // turn to the stronger model when one is configured.
       if (recoverableOutcome && escalationPlanner) {
         pendingEscalation = true;
+        pendingEscalationReason = `previous action hit a recoverable failure (${recoverableOutcome})`;
       }
 
       // Multi-action batch: run the remaining planned actions without another
@@ -1108,7 +1199,10 @@ export async function runScenario(config, options = {}) {
           // Any recoverable failure ends the batch; the next planner turn
           // re-observes and re-plans from the current state.
           if (followOutcome) {
-            if (escalationPlanner) pendingEscalation = true;
+            if (escalationPlanner) {
+              pendingEscalation = true;
+              pendingEscalationReason = `a batched action hit a recoverable failure (${followOutcome})`;
+            }
             break;
           }
         }
@@ -1159,7 +1253,43 @@ export async function runScenario(config, options = {}) {
         ...(config.llm.region ? { region: config.llm.region } : {}),
         ...configuredPricing,
       };
-      report.costEstimate = calculateCostEstimate(report.tokenUsage, configuredPricing);
+
+      const escalationUsage = report.escalationTokenUsage;
+      const escalationUsed = escalationUsage && escalationUsage.totalTokens > 0;
+      if (!escalationUsed) {
+        report.costEstimate = calculateCostEstimate(report.tokenUsage, configuredPricing);
+      } else {
+        // Price each tier at its own rates: the escalation model's usage at the
+        // escalation profile's configured prices (falling back to the primary's
+        // rates when that profile has none), the remainder at the primary's.
+        const escalationPricing =
+          (config.escalationLlm && getConfiguredModelPricing({ llm: config.escalationLlm })) ||
+          configuredPricing;
+        const primaryUsage = subtractTokenUsage(report.tokenUsage, escalationUsage);
+        const primaryEstimate = calculateCostEstimate(primaryUsage, configuredPricing);
+        const escalationEstimate = calculateCostEstimate(escalationUsage, escalationPricing);
+        const round = (value) => Number(value.toFixed(10));
+        report.costEstimate = {
+          currency: configuredPricing.currency,
+          tokenUnit: configuredPricing.tokenUnit,
+          rates: primaryEstimate.rates,
+          costs: {
+            input: round(primaryEstimate.costs.input + escalationEstimate.costs.input),
+            output: round(primaryEstimate.costs.output + escalationEstimate.costs.output),
+            cacheRead: round(primaryEstimate.costs.cacheRead + escalationEstimate.costs.cacheRead),
+            cacheWrite: round(
+              primaryEstimate.costs.cacheWrite + escalationEstimate.costs.cacheWrite
+            ),
+            total: round(primaryEstimate.costs.total + escalationEstimate.costs.total),
+          },
+          primary: { costs: primaryEstimate.costs },
+          escalation: {
+            modelId: config.escalationLlm.modelId,
+            rates: escalationEstimate.rates,
+            costs: escalationEstimate.costs,
+          },
+        };
+      }
     }
 
     const finalRunId = createRunId(startedAt, resolveRunOutcome(report.status), runLabel);

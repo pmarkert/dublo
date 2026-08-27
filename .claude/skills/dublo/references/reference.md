@@ -177,6 +177,38 @@ wait until the control signature is unchanged for `settleDelayMs`, up to
   `tokenUnit` (default `1000000`) in `currency`. If input/output prices are
   absent, cost estimation is skipped.
 
+### Bedrock model IDs (Converse runtime)
+
+Dublo calls the classic `bedrock-runtime` Converse API, whose catalog IDs are
+**not** the Anthropic first-party IDs. Do not invent IDs from other naming
+schemes — every one of these is verified against AWS's model cards:
+
+| Model | Base catalog ID | Use in `modelId` |
+| --- | --- | --- |
+| Claude Sonnet 5 | `anthropic.claude-sonnet-5` | `global.anthropic.claude-sonnet-5` or `us.anthropic.claude-sonnet-5` |
+| Claude Sonnet 4.6 | `anthropic.claude-sonnet-4-6` | `global.anthropic.claude-sonnet-4-6` or `us.anthropic.claude-sonnet-4-6` |
+| Claude Sonnet 4.5 | `anthropic.claude-sonnet-4-5-20250929-v1:0` | `global.` / `us.` + base ID |
+| Claude Haiku 4.5 | `anthropic.claude-haiku-4-5-20251001-v1:0` | `global.` / `us.` + base ID |
+| Amazon Nova Pro | `amazon.nova-pro-v1:0` | as-is (no profile needed) |
+| Amazon Nova 2 Lite | `amazon.nova-2-lite-v1:0` | `us.` / `global.` + base ID |
+
+Rules that trip people up:
+
+- **Claude Sonnet 5 and Sonnet 4.6 exist on Bedrock** and use short IDs with
+  **no date suffix and no `-v1:0`** (`anthropic.claude-sonnet-5`). Older Claude
+  models keep the dated `-v1:0` form. Never mix the schemes — a hand-built
+  `anthropic.claude-sonnet-5-v1:0` or date-suffixed Sonnet 5 ID does not exist,
+  and Bedrock's "model not found" for such an ID does NOT mean the model is
+  unavailable.
+- **Recent Claude models require an inference-profile prefix** (`us.`, `eu.`,
+  `au.`, or `global.`) — the bare base ID is not invocable on-demand in-region.
+  Prefer `global.` (routes anywhere) or your geo (`us.`). The `dublo llm
+  config` wizard applies the prefix when you pick a catalog model.
+- Sonnet 5 rejects sampling parameters — leave `inferenceConfig` empty (no
+  `temperature`) for it. Sonnet 4.6 and earlier accept `temperature: 0`.
+- Set `supportsStrictToolUse: true` for Claude models on Bedrock;
+  `supportsConditionalToolSchemas: true` is Nova-only.
+
 ### OpenAI-compatible (local / self-hosted)
 
 ```json
@@ -318,7 +350,7 @@ never conflicts with batching. Findings collect in `report.findings`.
 | --- | --- | --- |
 | `click` | `target` | |
 | `fill` | `target`, `value` | value may be `{{context:…}}` / `{{secret:…}}` / `{{input:…}}` |
-| `select_option` | `target`, `value` | native `<select>` only (use `click` on a custom option) |
+| `select_option` | `target`, `value` | native `<select>` only (use `click` on a custom option); `value` may be an option value or its exact visible label |
 | `hover` | `target` | reveal hover menus |
 | `press_key` | `key` | `Tab`, `Shift+Tab`, `Enter`, `Escape`, `ArrowDown`, … — acts on the focused element |
 | `scroll` | `containerId`, `direction` | scroll an observed scroll container |

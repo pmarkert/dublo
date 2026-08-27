@@ -26,6 +26,12 @@ export const reportGenerator = {
             `- Output: ${report.costEstimate.costs.output.toFixed(6)} ${report.costEstimate.currency}`,
             `- Cache Read: ${report.costEstimate.costs.cacheRead.toFixed(6)} ${report.costEstimate.currency}`,
             `- Cache Write: ${report.costEstimate.costs.cacheWrite.toFixed(6)} ${report.costEstimate.currency}`,
+            ...(report.costEstimate.escalation
+              ? [
+                  `- Primary Model: ${report.costEstimate.primary.costs.total.toFixed(6)} ${report.costEstimate.currency}`,
+                  `- Escalation (${report.costEstimate.escalation.modelId}): ${report.costEstimate.escalation.costs.total.toFixed(6)} ${report.costEstimate.currency}`,
+                ]
+              : []),
             `- Total: ${report.costEstimate.costs.total.toFixed(6)} ${report.costEstimate.currency}`,
             "",
           ]
@@ -55,7 +61,18 @@ export const reportGenerator = {
         const runtimeErrorsPart = Array.isArray(step.runtimeErrors) && step.runtimeErrors.length
           ? ` ⚠ runtime: ${step.runtimeErrors.map((entry) => entry.type).join(", ")}`
           : "";
-        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner} -> ${stepUrlPart}${screenshotPart}${htmlPart}${runtimeErrorsPart}`;
+        const escalationPart = step.escalated
+          ? ` ⤴ escalated to ${step.plannerModel}${step.escalationReason ? ` (${step.escalationReason})` : ""}`
+          : "";
+        const repairPart =
+          step.phase === "planner_repair" || step.phase === "planner_rescue"
+            ? ` ✗ ${stripAnsi(step.error || "")}${step.retriedWith ? ` → retried with ${step.retriedWith}` : ""}`
+            : "";
+        const sharedObservationPart =
+          typeof step.observationSharedFromStep === "number"
+            ? ` (observation shared from step ${step.observationSharedFromStep})`
+            : "";
+        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner}${escalationPart}${repairPart} -> ${stepUrlPart}${screenshotPart}${htmlPart}${runtimeErrorsPart}${sharedObservationPart}`;
       }),
       "",
       displayError ? `## Error\n\n\`\`\`text\n${displayError}\n\`\`\`` : "## Result\n\nScenario objective completed.",

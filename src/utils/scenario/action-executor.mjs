@@ -282,17 +282,24 @@ export async function executeBrowserAction({
     await target.fill(resolveFillValue(payload.value, contextData, humanInputs, secretValues));
   } else {
     if (matchedControl.tag !== "select") throw new Error(`Planner select_option target is not a native select: ${describeTarget(payload.target)}`);
-    let option = matchedControl.options?.find((candidate) => candidate.value === payload.value);
+    // The planner's value may be an option's value attribute or its visible
+    // label (a model can predict "Sweden" but not that its value is "SE").
+    const observedOptions = matchedControl.options || [];
+    let option =
+      observedOptions.find((candidate) => candidate.value === payload.value) ||
+      observedOptions.find((candidate) => candidate.label === payload.value);
     if (!option && matchedControl.optionsTruncated) {
       // The observed options list was truncated (maxOptionsPerControl), so the
       // live DOM is the arbiter: accept a value the observation could not show.
-      option = await target.evaluate((el, value) => {
-        const match = Array.from(/** @type {HTMLSelectElement} */ (el).options).find(
-          (candidate) => candidate.value === value
-        );
+      option = await target.evaluate((el, wanted) => {
+        const normalize = (text) => (text || "").replace(/\s+/g, " ").trim();
+        const candidates = Array.from(/** @type {HTMLSelectElement} */ (el).options);
+        const match =
+          candidates.find((candidate) => candidate.value === wanted) ||
+          candidates.find((candidate) => normalize(candidate.label || candidate.textContent) === wanted);
         return match
           ? {
-              label: (match.label || match.textContent || "").replace(/\s+/g, " ").trim(),
+              label: normalize(match.label || match.textContent),
               value: match.value,
               ...(match.disabled ? { disabled: true } : {})
             }
@@ -302,7 +309,7 @@ export async function executeBrowserAction({
     if (!option) throw new Error(`Planner select_option value is not available: ${payload.value}`);
     if (option.disabled) throw new Error(`Planner select_option value is disabled: ${payload.value}`);
     logger.info(`selecting '${option.label || option.value}' in ${describeTarget(payload.target)}`);
-    await target.selectOption({ value: payload.value });
+    await target.selectOption({ value: option.value });
   }
 
   throwIfInterrupted();

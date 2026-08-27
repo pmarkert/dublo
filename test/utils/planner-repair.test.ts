@@ -100,6 +100,7 @@ type Report = {
     index: number;
     name: string;
     phase?: string;
+    plannerModel?: string;
     observation?: unknown;
     observationSharedFromStep?: number;
     plannerTokenUsage?: unknown;
@@ -177,6 +178,16 @@ void test("a schema-invalid turn is retried with validation feedback instead of 
   const retryBody = handle.requestBodies()[1];
   assert.ok(retryBody);
   assert.match(retryBody, /failed schema validation/);
+
+  // The failed attempt is its own visible step in the report.
+  const repairStep = report.steps.find((step) => step.name === "planner_invalid_turn");
+  assert.ok(repairStep, "expected a planner_invalid_turn step");
+  assert.equal(repairStep.phase, "planner_repair");
+  assert.equal(repairStep.plannerModel, "fake-model");
+  // Normal steps record which model planned them.
+  const fillStep = report.steps.find((step) => step.name.startsWith("fill_"));
+  assert.ok(fillStep);
+  assert.equal(fillStep.plannerModel, "fake-model");
 });
 
 void test("a turn that stays invalid after the retry fails the run with the parse error", async (t) => {

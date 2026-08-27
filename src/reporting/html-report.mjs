@@ -119,6 +119,7 @@ export const reportGenerator = {
   outputFileName: "summary.html",
   render({ report, context }) {
     const { runId, scenario, screenshots, modelSummary, config } = context;
+    const escalationCost = report.costEstimate?.escalation;
     const costSummary = report.costEstimate
       ? `
       <section class="card meta-grid">
@@ -126,6 +127,8 @@ export const reportGenerator = {
         <div><span class="meta-label">Output</span><strong>${report.costEstimate.costs.output.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
         <div><span class="meta-label">Cache Read</span><strong>${report.costEstimate.costs.cacheRead.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
         <div><span class="meta-label">Cache Write</span><strong>${report.costEstimate.costs.cacheWrite.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
+        ${escalationCost ? `<div><span class="meta-label">Primary Model</span><strong>${report.costEstimate.primary.costs.total.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
+        <div><span class="meta-label">Escalation (${escapeHtml(escalationCost.modelId)})</span><strong>${escalationCost.costs.total.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>` : ""}
         <div><span class="meta-label">Total</span><strong>${report.costEstimate.costs.total.toFixed(6)} ${escapeHtml(report.costEstimate.currency)}</strong></div>
       </section>`
       : "";
@@ -167,7 +170,11 @@ export const reportGenerator = {
         const screenshotPreview = step.screenshot
           ? `<a class="image-link" href="${escapeHtml(step.screenshot)}"><img src="${escapeHtml(step.screenshot)}" alt="Screenshot for step ${step.index}"></a>`
           : "";
-        const observationBlock = step.observation ? renderObservationHtml(step.observation) : "";
+        const observationBlock = step.observation
+          ? renderObservationHtml(step.observation)
+          : typeof step.observationSharedFromStep === "number"
+            ? `<section><h4>Observation</h4><p class="empty-note">Planned from the observation captured in <a href="#step-${step.observationSharedFromStep}">step ${step.observationSharedFromStep}</a> (batched follow-on).</p></section>`
+            : "";
         const plannerActionBlock = step.plannerAction ? `<section><h4>Planner Action</h4>${renderJsonHtml(step.plannerAction)}</section>` : "";
         const inputsBlock = step.knownHumanInputs && Object.keys(step.knownHumanInputs).length > 0
           ? `<section><h4>Known Human Inputs</h4>${renderJsonHtml(step.knownHumanInputs)}</section>`
@@ -191,19 +198,40 @@ export const reportGenerator = {
               .join("")}</div></section>`
           : "";
 
+        const plannerBadges = [
+          step.phase === "planner_repair"
+            ? `<span class="mini-pill mini-pill-alert">invalid turn</span>`
+            : "",
+          step.phase === "planner_rescue" ? `<span class="mini-pill mini-pill-alert">gave up</span>` : "",
+          step.escalated
+            ? `<span class="mini-pill mini-pill-escalated" title="${escapeHtml(step.escalationReason || "")}">escalated</span>`
+            : "",
+          step.plannerModel ? `<span class="mini-pill">${escapeHtml(step.plannerModel)}</span>` : "",
+          step.retriedWith
+            ? `<span class="mini-pill">retried with ${escapeHtml(step.retriedWith)}</span>`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("");
+        const escalationBlock = step.escalated
+          ? `<section><h4>Escalation</h4><p class="empty-note">This turn was planned by <strong>${escapeHtml(step.plannerModel || "the escalation model")}</strong> because: ${escapeHtml(step.escalationReason || "unspecified")}.</p></section>`
+          : "";
+
         return `
-        <details class="step-card">
+        <details class="step-card" id="step-${step.index}">
           <summary>
             <div class="step-summary">
               <span class="step-index">${step.index}.</span>
               <span class="step-action">${planner}</span>
               <span class="step-url">${stepUrl.href ? `<a href="${escapeHtml(stepUrl.href)}">${escapeHtml(stepUrl.label)}</a>` : escapeHtml(stepUrl.label)}</span>
               <span class="step-duration">${step.durationMs}ms</span>
+              ${plannerBadges ? `<span class="step-badges mini-pill-row">${plannerBadges}</span>` : ""}
               ${reason ? `<span class="step-reason">${reason}</span>` : ""}
             </div>
           </summary>
           <div class="step-body">
             <div class="chip-row">${liveUrlLink}${screenshotLink}${htmlLink}</div>
+            ${escalationBlock}
             ${screenshotPreview ? `<section><h4>Screenshot</h4>${screenshotPreview}</section>` : ""}
             ${plannerActionBlock}
             ${runtimeErrorsBlock}
@@ -236,6 +264,10 @@ export const reportGenerator = {
       .status-row, .meta-grid { display: grid; gap: 12px; }
       .status-row { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 18px; }
       .meta-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); padding: 18px 20px; margin-bottom: 20px; }
+      .status-row > div, .meta-grid > div { min-width: 0; }
+      /* Long unbroken values (URLs, run ids, model ids, test names) must wrap
+         inside their tiles instead of stretching the layout. */
+      .status-row strong, .meta-grid strong, .info-card strong, .field-grid strong, h1 { overflow-wrap: anywhere; }
       .meta-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; }
       .badge { display: inline-flex; align-items: center; padding: 6px 10px; border-radius: 999px; font-size: 0.85rem; font-weight: 700; background: var(--accent-soft); color: var(--accent); }
       .badge.failed { background: #fce7e7; color: var(--error); }
@@ -259,14 +291,16 @@ export const reportGenerator = {
       .step-card summary::-webkit-details-marker { display: none; }
       .step-summary { display: grid; min-width: 0; max-width: 100%; gap: 8px; grid-template-columns: auto minmax(0, 1fr) minmax(120px, auto) auto; align-items: center; }
       .step-index { font-weight: 700; color: var(--accent); }
-      .step-action { min-width: 0; max-width: 100%; overflow-x: auto; font-weight: 700; white-space: nowrap; }
+      .step-action { min-width: 0; max-width: 100%; font-weight: 700; overflow-wrap: anywhere; }
       .step-url, .step-duration, .step-reason { color: var(--muted); font-size: 0.95rem; }
+      .step-url { min-width: 0; overflow-wrap: anywhere; }
       .step-duration { justify-self: end; white-space: nowrap; }
-      .step-reason { grid-column: 1 / -1; line-height: 1.45; }
+      .step-badges { grid-column: 1 / -1; }
+      .step-reason { grid-column: 1 / -1; line-height: 1.45; overflow-wrap: anywhere; }
       .step-url a, a { color: var(--accent); text-decoration: none; }
       .step-body { border-top: 1px solid var(--line); padding: 18px 20px 20px; }
       .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-      .chip { display: inline-flex; padding: 7px 11px; border-radius: 999px; border: 1px solid var(--line); background: #fff; }
+      .chip { display: inline-flex; padding: 7px 11px; border-radius: 999px; border: 1px solid var(--line); background: #fff; max-width: 100%; overflow-wrap: anywhere; }
       .image-link img { display: block; width: 100%; max-width: 920px; border-radius: 14px; border: 1px solid var(--line); }
       .observation-layout { display: grid; gap: 14px; }
       .observation-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
@@ -275,9 +309,10 @@ export const reportGenerator = {
       .observation-section { padding: 14px; border-radius: 14px; background: #fff; border: 1px solid #ece2d1; }
       .pill-list, .mini-pill-row { display: flex; flex-wrap: wrap; gap: 8px; }
       .pill, .mini-pill { display: inline-flex; align-items: center; border-radius: 999px; background: #f2efe8; border: 1px solid #e4d9c8; color: var(--ink); }
-      .pill { padding: 8px 12px; }
-      .mini-pill { padding: 5px 9px; font-size: 0.82rem; }
+      .pill { padding: 8px 12px; max-width: 100%; overflow-wrap: anywhere; }
+      .mini-pill { padding: 5px 9px; font-size: 0.82rem; max-width: 100%; overflow-wrap: anywhere; }
       .mini-pill-alert { background: #fce7e7; border-color: #efc3c3; color: var(--error); }
+      .mini-pill-escalated { background: #fdf1dc; border-color: #ecd3a7; color: #92600a; font-weight: 700; }
       .empty-note, .document-text { margin: 0; color: var(--muted); line-height: 1.5; }
       .control-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
       .control-card { padding: 14px; border-radius: 14px; background: #fffcf7; border: 1px solid #ece2d1; }
