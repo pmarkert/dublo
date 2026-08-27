@@ -29,13 +29,13 @@ type ServerHandle = {
 // Serves the sign-in page and a fake OpenAI-compatible planner whose turns are
 // produced by the supplied function (preflight calls are answered separately
 // and not counted).
-function startFakeServer(nextTurn: PlannerFn): Promise<ServerHandle> {
+function startFakeServer(nextTurn: PlannerFn, pageHtml: string = FORM_HTML): Promise<ServerHandle> {
   let plannerCalls = 0;
   const requestBodies: string[] = [];
   const server = createServer((request, response) => {
     if (request.url === "/" || request.url === "") {
       response.writeHead(200, { "content-type": "text/html" });
-      response.end(FORM_HTML);
+      response.end(pageHtml);
       return;
     }
 
@@ -263,4 +263,44 @@ void test("batch follow-on steps record a pointer to the shared observation in d
     assert.equal(step.observation, undefined);
     assert.equal(step.plannerTokenUsage, undefined);
   }
+});
+
+const DUPLICATE_BUTTONS_HTML = `<!doctype html><html><body>
+  <button>Add task</button>
+  <section><button>Add task</button></section>
+</body></html>`;
+
+void test("an ambiguous selector is recoverable and feeds disambiguation guidance back", async (t) => {
+  const handle = await startFakeServer(
+    (body, call) =>
+      call === 1
+        ? {
+            reason: "Click the add button.",
+            actions: [{ action: "click", target: { text: "Add task" } }]
+          }
+        : { reason: "Done.", actions: [{ action: "finish" }] },
+    DUPLICATE_BUTTONS_HTML
+  );
+  t.after(() => new Promise<void>((resolve) => handle.server.close(() => resolve())));
+
+  const report = await runAgainst(handle);
+
+  // The run survives the ambiguity instead of aborting.
+  assert.equal(report.status, "passed");
+  const clickStep = report.steps.find((step) => step.name.startsWith("click_"));
+  assert.ok(clickStep, "expected the ambiguous click step in the report");
+
+  // The next planner turn is told which candidates matched and how to fix it.
+  const followUpBody = handle.requestBodies()[1];
+  assert.ok(followUpBody);
+  assert.match(followUpBody, /matched 2 controls/);
+  assert.match(followUpBody, /ambiguous_target/);
+  assert.match(followUpBody, /ids are unique within an observation/);
+
+  // The id-first selector guidance is present even though this profile does
+  // NOT set supportsStrictToolUse - the wording is no longer gated on it.
+  const firstBody = handle.requestBodies()[0];
+  assert.ok(firstBody);
+  assert.match(firstBody, /Target selector fields are ANDed/);
+  assert.match(firstBody, /Target controls by id alone/);
 });

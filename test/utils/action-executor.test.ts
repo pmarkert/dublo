@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { chromium } from "playwright";
 import {
+  classifyRecoverableActionError,
   executeBrowserAction,
-  resolveSameOriginUrl
+  resolveSameOriginUrl,
+  resolveTargetControl
 } from "../../src/utils/scenario/action-executor.mjs";
 import { collectObservation } from "../../src/utils/scenario/observation.mjs";
 
@@ -190,4 +192,51 @@ void test("select_option accepts a live value beyond a truncated options list", 
   } finally {
     await browser.close();
   }
+});
+
+void test("resolveTargetControl forgives guessed fields only against empty observed values", () => {
+  const controls = [
+    { id: "a4", tag: "input", type: "", label: "", text: "" },
+    { id: "a5", tag: "button", label: "Continue", text: "Continue" }
+  ];
+
+  // A correct id plus a guessed attribute the observation never showed resolves.
+  assert.equal(
+    resolveTargetControl(controls, { id: "a4", tag: "input", type: "text" }),
+    controls[0]
+  );
+
+  // A supplied field contradicting an observed NON-empty value fails - loudly,
+  // as a field mismatch naming the field, so a stale id never silently resolves.
+  assert.throws(
+    () => resolveTargetControl(controls, { id: "a5", text: "Add task" }),
+    /target field mismatch[\s\S]*'text'/
+  );
+
+  // Without an id there is no forgiveness.
+  assert.throws(() => resolveTargetControl(controls, { text: "Nope" }), /target not found/);
+});
+
+void test("ambiguous selectors name their candidates and both selector failures are recoverable", () => {
+  const controls = [
+    { id: "a17", tag: "button", label: "Add task to today", text: "Add task to today" },
+    { id: "a32", tag: "span", label: "Add task to today", text: "Add task to today" }
+  ];
+
+  let ambiguous;
+  try {
+    resolveTargetControl(controls, { label: "Add task to today" });
+  } catch (error) {
+    ambiguous = error;
+  }
+  assert.ok(ambiguous instanceof Error);
+  assert.match(ambiguous.message, /ambiguous/);
+  assert.match(ambiguous.message, /a17/);
+  assert.match(ambiguous.message, /a32/);
+
+  assert.equal(classifyRecoverableActionError(ambiguous), "ambiguous_target");
+  assert.equal(
+    classifyRecoverableActionError(new Error("Planner target field mismatch: id 'a5' ...")),
+    "target_field_mismatch"
+  );
 });

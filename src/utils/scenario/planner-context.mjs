@@ -69,10 +69,11 @@ export function buildPlannerMessages({
       "If observation.modal.blocksBackground is true, only interact with controls listed from the blocking modal context.",
       "If observation.modal.open is true but observation.modal.blocksBackground is false, you may still use background controls when needed.",
       "Do not invent element IDs.",
-      "For click and fill actions, always provide a target object that matches exactly one visible control.",
+      "For click and fill actions, always provide a target object identifying one visible control from the current observation.",
+      "Target controls by id alone: { id: 'a3' }. Ids are unique within an observation, so { id } always identifies exactly one control; text and label are not unique (a button and an element nested inside it often share the same text).",
       strictTargetSelectors
         ? "Use only the visible control ID as the target selector, for example { id: 'a3' }."
-        : "The lightweight selector { id: 'a3' } is acceptable and preferred by default. You may combine any visible control fields when needed to identify one control.",
+        : "Target selector fields are ANDed: every field you supply must match the observed control exactly, so an extra field can only make the match FAIL - it never adds precision. Never include a field value you did not copy verbatim from the current observation (do not guess type, text, or label). Use { id } alone.",
       "Return actions as a list. Each entry holds one action and its action-specific fields; keep a single reason at the root.",
       "You may return several actions in one turn when they can all be planned from the CURRENT observation and do not depend on each other's results (for example fill every field of a form from known values, or toggle many rows before a bulk action). Batching many independent actions in one turn is efficient and encouraged.",
       "The runner executes a batch in order against the elements you see now, and stops the batch as soon as a later action's element has changed or disappeared. So do NOT batch an action whose target only appears after an earlier action, or that depends on an earlier action's outcome; take those on their own turn after re-observing.",

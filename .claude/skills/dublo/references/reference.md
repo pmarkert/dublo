@@ -362,10 +362,17 @@ never conflicts with batching. Findings collect in `report.findings`.
 | `request_screenshot` | `screenshotPrompt` | delivers a set-of-marks-annotated viewport image next turn |
 | `finish` / `give_up` | — | terminate the run |
 
-`target` selector: any subset of control fields (`id`, `tag`, `role`, `type`,
-`text`, `label`, `ariaLabel`, `placeholder`, `priority`, `hasValue`, `checked`,
-`disabled`). Must match exactly one visible control. The lightweight `{ id:
-"a3" }` is preferred by default (strict models require id-only).
+`target` selector: use `{ id: "a3" }` — ids are unique per observation, so the
+id alone always identifies exactly one control (strict models require id-only).
+Other control fields (`tag`, `role`, `type`, `text`, `label`, `ariaLabel`,
+`placeholder`, `priority`, `hasValue`, `checked`, `disabled`) are ANDed with
+whatever is supplied: an extra field can only make the match fail, never add
+precision, and text/label are frequently duplicated between a control and a
+nested element. When an id is supplied and unique, a supplied field that
+contradicts only an *empty* observed value is forgiven (models guess attributes
+on unlabeled controls); a contradiction with an observed non-empty value is a
+recoverable `target_field_mismatch`, and a multi-control match is a recoverable
+`ambiguous_target` — neither ends the run.
 
 ### Batching
 

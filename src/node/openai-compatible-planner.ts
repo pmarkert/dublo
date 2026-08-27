@@ -109,22 +109,28 @@ function getChatCompletionUrl(baseUrl: string): string {
 }
 
 function buildPlannerActionSchema(): Record<string, unknown> {
+  const fallbackNote =
+    "Fallback only; fields are ANDed with id, so a guessed value makes the match fail.";
   const target = {
     type: "object",
     additionalProperties: false,
     properties: {
-      id: { type: "string" },
-      tag: { type: "string" },
-      role: { type: "string" },
-      type: { type: "string" },
-      priority: { type: "boolean" },
-      text: { type: "string" },
-      ariaLabel: { type: "string" },
-      label: { type: "string" },
-      placeholder: { type: "string" },
-      hasValue: { type: "boolean" },
-      checked: { type: "boolean" },
-      disabled: { type: "boolean" }
+      id: {
+        type: "string",
+        description:
+          "Preferred and sufficient on its own: the control id from the current observation (e.g. 'a3'). Ids are unique per observation."
+      },
+      tag: { type: "string", description: fallbackNote },
+      role: { type: "string", description: fallbackNote },
+      type: { type: "string", description: fallbackNote },
+      priority: { type: "boolean", description: fallbackNote },
+      text: { type: "string", description: fallbackNote },
+      ariaLabel: { type: "string", description: fallbackNote },
+      label: { type: "string", description: fallbackNote },
+      placeholder: { type: "string", description: fallbackNote },
+      hasValue: { type: "boolean", description: fallbackNote },
+      checked: { type: "boolean", description: fallbackNote },
+      disabled: { type: "boolean", description: fallbackNote }
     }
   };
   const variant = (
