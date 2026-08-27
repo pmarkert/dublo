@@ -282,7 +282,23 @@ export async function executeBrowserAction({
     await target.fill(resolveFillValue(payload.value, contextData, humanInputs, secretValues));
   } else {
     if (matchedControl.tag !== "select") throw new Error(`Planner select_option target is not a native select: ${describeTarget(payload.target)}`);
-    const option = matchedControl.options?.find((candidate) => candidate.value === payload.value);
+    let option = matchedControl.options?.find((candidate) => candidate.value === payload.value);
+    if (!option && matchedControl.optionsTruncated) {
+      // The observed options list was truncated (maxOptionsPerControl), so the
+      // live DOM is the arbiter: accept a value the observation could not show.
+      option = await target.evaluate((el, value) => {
+        const match = Array.from(/** @type {HTMLSelectElement} */ (el).options).find(
+          (candidate) => candidate.value === value
+        );
+        return match
+          ? {
+              label: (match.label || match.textContent || "").replace(/\s+/g, " ").trim(),
+              value: match.value,
+              ...(match.disabled ? { disabled: true } : {})
+            }
+          : undefined;
+      }, payload.value);
+    }
     if (!option) throw new Error(`Planner select_option value is not available: ${payload.value}`);
     if (option.disabled) throw new Error(`Planner select_option value is disabled: ${payload.value}`);
     logger.info(`selecting '${option.label || option.value}' in ${describeTarget(payload.target)}`);

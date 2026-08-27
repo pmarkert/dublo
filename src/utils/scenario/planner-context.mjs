@@ -50,7 +50,7 @@ export function buildPlannerMessages({
   }));
 
   const completedWork = actionHistory
-    .filter(({ outcome, action }) => outcome === "ok" && !["scroll", "request_screenshot", "report_finding"].includes(action.payload.action))
+    .filter(({ outcome, action }) => outcome === "ok" && !["scroll", "request_screenshot"].includes(action.payload.action))
     .map(({ step, action, target }) => ({
       step,
       action: action.payload.action,
@@ -76,11 +76,12 @@ export function buildPlannerMessages({
       "Return actions as a list. Each entry holds one action and its action-specific fields; keep a single reason at the root.",
       "You may return several actions in one turn when they can all be planned from the CURRENT observation and do not depend on each other's results (for example fill every field of a form from known values, or toggle many rows before a bulk action). Batching many independent actions in one turn is efficient and encouraged.",
       "The runner executes a batch in order against the elements you see now, and stops the batch as soon as a later action's element has changed or disappeared. So do NOT batch an action whose target only appears after an earlier action, or that depends on an earlier action's outcome; take those on their own turn after re-observing.",
-      "Only click, fill, select_option, hover, and press_key may follow the first action in a batch. Any action that navigates, waits, finishes, gives up, reports a finding, or escalates to the human must be the only action in the list.",
+      "Only click, fill, select_option, hover, and press_key may follow the first action in a batch. Any action that navigates, waits, finishes, gives up, or escalates to the human must be the only action in the list.",
       "Never emit click or fill without target.",
       "For fill actions, also provide a value.",
       "Treat checked, selected, and pressed as current control state. Do not click a control that is already in the state required by the objective.",
       "Use select_option only for an observed native select that includes an options list, using an observed option value. For an open custom combobox, click the visible role=option control instead.",
+      "When a select control has optionsTruncated:true, its options list shows only the first entries of optionCount total. You may select_option a value beyond the shown list when the control's pattern makes it predictable (for example a year, day, or sequential code); the runner verifies the value against the live control.",
       "When an observed scroll container has canScrollDown or canScrollUp, use scroll with its containerId and direction to reveal more content before escalating.",
       "Use press_key for keyboard interaction (for example Tab, Shift+Tab, Enter, Escape, ArrowDown). It acts on the currently focused element or the page; click a control first when you need to focus it before typing a key. observation.focus and each control's focused flag show what currently has focus.",
       "Use hover to reveal menus or content that only appear on pointer hover.",
@@ -106,7 +107,7 @@ export function buildPlannerMessages({
       "Before finish, verify visible evidence for the success criteria in the test prompt.",
       "Use give_up with a specific reason only after exhausting credible actions and no safe or reliable path to the objective remains.",
       "When the objective is completed, return finish.",
-      "Use report_finding to record a defect or notable issue (accessibility, usability, functional, performance, or security) without ending the run. It is non-terminal: after reporting, continue toward the objective. Report each distinct issue once; do not repeat a finding already recorded in recentActions.",
+      "To record a defect or notable issue (accessibility, usability, functional, performance, or security), add it to the top-level findings array of the same turn as your next action; findings never replace an action and never end the run. Report each distinct issue once; do not repeat a finding you have already reported.",
     ],
     humanEscalationRules: [
       "If you need a value not deducible from UI or contextData, such as an OTP code, use request_user_input.",

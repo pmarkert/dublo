@@ -199,6 +199,11 @@ failure or a truncated observation, and rescues a `give_up` by retrying once
 with the stronger model. Escalation calls are counted in
 `tokenUsage.escalationCalls`; cost is still estimated at the primary's rates.
 
+A schema-invalid planner turn is never fatal on its own: the runner retries
+once on the same model with the validation error fed back, then (when
+`escalationLlm` is set) once more on the stronger model, before failing the
+run. Repair retries are counted in `tokenUsage.formatRetries`.
+
 ---
 
 ## 4. Personas
@@ -213,8 +218,8 @@ defect. Built-ins:
   friction and confusing wording.
 - `accessibility` — attend to labeling, focus behavior, keyboard affordances,
   semantic structure; treat missing labels / focus traps / inaccessible dialogs
-  as defects. Pairs with `nameSource`/`confidence` on controls and
-  `report_finding`.
+  as defects. Pairs with `nameSource`/`confidence` on controls and the turn's
+  `findings` annotation.
 - `performance` — notice slow transitions, repeated loading, delayed feedback,
   stalled UI; pairs with `runtimeErrors` and settle behavior.
 
@@ -289,7 +294,11 @@ Per control: `id` (`a1`, `a2`, … — ephemeral, per-turn), `tag`, `role`, `typ
 `priority`, `inferred`, `text`, `label`, `nameSource`
 (aria-labelledby|aria-label|label|text|title|value|alt|svg-title|placeholder|none),
 `confidence` (high|medium|low|none), `ariaLabel`, `description`, `contextPath`,
-`placeholder`, `value`, `options` (native selects), `hasValue`, `checked`,
+`placeholder`, `value`, `options` (native selects; capped at
+`maxOptionsPerControl`, default 30 — a capped list sets `optionsTruncated: true`
+and `optionCount`, the control's `text` stays in lockstep with the shown
+options, and `select_option` verifies a value beyond the cap against the live
+control), `hasValue`, `checked`,
 `required`, `expanded`, `selected`, `pressed`, `current`, `invalid`, `disabled`,
 `focused`, `offscreen`.
 
@@ -297,8 +306,13 @@ Per control: `id` (`a1`, `a2`, … — ephemeral, per-turn), `tag`, `role`, `typ
 
 ## 7. Actions
 
-The planner returns one turn: `{ reason, actions: [ … ] }` — the first action,
-then optional batched follow-ons.
+The planner returns one turn: `{ reason, findings?, actions: [ … ] }` — the
+first action, then optional batched follow-ons. `findings` is an optional
+turn-level annotation (it is not an action): each entry records a defect
+(`severity` ∈ info|minor|major|critical; `category` ∈
+accessibility|usability|functional|performance|security; `summary`;
+`evidence?`) and can accompany any action, so reporting never costs a turn and
+never conflicts with batching. Findings collect in `report.findings`.
 
 | Action | Fields | Notes |
 | --- | --- | --- |
@@ -314,12 +328,7 @@ then optional batched follow-ons.
 | `request_user_input` | `inputKey`, `inputPrompt` | headed only; value reused via `{{input:key}}` |
 | `request_user_interaction` | `interactionPrompt` | headed only; ask the human to act |
 | `request_screenshot` | `screenshotPrompt` | delivers a set-of-marks-annotated viewport image next turn |
-| `report_finding` | `severity`, `category`, `summary`, `evidence?` | non-terminal; records a defect and continues |
 | `finish` / `give_up` | — | terminate the run |
-
-`report_finding`: `severity` ∈ info|minor|major|critical; `category` ∈
-accessibility|usability|functional|performance|security. Findings collect in
-`report.findings`.
 
 `target` selector: any subset of control fields (`id`, `tag`, `role`, `type`,
 `text`, `label`, `ariaLabel`, `placeholder`, `priority`, `hasValue`, `checked`,
@@ -329,8 +338,8 @@ accessibility|usability|functional|performance|security. Findings collect in
 ### Batching
 
 - Only `click`, `fill`, `select_option`, `hover`, `press_key` may follow the
-  first action; anything that navigates/waits/terminates/escalates/reports must
-  stand alone.
+  first action; anything that navigates/waits/terminates/escalates must stand
+  alone. (Findings are a turn-level field, not an action, so they batch freely.)
 - Follow-ons execute against the same observation the batch was planned from,
   pinned to the exact element (per-turn stamp). If a later element changed or
   was removed, the action aborts the rest of the batch and the next turn
@@ -355,7 +364,7 @@ accessibility|usability|functional|performance|security. Findings collect in
   `tokenUsage`.
 - `tokenUsage`: `inputTokens`, `outputTokens`, `totalTokens`,
   `cacheReadInputTokens`, `cacheWriteInputTokens`, `plannerCalls`,
-  `escalationCalls`, `selfHealCalls`.
+  `escalationCalls`, `selfHealCalls`, `formatRetries`.
 - Each step: index, name, `plannerAction`, `outcome` (ok|error), `error?`,
   `phase` (`init`|`batch`), `runtimeErrors?`, duration, url, and (in `--debug`)
   the redacted observation.

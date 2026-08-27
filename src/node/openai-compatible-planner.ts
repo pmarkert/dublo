@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { PlannerTurnSchema } from "../ports/planner.js";
+import { PlannerParseError, PlannerTurnSchema } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface OpenAICompatiblePlannerConfig {
@@ -19,6 +19,19 @@ const EMPTY_TOKEN_USAGE: TokenUsage = {
   cacheReadInputTokens: 0,
   cacheWriteInputTokens: 0
 };
+
+function parsePlannerTurn(rawAction: unknown) {
+  try {
+    return PlannerTurnSchema.parse(rawAction);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new PlannerParseError(
+      `OpenAI-compatible planner returned an invalid turn: ${detail}`,
+      detail,
+      { cause: error }
+    );
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -131,6 +144,22 @@ function buildPlannerActionSchema(): Record<string, unknown> {
     required: ["reason", "actions"],
     properties: {
       reason: { type: "string" },
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "category", "summary"],
+          properties: {
+            severity: { enum: ["info", "minor", "major", "critical"] },
+            category: {
+              enum: ["accessibility", "usability", "functional", "performance", "security"]
+            },
+            summary: { type: "string" },
+            evidence: { type: "string" }
+          }
+        }
+      },
       actions: {
         type: "array",
         minItems: 1,
@@ -171,18 +200,6 @@ function buildPlannerActionSchema(): Record<string, unknown> {
             variant("request_screenshot", { screenshotPrompt: { type: "string" } }, [
               "screenshotPrompt"
             ]),
-            variant(
-              "report_finding",
-              {
-                severity: { enum: ["info", "minor", "major", "critical"] },
-                category: {
-                  enum: ["accessibility", "usability", "functional", "performance", "security"]
-                },
-                summary: { type: "string" },
-                evidence: { type: "string" }
-              },
-              ["severity", "category", "summary"]
-            ),
             variant("give_up"),
             variant("finish")
           ]
@@ -287,7 +304,7 @@ export function createOpenAICompatiblePlanner(
         throw new Error("OpenAI-compatible planner API returned no planner action.");
 
       return {
-        action: PlannerTurnSchema.parse(rawAction),
+        action: parsePlannerTurn(rawAction),
         tokenUsage: normalizeTokenUsage(result.usage)
       };
     }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createBedrockPlanner } from "../../src/node/bedrock-planner.js";
+import { PlannerParseError } from "../../src/ports/planner.js";
 
 const messages = {
   systemText: "system",
@@ -167,7 +168,7 @@ void test("Bedrock planner preserves strict action payloads", async () => {
   });
 });
 
-void test("Bedrock planner accepts a report_finding action", async () => {
+void test("Bedrock planner accepts turn-level findings alongside an action", async () => {
   const requests: unknown[] = [];
   const planner = createBedrockPlanner(
     { modelId: "test-model", region: "us-east-1" },
@@ -183,15 +184,15 @@ void test("Bedrock planner accepts a report_finding action", async () => {
                     toolUse: {
                       name: "planner_action",
                       input: {
-                        reason: "The control cannot be identified by assistive tech.",
-                        actions: [
+                        reason: "Continue the signup while recording the naming defect.",
+                        findings: [
                           {
-                            action: "report_finding",
                             severity: "major",
                             category: "accessibility",
                             summary: "Icon-only button has no accessible name."
                           }
-                        ]
+                        ],
+                        actions: [{ action: "click", target: { id: "a3" } }]
                       }
                     }
                   }
@@ -207,17 +208,20 @@ void test("Bedrock planner accepts a report_finding action", async () => {
   const response = await planner.nextAction({ messages });
 
   assert.deepEqual(response.action, {
-    reason: "The control cannot be identified by assistive tech.",
-    actions: [
+    reason: "Continue the signup while recording the naming defect.",
+    findings: [
       {
-        action: "report_finding",
         severity: "major",
         category: "accessibility",
         summary: "Icon-only button has no accessible name."
       }
-    ]
+    ],
+    actions: [{ action: "click", target: { id: "a3" } }]
   });
-  assert.match(JSON.stringify(requests[0]), /"const":"report_finding"/);
+  const requestJson = JSON.stringify(requests[0]);
+  // Findings are a turn-level annotation, not an action variant.
+  assert.match(requestJson, /"findings"/);
+  assert.doesNotMatch(requestJson, /"const":"report_finding"/);
 });
 
 void test("Bedrock planner inserts cache points when prompt caching is enabled", async () => {
@@ -413,4 +417,8 @@ void test("Bedrock planner identifies malformed actions without exposing their v
     () => planner.nextAction({ messages }),
     /invalid 'click' turn with fields \[actions, reason\][\s\S]*value/
   );
+
+  // The runner's retry-with-feedback chain keys off this typed error, so a
+  // schema-invalid turn must be distinguishable from API/network failures.
+  await assert.rejects(() => planner.nextAction({ messages }), PlannerParseError);
 });

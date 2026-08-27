@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { generateReportArtifacts, rerenderReportArtifacts } from "../reporting/report-artifacts.mjs";
 import { createBedrockPlanner } from "../node/bedrock-planner.js";
+import { PlannerParseError } from "../ports/planner.js";
 import { createOpenAICompatiblePlanner } from "../node/openai-compatible-planner.js";
 import { createPlaywrightBrowserFactory } from "../node/playwright-browser.js";
 import { createTerminalInteractionProvider } from "../node/terminal-interaction.js";
@@ -252,6 +253,7 @@ export async function runScenario(config, options = {}) {
       plannerCalls: 0,
       escalationCalls: 0,
       selfHealCalls: 0,
+      formatRetries: 0,
     },
     pricing: null,
     costEstimate: null,
@@ -426,6 +428,7 @@ export async function runScenario(config, options = {}) {
         html: stepHtmlRelativePath,
         plannerAction,
         observation: stepDebugContext?.observation,
+        observationSharedFromStep: stepDebugContext?.observationSharedFromStep,
         knownHumanInputs: stepDebugContext?.knownHumanInputs,
         plannerTokenUsage: stepDebugContext?.plannerTokenUsage,
         phase: metadata?.phase,
@@ -643,10 +646,10 @@ export async function runScenario(config, options = {}) {
       debugLogger.log(messages.debugUserText);
       debugLogger.log("planner_user_end");
 
-      const callPlanner = async (activePlanner) => {
+      const callPlannerOnce = async (activePlanner, activeMessages) => {
         const result = await requestPlannerAction({
           planner: activePlanner,
-          messages,
+          messages: activeMessages,
           screenshotBuffer: screenshotBufferForThisTurn,
           signal: plannerAbortController.signal,
         });
@@ -654,6 +657,45 @@ export async function runScenario(config, options = {}) {
           addTokenUsageTotals(report.tokenUsage, result.tokenUsage);
         }
         return result;
+      };
+
+      const withValidationFeedback = (validationMessage) => ({
+        ...messages,
+        dynamicContextText: `${messages.dynamicContextText}\n\nYour previous planner_action call was rejected because it failed schema validation:\n${validationMessage}\nReturn a corrected planner_action call that satisfies the schema. Remember: findings belong in the top-level findings array, not in actions, and only click, fill, select_option, hover, and press_key may share a turn.`,
+      });
+
+      // A schema-invalid turn is a formatting slip, not a dead model: retry
+      // once on the same model with the validation message fed back, then once
+      // on the escalation model when one is configured. With prompt caching the
+      // retries re-read the cached prefix, so they are cheap. Only after all
+      // repair attempts fail does the error propagate and fail the run.
+      const callPlanner = async (activePlanner) => {
+        try {
+          return await callPlannerOnce(activePlanner, messages);
+        } catch (error) {
+          if (!(error instanceof PlannerParseError)) throw error;
+          report.tokenUsage.formatRetries += 1;
+          logger.warn(
+            `planner turn failed validation; retrying with feedback: ${clip(error.validationMessage, 200)}`
+          );
+          throwIfInterrupted();
+          try {
+            return await callPlannerOnce(activePlanner, withValidationFeedback(error.validationMessage));
+          } catch (retryError) {
+            if (!(retryError instanceof PlannerParseError)) throw retryError;
+            if (!escalationPlanner || activePlanner === escalationPlanner) throw retryError;
+            report.tokenUsage.formatRetries += 1;
+            report.tokenUsage.escalationCalls += 1;
+            logger.warn(
+              `retried turn still failed validation; repairing with ${config.escalationLlm.modelId}`
+            );
+            throwIfInterrupted();
+            return await callPlannerOnce(
+              escalationPlanner,
+              withValidationFeedback(retryError.validationMessage)
+            );
+          }
+        }
       };
 
       // Two-tier routing: escalate to the stronger model when the previous turn
@@ -708,9 +750,7 @@ export async function runScenario(config, options = {}) {
         ? plannerPayload.target.id
         : "containerId" in plannerPayload
           ? plannerPayload.containerId
-          : "severity" in plannerPayload
-            ? plannerPayload.severity
-            : "selector")}`;
+          : "selector")}`;
 
       let recoverableOutcome = null;
       let recoverableErrorMessage = "";
@@ -729,6 +769,24 @@ export async function runScenario(config, options = {}) {
         plannerAction,
         async () => {
           throwIfInterrupted();
+
+          // Findings are a turn-level annotation: record them before the
+          // action dispatch so they land even when the action itself fails.
+          for (const finding of plannerTurn.findings ?? []) {
+            report.findings.push({
+              step: stepIndex,
+              url: page.url(),
+              severity: finding.severity,
+              category: finding.category,
+              summary: finding.summary,
+              ...(finding.evidence ? { evidence: finding.evidence } : {}),
+              reason: plannerTurn.reason,
+            });
+            logger.info(
+              `finding [${finding.severity}/${finding.category}]: ${clip(finding.summary, 140)}`
+            );
+          }
+
           if (plannerPayload.action === "finish") {
             logger.info(`finish accepted at ${page.url()}`);
             report.status = "passed";
@@ -884,22 +942,6 @@ export async function runScenario(config, options = {}) {
             return;
           }
 
-          if (plannerPayload.action === "report_finding") {
-            report.findings.push({
-              step: stepIndex,
-              url: page.url(),
-              severity: plannerPayload.severity,
-              category: plannerPayload.category,
-              summary: plannerPayload.summary,
-              ...(plannerPayload.evidence ? { evidence: plannerPayload.evidence } : {}),
-              reason: plannerAction.reason,
-            });
-            logger.info(
-              `finding [${plannerPayload.severity}/${plannerPayload.category}]: ${clip(plannerPayload.summary, 140)}`
-            );
-            return;
-          }
-
           if (
             plannerPayload.action !== "scroll" &&
             plannerPayload.action !== "click" &&
@@ -998,6 +1040,14 @@ export async function runScenario(config, options = {}) {
         batchActions.length > 1 &&
         batchable.has(plannerPayload.action)
       ) {
+        // Every follow-on shares the primary step's observation by design, so
+        // its debug record carries a pointer to that step instead of a full
+        // copy (which would multiply the report by the batch length) and no
+        // plannerTokenUsage (the planner call belongs to the primary step).
+        const primaryStepIndex = stepIndex;
+        const batchDebugContext = config.debug
+          ? { observationSharedFromStep: primaryStepIndex }
+          : undefined;
         for (let b = 1; b < batchActions.length; b += 1) {
           const followPayload = batchActions[b];
           if (!batchable.has(followPayload.action)) break;
@@ -1033,7 +1083,7 @@ export async function runScenario(config, options = {}) {
                 lastUiActionAt = Date.now();
                 pendingInteractionRequest = null;
               },
-              undefined,
+              batchDebugContext,
               { phase: "batch" }
             );
           } catch (error) {

@@ -98,7 +98,7 @@ During local development of Dublo itself, build first and use the compiled CLI:
 | Goal | Persona | Key settings |
 | --- | --- | --- |
 | Functional / regression pass | `qa-strict` | `--init` a recorded block for setup; deterministic assertions |
-| Accessibility audit | `accessibility` | keep `interactionScope: viewport`; watch `confidence`/`nameSource`, unnamed controls, `report_finding` |
+| Accessibility audit | `accessibility` | keep `interactionScope: viewport`; watch `confidence`/`nameSource`, unnamed controls, turn-level `findings` |
 | Usability / exploratory | `exploratory` | `viewport` scope (test real reachability) |
 | Performance / responsiveness | `performance` | `--screenshots none`; watch settle/loading and `runtimeErrors` |
 | Bulk data entry / automation | `qa-strict` | `interactionScope: document`, large or `0` `maxControls`, batching on (default) |

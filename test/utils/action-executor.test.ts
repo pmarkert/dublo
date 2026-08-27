@@ -103,3 +103,75 @@ void test("hover, press_key, and focus observation drive a real page", async () 
     await browser.close();
   }
 });
+
+void test("select_option accepts a live value beyond a truncated options list", async () => {
+  type SelectControl = {
+    id: string;
+    label: string;
+    text: string;
+    options?: Array<{ value: string }>;
+    optionsTruncated?: boolean;
+    optionCount?: number;
+  };
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const optionMarkup = Array.from(
+      { length: 60 },
+      (_, index) => `<option value="${1950 + index}">${1950 + index}</option>`
+    ).join("");
+    await page.setContent(`
+      <label for="year">Birth year</label>
+      <select id="year">${optionMarkup}</select>
+    `);
+
+    const observation = (await collectObservation(page, { maxOptionsPerControl: 10 }, "t1")) as {
+      controls: SelectControl[];
+    };
+    const control = observation.controls.find((candidate) => candidate.label === "Birth year");
+    assert.ok(control, "expected the select in the observation");
+
+    // The observed list is truncated, says so, and text stays in lockstep with
+    // it instead of advertising every option label.
+    assert.equal(control.options?.length, 10);
+    assert.equal(control.optionsTruncated, true);
+    assert.equal(control.optionCount, 60);
+    assert.match(control.text, /1959/);
+    assert.doesNotMatch(control.text, /2009/);
+
+    // A value beyond the truncated list is validated against the live DOM.
+    await executeBrowserAction({
+      page,
+      action: {
+        reason: "pick a year past the truncation point",
+        payload: { action: "select_option", target: { id: control.id }, value: "2005" }
+      },
+      observation,
+      turnToken: "t1",
+      ...settle,
+      logger: noopLogger,
+      throwIfInterrupted: noInterrupt
+    });
+    assert.equal(await page.locator("#year").inputValue(), "2005");
+
+    // A value that exists nowhere still fails fast.
+    await assert.rejects(
+      () =>
+        executeBrowserAction({
+          page,
+          action: {
+            reason: "pick a nonexistent year",
+            payload: { action: "select_option", target: { id: control.id }, value: "1800" }
+          },
+          observation,
+          turnToken: "t1",
+          ...settle,
+          logger: noopLogger,
+          throwIfInterrupted: noInterrupt
+        }),
+      /value is not available/
+    );
+  } finally {
+    await browser.close();
+  }
+});

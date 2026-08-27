@@ -1,6 +1,6 @@
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 import type { ConverseCommandInput } from "@aws-sdk/client-bedrock-runtime";
-import { PlannerTurnSchema } from "../ports/planner.js";
+import { PlannerParseError, PlannerTurnSchema } from "../ports/planner.js";
 import type { Planner, PlannerRequest, PlannerResponse, TokenUsage } from "../ports/planner.js";
 
 export interface BedrockPlannerConfig {
@@ -77,8 +77,9 @@ function parsePlannerAction(rawAction: unknown) {
     const action = typeof firstAction?.action === "string" ? firstAction.action : "unknown";
     const fields = isRecord(rawAction) ? Object.keys(rawAction).sort().join(", ") : "non-object";
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(
+    throw new PlannerParseError(
       `Bedrock planner returned an invalid '${action}' turn with fields [${fields}]: ${detail}`,
+      detail,
       { cause: error }
     );
   }
@@ -206,6 +207,22 @@ function buildActionSchema(strict: boolean): Record<string, unknown> {
     required: ["reason", "actions"],
     properties: {
       reason: { type: "string" },
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["severity", "category", "summary"],
+          properties: {
+            severity: { enum: ["info", "minor", "major", "critical"] },
+            category: {
+              enum: ["accessibility", "usability", "functional", "performance", "security"]
+            },
+            summary: { type: "string" },
+            evidence: { type: "string" }
+          }
+        }
+      },
       actions: {
         type: "array",
         minItems: 1,
@@ -244,18 +261,6 @@ function buildActionSchema(strict: boolean): Record<string, unknown> {
               "request_screenshot",
               { screenshotPrompt: { type: "string" } },
               ["screenshotPrompt"]
-            ),
-            buildActionPayloadVariant(
-              "report_finding",
-              {
-                severity: { enum: ["info", "minor", "major", "critical"] },
-                category: {
-                  enum: ["accessibility", "usability", "functional", "performance", "security"]
-                },
-                summary: { type: "string" },
-                evidence: { type: "string" }
-              },
-              ["severity", "category", "summary"]
             ),
             buildActionPayloadVariant("give_up"),
             buildActionPayloadVariant("finish")

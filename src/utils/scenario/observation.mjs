@@ -630,12 +630,31 @@ export async function collectObservation(page, observationConfig, turnToken) {
       el.setAttribute("data-agentic-turn", activeTurnToken);
       const offscreen = !getVisibleClientRect(el);
 
+      const tag = el.tagName.toLowerCase();
+
+      const allOptions = tag === "select"
+        ? Array.from(/** @type {HTMLSelectElement} */ (el).options)
+            .map((option) => ({
+              label: normalizeText(option.label || option.textContent || ""),
+              value: option.value,
+              ...(option.selected ? { selected: true } : {}),
+              ...(option.disabled ? { disabled: true } : {})
+            }))
+            .filter((option) => option.label || option.value)
+        : [];
+      const options = allOptions.slice(0, maxOptionsPerControl);
+      const optionsTruncated = allOptions.length > options.length;
+
       const textSegments = leafTextSegments(el);
-      const text = textSegments.join(" · ") || normalizeText(el.innerText || el.textContent || "");
+      // A select's inner text is its option labels, so derive text from the
+      // SAME sliced options the model is shown; otherwise text would advertise
+      // options that options[] (the validated surface) does not carry.
+      const text = tag === "select"
+        ? options.map((option) => option.label || option.value).join(" · ")
+        : textSegments.join(" · ") || normalizeText(el.innerText || el.textContent || "");
       const ariaLabel = el.getAttribute("aria-label") || "";
       const placeholder = el.getAttribute("placeholder") || "";
       const role = el.getAttribute("role") || "";
-      const tag = el.tagName.toLowerCase();
       const type = el.getAttribute("type") || "";
       const { name: label, source: nameSource } = resolveControlNameWithSource(el, textSegments);
       const confidence = NAME_CONFIDENCE[nameSource] || "none";
@@ -671,18 +690,6 @@ export async function collectObservation(page, observationConfig, turnToken) {
         hasValue = value.length > 0;
       }
 
-      const options = tag === "select"
-        ? Array.from(/** @type {HTMLSelectElement} */ (el).options)
-            .map((option) => ({
-              label: normalizeText(option.label || option.textContent || ""),
-              value: option.value,
-              ...(option.selected ? { selected: true } : {}),
-              ...(option.disabled ? { disabled: true } : {})
-            }))
-            .filter((option) => option.label || option.value)
-            .slice(0, maxOptionsPerControl)
-        : [];
-
       return {
         id: agenticId,
         tag,
@@ -700,6 +707,7 @@ export async function collectObservation(page, observationConfig, turnToken) {
         placeholder,
         ...(value ? { value } : {}),
         ...(options.length > 0 ? { options } : {}),
+        ...(optionsTruncated ? { optionsTruncated: true, optionCount: allOptions.length } : {}),
         hasValue,
         checked,
         ...(el.hasAttribute("required") || el.getAttribute("aria-required") === "true" ? { required: true } : {}),
