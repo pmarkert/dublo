@@ -103,6 +103,10 @@ given on the command line.
   that no longer resolves **self-heals**: the planner re-grounds it to the
   equivalent control and continues; the URL post-condition fails the run loudly
   on divergence. Self-heal calls are counted in `tokenUsage.selfHealCalls`.
+  Each imported step also stores the control's `fingerprint`; on replay a step
+  that still matches by description but whose fingerprint changed is flagged as
+  **control drift** (warning + `controlDrift` on the step, counted in
+  `report.controlDrift`) without failing the run. Re-import to re-baseline.
 
 ### Reports
 
@@ -333,6 +337,16 @@ options, and `select_option` verifies a value beyond the cap against the live
 control), `hasValue`, `checked`,
 `required`, `expanded`, `selected`, `pressed`, `current`, `invalid`, `disabled`,
 `focused`, `offscreen`.
+
+Each control also carries a **`fingerprint`**: a short stable digest of
+(tag, role, type, accessible name, contextPath). It is *recorded-only* — written
+to `report.json` and to imported blocks, and never sent to the planner (targets
+are addressed by `id`, which is unique per observation; fingerprints are not
+guaranteed unique — identical repeated rows share one by design). Its purpose is
+drift detection: a block step replays by description, so a changed fingerprint
+means "same description, different control". Replay logs a warning, sets
+`controlDrift: true` on the step, and counts it in `report.controlDrift`; it is
+never fatal. Re-import the block to re-baseline.
 
 ---
 

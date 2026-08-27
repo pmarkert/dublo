@@ -400,6 +400,10 @@ export async function executeBrowserAction({
   throwIfInterrupted();
   await waitForUiSettle(page, settleDelayMs, settleTimeoutMs);
   return {
+    // fingerprint is deliberately a SIBLING of target, not a field inside it:
+    // target is echoed back to the planner in completedWork, and fingerprints
+    // are recorded-only (artifacts and drift detection), never model-facing.
+    ...(matchedControl.fingerprint ? { fingerprint: matchedControl.fingerprint } : {}),
     target: {
       label: matchedControl.label,
       ...(matchedControl.ariaLabel ? { ariaLabel: matchedControl.ariaLabel } : {}),

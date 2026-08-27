@@ -138,7 +138,19 @@ export function buildPlannerMessages({
     },
     screenshotRequested,
     completedWork: redactSecretValues(completedWork, secretValues),
-    recentActions: actionHistory.slice(-10),
+    // Explicitly projected, not passed through: history entries carry
+    // recorded-only fields (control fingerprints) that must never reach the
+    // model. Anything the planner should see has to be named here.
+    recentActions: actionHistory.slice(-10).map((entry) => ({
+      step: entry.step,
+      url: entry.url,
+      action: entry.action,
+      ...(entry.target ? { target: entry.target } : {}),
+      ...(entry.batched ? { batched: true } : {}),
+      outcome: entry.outcome,
+      ...(entry.runnerFeedback ? { runnerFeedback: entry.runnerFeedback } : {}),
+      ...(entry.error ? { error: entry.error } : {}),
+    })),
   };
 
   const systemText = [

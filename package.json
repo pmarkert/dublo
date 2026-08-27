@@ -1,6 +1,6 @@
 {
   "name": "dublo",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Agentic LLM loop web-testing framework using Playwright and AWS Bedrock",
   "type": "module",
   "bin": {

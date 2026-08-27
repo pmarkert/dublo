@@ -58,6 +58,11 @@ export const BlockActionSchema = z
   .object({
     reason: z.string().trim().min(1),
     payload: BlockActionPayloadSchema,
+    // Identity of the control this step was recorded against. Replay resolves
+    // by description, so this is what detects "same description, different
+    // control" drift. Optional: blocks imported before fingerprints existed
+    // (and hand-written blocks) simply skip the drift check.
+    fingerprint: z.string().trim().min(1).optional(),
     expect: BlockExpectationSchema.optional()
   })
   .strict();

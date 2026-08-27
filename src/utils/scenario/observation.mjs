@@ -49,6 +49,28 @@ export async function collectObservation(page, observationConfig, turnToken) {
         .replace(/\s+/g, " ")
         .trim();
 
+    // FNV-1a: a short, deterministic, dependency-free digest. Used only for
+    // control fingerprints, which are recorded in artifacts and never shown to
+    // the planner, so this needs to be stable across runs - not cryptographic.
+    const hashString = (value) => {
+      let hash = 0x811c9dc5;
+      for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+      }
+      return hash.toString(16).padStart(8, "0");
+    };
+
+    // Identity of a control in terms that survive a re-render and a new run:
+    // what kind of control it is, its accessible name, and where it sits in the
+    // page structure. Deliberately excludes per-turn ids, live values, and
+    // transient state. Repeated rows (50 identical "Delete" buttons) share a
+    // fingerprint by design; that costs drift-detection sensitivity for those
+    // controls but never mis-targets anything, because fingerprints are not
+    // used to address controls.
+    const computeFingerprint = (parts) =>
+      hashString(parts.map((part) => normalizeText(part).toLowerCase()).join("|"));
+
     const resolveReferencedText = (ids) =>
       ids
         .split(/\s+/)
@@ -659,6 +681,9 @@ export async function collectObservation(page, observationConfig, turnToken) {
       const { name: label, source: nameSource } = resolveControlNameWithSource(el, textSegments);
       const confidence = NAME_CONFIDENCE[nameSource] || "none";
       const description = resolveReferencedText(el.getAttribute("aria-describedby") || "");
+      const contextPath = resolveContextPath(el, scopeRoot);
+      // Recorded-only stable identity (see computeFingerprint).
+      const fingerprint = computeFingerprint([tag, role, type, label, contextPath.join(">")]);
       const disabled =
         ("disabled" in el && Boolean(el.disabled)) || el.getAttribute("aria-disabled") === "true" || false;
 
@@ -703,7 +728,8 @@ export async function collectObservation(page, observationConfig, turnToken) {
         nameSource,
         confidence,
         ...(description ? { description } : {}),
-        contextPath: resolveContextPath(el, scopeRoot),
+        contextPath,
+        fingerprint,
         placeholder,
         ...(value ? { value } : {}),
         ...(options.length > 0 ? { options } : {}),

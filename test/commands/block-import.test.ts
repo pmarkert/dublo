@@ -121,7 +121,8 @@ void test("imports descriptive targets and a URL post-condition for replay", asy
             reason: "Continue to checkout.",
             payload: { action: "click", target: { id: "a5" } }
           },
-          target: { label: "Continue", text: "Continue", role: "", type: "button" }
+          target: { label: "Continue", text: "Continue", role: "", type: "button" },
+          fingerprint: "1a2b3c4d"
         }
       ]
     })}\n`
@@ -147,6 +148,9 @@ void test("imports descriptive targets and a URL post-condition for replay", asy
           action: "click",
           target: { label: "Continue", text: "Continue", type: "button" }
         },
+        // Recorded identity, so a later replay can detect that a
+        // description match is no longer the same control.
+        fingerprint: "1a2b3c4d",
         expect: { urlIncludes: "/checkout" }
       }
     ]

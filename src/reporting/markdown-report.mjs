@@ -68,11 +68,14 @@ export const reportGenerator = {
           step.phase === "planner_repair" || step.phase === "planner_rescue"
             ? ` ✗ ${stripAnsi(step.error || "")}${step.retriedWith ? ` → retried with ${step.retriedWith}` : ""}`
             : "";
+        const driftPart = step.controlDrift
+          ? " ⚠ control drift (matched by description; fingerprint changed since import)"
+          : "";
         const sharedObservationPart =
           typeof step.observationSharedFromStep === "number"
             ? ` (observation shared from step ${step.observationSharedFromStep})`
             : "";
-        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner}${escalationPart}${repairPart} -> ${stepUrlPart}${screenshotPart}${htmlPart}${runtimeErrorsPart}${sharedObservationPart}`;
+        return `- ${step.index}. ${step.name} (${step.durationMs}ms)${planner}${escalationPart}${repairPart} -> ${stepUrlPart}${screenshotPart}${htmlPart}${runtimeErrorsPart}${driftPart}${sharedObservationPart}`;
       }),
       "",
       displayError ? `## Error\n\n\`\`\`text\n${displayError}\n\`\`\`` : "## Result\n\nScenario objective completed.",

@@ -66,7 +66,12 @@ function buildReplayableAction(plannerAction, step) {
     payload:
       payload.action === "fill"
         ? { action: "fill", target: descriptiveTarget, value: payload.value }
-        : { action: "click", target: descriptiveTarget }
+        : { action: "click", target: descriptiveTarget },
+    // Recorded identity of the control this step ran against, so a later replay
+    // can tell a description match apart from the same control.
+    ...(typeof step.fingerprint === "string" && step.fingerprint
+      ? { fingerprint: step.fingerprint }
+      : {})
   };
 
   const expect = buildExpectation(step);

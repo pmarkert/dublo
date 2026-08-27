@@ -206,6 +206,9 @@ export const reportGenerator = {
           step.escalated
             ? `<span class="mini-pill mini-pill-escalated" title="${escapeHtml(step.escalationReason || "")}">escalated</span>`
             : "",
+          step.controlDrift
+            ? `<span class="mini-pill mini-pill-alert" title="The recorded control matched by description, but its identity fingerprint changed since import.">control drift</span>`
+            : "",
           step.plannerModel ? `<span class="mini-pill">${escapeHtml(step.plannerModel)}</span>` : "",
           step.retriedWith
             ? `<span class="mini-pill">retried with ${escapeHtml(step.retriedWith)}</span>`

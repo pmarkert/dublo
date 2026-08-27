@@ -255,6 +255,9 @@ export async function runScenario(config, options = {}) {
       selfHealCalls: 0,
       formatRetries: 0,
     },
+    // Recorded steps that still matched by description but whose control
+    // identity (fingerprint) changed since the block was imported.
+    controlDrift: 0,
     // Token usage attributable to the escalation model alone (also included in
     // the tokenUsage totals above); lets the cost estimate price each tier at
     // its own rates.
@@ -446,6 +449,9 @@ export async function runScenario(config, options = {}) {
         phase: metadata?.phase,
         initBlock: metadata?.initBlock,
         plannerModel: metadata?.plannerModel,
+        ...(metadata?.target ? { target: metadata.target } : {}),
+        ...(metadata?.controlDrift ? { controlDrift: true } : {}),
+        ...(metadata?.fingerprint ? { fingerprint: metadata.fingerprint } : {}),
         ...(metadata?.escalated
           ? { escalated: true, escalationReason: metadata.escalationReason }
           : {}),
@@ -471,14 +477,14 @@ export async function runScenario(config, options = {}) {
           `Timed out after ${waitResult.elapsedMs}ms waiting for document text to disappear (configured timeout: ${config.settleTimeoutMs}ms): '${formatExpectedDocumentText(expectedText)}'. Current document text: '${clip(waitResult.latestDocumentText, 240)}'.`
         );
       }
-      return;
+      return {};
     }
 
     if (payload.action !== "click" && payload.action !== "fill") {
       throw new Error(`Unsupported initialization action: ${payload.action}`);
     }
 
-    await executeBrowserAction({
+    const result = await executeBrowserAction({
       page,
       action,
       observation,
@@ -495,6 +501,7 @@ export async function runScenario(config, options = {}) {
 
     lastUiActionAt = Date.now();
     pendingInteractionRequest = null;
+    return result;
   }
 
   // Re-grounds a recorded step whose target no longer resolves by asking the
@@ -569,12 +576,14 @@ export async function runScenario(config, options = {}) {
   async function replayBlockAction(block, action, observation, turnToken) {
     const payload = action.payload;
     let healed = false;
+    let drifted = false;
+    let result;
 
     if (payload.action === "wait_until_gone") {
       await executeDeterministicAction(action, observation, turnToken);
     } else {
       try {
-        await executeDeterministicAction(action, observation, turnToken);
+        result = await executeDeterministicAction(action, observation, turnToken);
       } catch (error) {
         const message = errorMessage(error);
         const canHeal = /not found|ambiguous/i.test(message);
@@ -587,13 +596,31 @@ export async function runScenario(config, options = {}) {
       }
     }
 
+    // A recorded step resolves by DESCRIPTION (label/text/role/type), which can
+    // match a control that is no longer the one that was recorded. The
+    // fingerprint captured at import time detects exactly that: same
+    // description, different identity. Not fatal - the action already matched
+    // and ran - but it is the signal that a recorded flow is drifting and the
+    // block may need re-importing.
+    if (action.fingerprint && result?.fingerprint && result.fingerprint !== action.fingerprint) {
+      drifted = true;
+      logger.warn(
+        `control drift in block '${block.name}': ${payload.action} matched by description, but the control's fingerprint changed since import (recorded ${action.fingerprint}, now ${result.fingerprint}). Re-import the block if this is intentional.`
+      );
+    }
+
     if (action.expect?.urlIncludes && !page.url().includes(action.expect.urlIncludes)) {
       throw new Error(
         `Regression post-condition failed after ${payload.action}: expected URL to include '${action.expect.urlIncludes}', got '${page.url()}'.`
       );
     }
 
-    return { healed };
+    return {
+      healed,
+      drifted,
+      ...(result?.target ? { target: result.target } : {}),
+      ...(result?.fingerprint ? { fingerprint: result.fingerprint } : {}),
+    };
   }
 
   try {
@@ -615,13 +642,32 @@ export async function runScenario(config, options = {}) {
         const turnToken = `t${observationTurn}`;
         const observation = await collectObservation(page, observationConfig, turnToken);
         observation.runtimeErrors = drainRuntimeErrors();
+        let replayOutcome = {};
         await captureStep(
           `init_${sanitizeSegment(block.name)}_${action.payload.action}`,
           action,
-          () => replayBlockAction(block, action, observation, turnToken),
+          async () => {
+            replayOutcome = await replayBlockAction(block, action, observation, turnToken);
+          },
           config.debug ? { observation: redactSecretValues(observation, secretValues) } : undefined,
-          { phase: "init", initBlock: block.name, runtimeErrors: observation.runtimeErrors }
+          {
+            phase: "init",
+            initBlock: block.name,
+            runtimeErrors: observation.runtimeErrors,
+            get controlDrift() {
+              return replayOutcome.drifted === true;
+            },
+            get target() {
+              return replayOutcome.target;
+            },
+            // The identity the control has NOW; re-importing the block picks
+            // this up, which is how a drifted block gets re-baselined.
+            get fingerprint() {
+              return replayOutcome.fingerprint;
+            },
+          }
         );
+        if (replayOutcome.drifted) report.controlDrift += 1;
       }
     }
 
@@ -839,6 +885,7 @@ export async function runScenario(config, options = {}) {
       let recoverableOutcome = null;
       let recoverableErrorMessage = "";
       let actionTarget;
+      let actionFingerprint;
       const stepDebugContext = config.debug
         ? {
             observation: redactSecretValues(observation, secretValues),
@@ -1055,6 +1102,7 @@ export async function runScenario(config, options = {}) {
             throwIfInterrupted,
           });
           actionTarget = result.target;
+          actionFingerprint = result.fingerprint;
           if (plannerPayload.action !== "scroll") {
             lastUiActionAt = Date.now();
             pendingInteractionRequest = null;
@@ -1065,6 +1113,16 @@ export async function runScenario(config, options = {}) {
         {
           runtimeErrors: observation.runtimeErrors,
           plannerModel: turnPlanning.model,
+          // Resolved during execute(), so these are read back as getters after
+          // the action runs. step.target is what `block import` turns into a
+          // descriptive (id-free) replay selector; step.fingerprint is the
+          // recorded identity that later replays check for drift.
+          get target() {
+            return actionTarget;
+          },
+          get fingerprint() {
+            return actionFingerprint;
+          },
           ...(turnPlanning.escalated
             ? { escalated: true, escalationReason: turnPlanning.escalationReason }
             : {}),
@@ -1087,6 +1145,7 @@ export async function runScenario(config, options = {}) {
         url: page.url(),
         action: plannerAction,
         ...(actionTarget ? { target: actionTarget } : {}),
+        ...(actionFingerprint ? { fingerprint: actionFingerprint } : {}),
         outcome: recoverableOutcome || "ok",
         runnerFeedback:
           recoverableOutcome === "disabled_target"
@@ -1153,6 +1212,7 @@ export async function runScenario(config, options = {}) {
           let followOutcome = null;
           let followErrorMessage = "";
           let followTarget;
+          let followFingerprint;
 
           try {
             await captureStep(
@@ -1175,11 +1235,20 @@ export async function runScenario(config, options = {}) {
                   throwIfInterrupted,
                 });
                 followTarget = result.target;
+                followFingerprint = result.fingerprint;
                 lastUiActionAt = Date.now();
                 pendingInteractionRequest = null;
               },
               batchDebugContext,
-              { phase: "batch" }
+              {
+                phase: "batch",
+                get target() {
+                  return followTarget;
+                },
+                get fingerprint() {
+                  return followFingerprint;
+                },
+              }
             );
           } catch (error) {
             const kind = classifyRecoverableActionError(error);
@@ -1195,6 +1264,7 @@ export async function runScenario(config, options = {}) {
             url: page.url(),
             action: followAction,
             ...(followTarget ? { target: followTarget } : {}),
+            ...(followFingerprint ? { fingerprint: followFingerprint } : {}),
             outcome: followOutcome || "ok",
             batched: true,
             error: followErrorMessage || undefined,

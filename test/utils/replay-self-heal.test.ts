@@ -97,3 +97,71 @@ void test("self-heals a recorded block step whose target no longer resolves", as
   // The recorded target did not resolve, so exactly one self-heal planner call ran.
   assert.equal(report.tokenUsage.selfHealCalls, 1);
 });
+
+void test("flags control drift when a recorded step matches by description but the control changed", async (t) => {
+  const { server, baseUrl } = await startFakeServer();
+  t.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  const outputDir = await mkdtemp(path.join(os.tmpdir(), "dublo-drift-"));
+  t.after(async () => rm(outputDir, { force: true, recursive: true }));
+
+  const run = (fingerprint?: string) =>
+    runScenario({
+      baseUrl: `${baseUrl}/`,
+      scenario: "Confirm the page loaded.",
+      maxSteps: 3,
+      settleDelayMs: 1,
+      settleTimeoutMs: 300,
+      headed: false,
+      debug: false,
+      screenshots: "none",
+      reports: [],
+      outputDir,
+      contextOperations: [],
+      workspacePromptFile: "",
+      personaFile: "",
+      observationConfigFile: "",
+      llm: { provider: "openai-compatible", baseUrl: `${baseUrl}/v1`, modelId: "fake-model" },
+      initBlocks: [
+        {
+          name: "recorded",
+          actions: [
+            {
+              reason: "Click the primary button.",
+              payload: { action: "click", target: { label: "Click me" } },
+              ...(fingerprint ? { fingerprint } : {})
+            }
+          ]
+        }
+      ]
+    }) as Promise<{
+      status: string;
+      controlDrift: number;
+      steps: Array<{ name: string; fingerprint?: string; controlDrift?: boolean }>;
+    }>;
+
+  // A block recorded against a different control identity: the description
+  // still matches the live button, so the step runs - and is flagged.
+  const drifted = await run("deadbeef");
+  assert.equal(drifted.status, "passed");
+  assert.equal(drifted.controlDrift, 1);
+  const driftedStep = drifted.steps.find((step) => step.name.startsWith("init_recorded_"));
+  assert.ok(driftedStep);
+  assert.equal(driftedStep.controlDrift, true);
+  // The live fingerprint is recorded on the step, so a re-import captures it.
+  assert.ok(driftedStep.fingerprint);
+
+  // Replaying with the fingerprint the page actually has: no drift.
+  const clean = await run(driftedStep.fingerprint);
+  assert.equal(clean.status, "passed");
+  assert.equal(clean.controlDrift, 0);
+  assert.notEqual(
+    clean.steps.find((step) => step.name.startsWith("init_recorded_"))?.controlDrift,
+    true
+  );
+
+  // A block with no recorded fingerprint (imported before this existed) is
+  // replayed without a drift check rather than warning spuriously.
+  const legacy = await run(undefined);
+  assert.equal(legacy.controlDrift, 0);
+});
